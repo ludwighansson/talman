@@ -1,0 +1,40 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 5,
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "go.yaml.in/yaml/v4 is a release candidate, so updates within the v4 pre-release track are expected rather than exceptional.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["go.yaml.in/yaml/v4"],
+      "ignoreUnstable": false
+    },
+    {
+      "description": "getsops pulls the cloud KMS SDKs in with it, so a sops bump moves a large tail of indirect dependencies. Keeping them together lets CI prove the combination before it lands.",
+      "groupName": "sops",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/getsops/sops/v3", "filippo.io/age"]
+    },
+    {
+      "description": "Everything else non-major in one PR; CI gates it.",
+      "groupName": "go modules (non-major)",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "groupName": "github actions",
+      "matchManagers": ["github-actions"]
+    },
+    {
+      "description": "Go itself moves via the go directive in go.mod, which setup-go reads; treat it as a deliberate choice rather than an automatic bump.",
+      "matchDepTypes": ["golang"],
+      "dependencyDashboardApproval": true
+    }
+  ]
+}

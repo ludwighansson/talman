@@ -1,0 +1,8 @@
+# Built binary at the repo root (anchored, so it does not match cmd/talman/).
+/talman
+
+dist/
+*.tar.gz
+
+# Rendered machine configs and talosconfigs carry live cluster secrets.
+clusterconfig/

@@ -1,0 +1,4 @@
+apiVersion: v1alpha1
+kind: KubeNodeConfig
+labels:
+  node.example.net/storage-tier: nvme

@@ -1,0 +1,122 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The render tests shell out to this talosctl. It must be at least as new as
+  # the newest document kind any test config uses, since talosctl parses and
+  # validates the config it is handed.
+  TALOSCTL_VERSION: v1.14.0
+  # internal/sopsx drives this binary; without it those tests skip.
+  SOPS_VERSION: 3.13.3
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install talosctl
+        run: |
+          os=$(uname | tr '[:upper:]' '[:lower:]')
+          arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=amd64; [ "$arch" = "aarch64" ] && arch=arm64
+          curl -fsSL -o /usr/local/bin/talosctl \
+            "https://github.com/siderolabs/talos/releases/download/${TALOSCTL_VERSION}/talosctl-${os}-${arch}"
+          chmod +x /usr/local/bin/talosctl
+          talosctl version --client
+
+      - name: Install sops
+        run: |
+          os=$(uname | tr '[:upper:]' '[:lower:]')
+          arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=amd64; [ "$arch" = "aarch64" ] && arch=arm64
+          curl -fsSL -o /usr/local/bin/sops \
+            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.${os}.${arch}"
+          chmod +x /usr/local/bin/sops
+          sops --version
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed for: $unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Render the example
+        # Proves the documented layout still works, and that everything talman
+        # emits passes Talos' own validation.
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          # `cp -a example/.`, not `cp -r example/*`: a glob skips dotfiles and
+          # would silently leave .sops.yaml out of the copy.
+          cp -a example/. "$work/"
+          test -f "$work/.sops.yaml" || { echo "::error::.sops.yaml was not copied"; exit 1; }
+
+          go build -o "$work/talman" ./cmd/talman
+          cd "$work/development"
+
+          # The example ships a deliberately invalid placeholder recipient, so
+          # encryption must fail here. That proves talman located and read
+          # .sops.yaml rather than quietly writing the bundle in the clear.
+          if "$work/talman" secrets generate 2>/dev/null; then
+            echo "::error::secrets generate succeeded with the placeholder recipient"
+            exit 1
+          fi
+
+          "$work/talman" secrets generate --plaintext
+          "$work/talman" validate
+          "$work/talman" patches
+          "$work/talman" render
+
+  cross-build:
+    # Catches a release breaking before a tag is cut rather than after.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build every released target
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 \
+                        windows/amd64 windows/arm64 freebsd/amd64 freebsd/arm64; do
+            echo "==> $target"
+            GOOS="${target%/*}" GOARCH="${target#*/}" go build -o /dev/null ./cmd/talman
+          done
+
+      - name: Validate goreleaser config
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check

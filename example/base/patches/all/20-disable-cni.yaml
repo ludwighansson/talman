@@ -1,0 +1,5 @@
+# Talos generates KubeFlannelCNIConfig itself, so omitting it does not disable
+# Flannel -- the document has to be deleted explicitly.
+apiVersion: v1alpha1
+kind: KubeFlannelCNIConfig
+$patch: delete
