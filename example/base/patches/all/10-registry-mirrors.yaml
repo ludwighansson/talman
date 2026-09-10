@@ -1,0 +1,13 @@
+# One RegistryMirrorConfig document per entry in `values.registryMirrors`.
+# The trailing `---` inside the range is what separates the documents; the
+# final one is harmless.
+{{- range $registry, $cache := .Values.registryMirrors }}
+apiVersion: v1alpha1
+kind: RegistryMirrorConfig
+name: {{ $registry }}
+endpoints:
+  - url: https://{{ $.Values.harbor }}/v2/{{ $cache }}
+    overridePath: true
+skipFallback: true
+---
+{{ end -}}

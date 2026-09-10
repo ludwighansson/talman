@@ -1,0 +1,103 @@
+---
+clusterName: development
+endpoint: https://10.0.0.10:6443
+talosVersion: v1.14.0
+kubernetesVersion: v1.37.0
+
+# Cluster-wide free-form values, available to every patch template as .Values.
+# Each node can carry its own under `values:`, reachable as .Node.Values.
+values:
+  harbor: harbor.example.net
+  hugepages: "1024"
+  registryMirrors:
+    docker.io: docker_io_cache
+    ghcr.io: ghcr_io_cache
+    quay.io: quay_io_cache
+    registry.k8s.io: k8s_io_cache
+
+# These VMs boot the OpenStack installer, not the default metal one.
+# {{.ID}} is the resolved schematic, {{.Version}} the node's Talos version.
+imageFactory:
+  installerURLTmpl: "{{.RegistryURL}}/openstack-installer/{{.ID}}:{{.Version}}"
+
+# The schematic ID is computed offline (sha256 of its canonical form), so
+# rendering needs no network. `talman render --submit` registers it instead.
+schematic:
+  customization:
+    systemExtensions:
+      officialExtensions:
+        - siderolabs/drbd
+        - siderolabs/gvisor
+        - siderolabs/iscsi-tools
+
+# Every key must be `all`, `controlplane`, `worker`, or a group some node
+# declares, and every value must resolve to a file. Patches apply in the order
+# all -> role -> groups -> nodes[].patches, and the last writer wins.
+patches:
+  all:
+    - ../base/patches/all/00-install.yaml
+    - ../base/patches/all/10-registry-mirrors.yaml
+    - ../base/patches/all/20-disable-cni.yaml
+    - ../base/patches/all/30-discovery.yaml
+  controlplane:
+    - ./patches/controlplane/virtual-ip.yaml
+  worker:
+    - ./patches/worker/kubelet.yaml
+  db:
+    - ./patches/db/hugepages.yaml
+
+nodes:
+  - hostname: development-control-01
+    ipAddress: 10.0.0.11
+    role: controlplane
+    values:
+      installDisk: /dev/vda
+      zone: az1
+      vip: 10.0.0.10
+      vipLink: ens3
+
+  - hostname: development-control-02
+    ipAddress: 10.0.0.12
+    role: controlplane
+    values:
+      installDisk: /dev/vda
+      zone: az2
+      vip: 10.0.0.10
+      vipLink: ens3
+
+  - hostname: development-control-03
+    ipAddress: 10.0.0.13
+    role: controlplane
+    values:
+      installDisk: /dev/vda
+      zone: az3
+      vip: 10.0.0.10
+      vipLink: ens3
+
+  - hostname: development-worker-01
+    ipAddress: 10.0.0.21
+    role: worker
+    groups:
+      - db
+      - storage
+    values:
+      installDisk: /dev/vda
+      zone: az1
+    patches:
+      - ./patches/nodes/worker-01.yaml
+
+  - hostname: development-worker-02
+    ipAddress: 10.0.0.22
+    role: worker
+    groups:
+      - db
+    values:
+      installDisk: /dev/vdb
+      zone: az2
+
+  - hostname: development-worker-03
+    ipAddress: 10.0.0.23
+    role: worker
+    values:
+      installDisk: /dev/vda
+      zone: az3

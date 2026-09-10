@@ -1,0 +1,79 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: talman
+
+before:
+  hooks:
+    - go mod download
+    - go test ./...
+
+builds:
+  - id: talman
+    main: ./cmd/talman
+    binary: talman
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/ludwighansson/talman/internal/cli.Version={{ .Version }}
+    # Build with a timestamp derived from the commit so archives are
+    # reproducible rather than varying per build.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: talman
+    ids:
+      - talman
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```console
+    go install github.com/ludwighansson/talman/cmd/talman@{{ .Tag }}
+    ```
+
+    talman drives the `talosctl` binary; install that too.

@@ -1,0 +1,358 @@
+# talman
+
+Manage [Talos Linux](https://www.talos.dev/) clusters and, above all, their
+configuration patches.
+
+```console
+$ talman patches -n development-worker-01
+development-worker-01 (worker, groups: db, storage)
+  1.  [all]     ../base/patches/all/00-install.yaml
+  2.  [all]     ../base/patches/all/10-registry-mirrors.yaml
+  3.  [all]     ../base/patches/all/20-disable-cni.yaml
+  4.  [all]     ../base/patches/all/30-discovery.yaml
+  5.  [worker]  ./patches/worker/kubelet.yaml
+  6.  [db]      ./patches/db/hugepages.yaml
+  7.  [node]    ./patches/nodes/worker-01.yaml
+
+$ talman render
+wrote clusterconfig/development-control-01.yaml
+wrote clusterconfig/development-worker-01.yaml
+...
+wrote clusterconfig/talosconfig
+```
+
+## Why
+
+[talhelper](https://github.com/budimanjojo/talhelper) was archived in August
+2026. Its structural problem was that it embedded upstream `v1alpha1` structs in
+its own schema and hand-wrote a generator for each new Talos document kind, so
+every Talos minor release meant a talhelper release.
+
+[topf](https://github.com/postfinance/topf) replaced it and got the important
+thing right — Go templating in patches — but targets patches by hardcoded
+directory name. The entire mechanism is three string constants: `all/`,
+`<role>/` and `node/<host>/`. There is no way to say "these five nodes", and no
+tier between "every node" and "one node".
+
+talman keeps the templating, addresses patches **by explicit path**, and adds
+**node groups**:
+
+```yaml
+patches:
+  all:
+    - ../base/patches/all/00-install.yaml
+  controlplane:
+    - ./patches/controlplane/virtual-ip.yaml
+  worker:
+    - ./patches/worker/kubelet.yaml
+  db:
+    - ./patches/db/hugepages.yaml
+  storage:
+    - ./patches/storage/nvme.yaml
+```
+
+`all`, `controlplane` and `worker` are reserved and assigned from each node's
+role. Every other key must name a group some node declares, and every value
+must resolve to a file — both are errors otherwise, so a renamed group cannot
+silently orphan its patches and a typo'd path cannot silently apply nothing.
+
+## No Talos dependency
+
+talman does not link against the Talos API. It shells out to `talosctl`, which
+means a new Talos release needs no talman release.
+
+Rendering a node is one `talosctl gen config` call carrying that node's ordered
+patch chain — the workflow Sidero
+[documents](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/system-configuration/reproducible-machine-configuration)
+but ships no tool for. Talos does the merging, so talman needs no opinion about
+what a machine config contains.
+
+The one thing `talosctl` cannot do is compute an Image Factory schematic ID.
+talman does that offline (sha256 of the schematic's canonical form); `--submit`
+registers it with the factory instead.
+
+## Install
+
+```console
+go install github.com/ludwighansson/talman/cmd/talman@latest
+```
+
+You also need [`talosctl`](https://docs.siderolabs.com/talos/v1.14/talosctl) on
+`PATH`, at least as new as the Talos version you target, and
+[`sops`](https://github.com/getsops/sops) if your secrets bundle or any patch
+is encrypted.
+
+talman shells out to both rather than linking them in. Embedding the SOPS
+library pulled the AWS, GCP and Azure KMS SDKs along with it — several hundred
+modules to support key services most clusters never use, every one of them
+talman's to keep patched.
+
+## Layout
+
+```text
+base/patches/all/…        # shared across clusters
+development/
+  talman.yaml
+  talsecret.sops.yaml     # age-encrypted; the only secret in the repo
+  patches/…
+  clusterconfig/          # rendered output, gitignored
+```
+
+Relative patch paths resolve against the directory holding `talman.yaml`, so
+`../base/patches/…` works and shared patches need no duplication.
+
+See [`example/`](example/) for a working tree.
+
+## Configuration
+
+```yaml
+clusterName: development
+endpoint: https://10.0.0.10:6443
+talosVersion: v1.14.0            # required: pinning it is what makes renders reproducible
+kubernetesVersion: v1.37.0
+
+values:                          # free-form, available to templates as .Values
+  harbor: harbor.example.net
+
+imageFactory:
+  installerURLTmpl: "{{.RegistryURL}}/openstack-installer/{{.ID}}:{{.Version}}"
+
+schematic:                       # inline, or a path to a (templated) file
+  customization:
+    systemExtensions:
+      officialExtensions:
+        - siderolabs/drbd
+
+patches:
+  all:
+    - ../base/patches/all/00-install.yaml
+  db:
+    - ./patches/db/hugepages.yaml
+
+nodes:
+  - hostname: development-worker-01
+    ipAddress: 10.0.0.21
+    role: worker                 # controlplane | worker
+    groups:
+      - db
+      - storage
+    values:                      # free-form, available as .Node.Values
+      installDisk: /dev/vda
+      zone: az1
+    patches:
+      - ./patches/nodes/worker-01.yaml
+```
+
+Optional top-level keys: `talosctl` (binary path), `outputDir`
+(`clusterconfig`), `secretFile` (`talsecret.sops.yaml`), `talosMode` (`metal`),
+`schematicID`. Per-node: `talosVersion`, `schematic`, `schematicID`.
+
+Unknown keys are an error. In a config whose job is to route patch files, a
+mistyped key that got ignored would mean a machine config quietly missing a
+patch.
+
+### The node schema is deliberately tiny
+
+A node carries only what talman needs to route patches and reach the host.
+There is no `installDisk`, no `nodeLabels`, no `networkInterfaces` — those are
+Talos' shapes, and mirroring them is what made talhelper expensive. Put them in
+a patch and template them from `values`:
+
+```yaml
+# patches/all/00-install.yaml
+apiVersion: v1alpha1
+kind: UnattendedInstallConfig
+installer:
+  image: {{ .Node.InstallerImage }}
+provisioning:
+  diskSelector:
+    match: disk.dev_path == "{{ .Node.Values.installDisk }}"
+  wipe: false
+---
+apiVersion: v1alpha1
+kind: KubeNodeConfig
+labels:
+  topology.kubernetes.io/zone: {{ .Node.Values.zone }}
+```
+
+## Patches
+
+Every referenced patch file is a Go template
+([sprig](https://masterminds.github.io/sprig/) included) and may be
+SOPS-encrypted. There is no opt-in suffix: topf gates templating on `.tpl`,
+which means a templated patch can never also be encrypted.
+
+Template scope:
+
+| | |
+| --- | --- |
+| `.Cluster` | `.Name` `.Endpoint` `.TalosVersion` `.KubernetesVersion` |
+| `.Node` | `.Hostname` `.IPAddress` `.Role` `.Groups` `.Values.<key>` `.TalosVersion` `.SchematicID` `.InstallerImage` |
+| `.Values` | the cluster-wide `values:` map; the per-node one is `.Node.Values` |
+
+`.Node.TalosVersion` is the *resolved* version and `.Node.HasGroup "db"` reads
+better than sprig's `has`. Missing map keys are an error, not `<no value>` — a
+typo must not become a subtly wrong machine config.
+
+**Order matters.** Talos applies strategic merge patches in sequence, last
+writer wins:
+
+```text
+all  ->  <role>  ->  each of nodes[].groups in the node's order  ->  nodes[].patches
+```
+
+`talman patches` prints exactly that, which is the authoritative answer to "why
+does this node have that value".
+
+Only strategic merge patches are supported. RFC6902 JSON patches cannot be
+applied to a multi-document config, and Talos has emitted multi-document
+configs since v1.12 — talman detects an op/path list and says so, rather than
+letting `talosctl` report an error naming no file. Use `$patch: delete` to
+remove a field or a whole document.
+
+### When a patch is rejected
+
+`talosctl` names the offending *document*, never the file. On failure talman
+re-runs the generation with growing prefixes of the chain and reports the
+culprit:
+
+```console
+$ talman render
+error: node development-worker-01: talosctl gen config: error decoding document
+v1alpha1/SysctlConfig/ (line 1): unknown keys found during decoding:
+sysctls:
+    vm.nr_hugepages: "1024"
+  rejected by: patches.db -> ./patches/db/hugepages.yaml
+  (it is the 6th patch in the chain `talman patches` lists; the ones before it applied cleanly)
+```
+
+Growing prefixes rather than testing each patch alone is deliberate: several
+Talos v1.14 document pairs are *mutually exclusive* — `.machine.install` and
+`UnattendedInstallConfig`, `.cluster.discovery` and `DiscoveryServiceConfig`,
+`.machine.features.imageCache` and `ImageCacheConfig` — so a patch can be
+perfectly valid alone and still be the one that makes the config unacceptable.
+
+## Secrets
+
+```console
+$ talman secrets generate     # -> talsecret.sops.yaml, encrypted per .sops.yaml
+```
+
+The bundle is generated with `talosctl gen secrets` and encrypted by invoking
+`sops`, so `SOPS_AGE_KEY`, `SOPS_AGE_KEY_FILE` and `.sops.yaml`
+`creation_rules` behave exactly as they do on the command line — including PGP
+and cloud KMS keys.
+
+One difference from calling `sops` yourself: talman resolves `.sops.yaml` by
+walking up from the secrets file, not from your working directory, so where you
+happen to be standing cannot change whether a bundle gets encrypted.
+
+`render` decrypts it into a private temporary directory for the duration of the
+run and removes it afterwards. Plaintext secrets never reach `clusterconfig/`
+or the repository.
+
+Generating refuses to overwrite an existing bundle: the CAs and cluster
+identity in it are what a running cluster trusts. To adopt a cluster that
+already exists, use `--from-controlplane-config`.
+
+Rendered machine configs *do* contain secrets, so `render` writes them `0600`
+and drops a `.gitignore` that excludes the whole output directory.
+
+## Commands
+
+| Command | |
+| --- | --- |
+| `talman validate` | check keys, paths and templates; needs no secrets or network |
+| `talman patches` | the resolved patch chain per node, in application order |
+| `talman nodes` | the node table |
+| `talman secrets generate` | create the encrypted secrets bundle |
+| `talman render` | write machine configs and a talosconfig |
+| `talman schematic id` | the resolved schematic ID per node |
+| `talman image url` | the installer image reference per node |
+| `talman diff` | what applying would change (server-side dry run) |
+| `talman apply` | apply rendered configs |
+| `talman bootstrap` | initialise etcd, once |
+| `talman kubeconfig` | fetch the kubeconfig |
+| `talman upgrade` | upgrade Talos to each node's configured installer image |
+| `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` |
+| `talman health` | cluster health |
+| `talman reset` | wipe nodes (requires typing the cluster name) |
+| `talman version` | the talman and talosctl versions |
+
+`-n/--node` restricts most commands to named nodes (hostname or IP,
+repeatable). `-v` echoes every `talosctl` invocation. `-c` points at a config
+other than `./talman.yaml`.
+
+`render` validates every generated config with `talosctl validate` before
+writing; `--no-validate` skips it, `--dry-run` writes nothing, `--stdout`
+prints instead.
+
+### Rolling changes out safely
+
+`apply` treats one node at a time as the unit of risk. After each node it waits
+for that node to answer the API again and hold steady for `--stabilize` (30s),
+then runs a cluster health check, and stops the roll-out if either fails —
+leaving the remaining nodes untouched. That is the difference between a bad
+patch costing you one machine and costing you the control plane. Disable with
+`--wait=false` / `--health=false`; neither runs for `--dry-run` or
+`--mode=staged`, where nothing was enacted.
+
+`upgrade` first asks each node what it is running, and skips it when the Talos
+version and schematic already match what the config resolves to:
+
+```console
+$ talman upgrade
+== development-control-01 (10.0.0.11) already runs v1.14.0 with schematic 079113ce0508; skipping
+== development-worker-01 (10.0.0.21): v1.13.5 (schematic 079113ce0508) -> v1.14.0
+   image factory.talos.dev/openstack-installer/079113ce0508…:v1.14.0
+```
+
+The check is against *running* state, so it ignores the registry and
+repository half of the installer reference: those decide where the next image
+is pulled from, not what is running, and switching mirrors is not a reason to
+reboot a cluster. Anything talman cannot determine counts as out of date — an
+unknown version is never read as agreement. `--force` upgrades regardless;
+`--skip-etcd-check` is the separate flag that passes `--force` to `talosctl`.
+
+## Migrating from talhelper
+
+| talhelper | talman |
+| --- | --- |
+| `patches: ["@./p.yaml"]` | `patches.all: [./p.yaml]` — no `@` |
+| `controlPlane.patches` / `worker.patches` | `patches.controlplane` / `patches.worker` |
+| `nodes[].patches` | unchanged |
+| `controlPlane: true` | `role: controlplane` |
+| `installDisk`, `nodeLabels`, `networkInterfaces`, … | patches templated from `nodes[].values` |
+| `talsecret.sops.yaml` | unchanged — the bundle format is talosctl's |
+| `talenv.yaml` + `${VAR}` | `values:` and sprig's `env` |
+| `genconfig` | `render` |
+| `gencommand apply \| bash` | `apply` |
+| RFC6902 patches | rewrite as strategic merge (Talos dropped them for multi-doc) |
+| `imageFactory.installerURLTmpl` | unchanged, and `.Mode` still resolves |
+
+Your existing `talsecret.sops.yaml` and `.sops.yaml` keep working unchanged.
+
+## Migrating from topf
+
+`all/` becomes `patches.all`, `control-plane/` becomes `patches.controlplane`,
+`node/<host>/` becomes that node's `patches`, each listed by path in the order
+you want. `topf.yaml`'s `data:` splits into cluster-wide `values:` and per-node
+`values:`. Drop the `.tpl` suffix — every patch is a template.
+
+## Name
+
+Short for *Talos manager*, and in Swedish the *talman* is the Speaker of the
+Riksdag: the presiding officer who does not legislate, but runs the procedure
+and recognises speakers in order. Which is the job — talman orders the patch
+chain and leaves the actual work to `talosctl`.
+
+## Contributing
+
+Pull requests are welcome, and any help at all is appreciated — including bug
+reports, and telling me when an error message or a sentence in these docs sent
+you the wrong way. See [CONTRIBUTING.md](CONTRIBUTING.md), and the
+[Code of Conduct](CODE_OF_CONDUCT.md) that everyone taking part follows.
+
+## License
+
+MIT

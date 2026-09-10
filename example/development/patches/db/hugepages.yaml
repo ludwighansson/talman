@@ -1,0 +1,5 @@
+# Applied only to nodes that list `db` in their `groups`.
+apiVersion: v1alpha1
+kind: SysctlConfig
+params:
+  vm.nr_hugepages: "{{ .Values.hugepages }}"

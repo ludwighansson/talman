@@ -1,0 +1,23 @@
+# Install and identity. Templated per node from `values:` in talman.yaml.
+#
+# Talos v1.14 carries the installer image in UnattendedInstallConfig;
+# .machine.install is deprecated and the two are mutually exclusive, so a
+# config containing both is rejected by the node.
+apiVersion: v1alpha1
+kind: UnattendedInstallConfig
+installer:
+  image: {{ .Node.InstallerImage }}
+provisioning:
+  diskSelector:
+    match: disk.dev_path == "{{ .Node.Values.installDisk }}"
+  wipe: false
+---
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto: "off"
+hostname: {{ .Node.Hostname }}
+---
+apiVersion: v1alpha1
+kind: KubeNodeConfig
+labels:
+  topology.kubernetes.io/zone: {{ .Node.Values.zone }}

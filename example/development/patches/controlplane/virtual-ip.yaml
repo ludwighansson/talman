@@ -1,0 +1,12 @@
+# Shared IP for the Kubernetes API, held by whichever control plane currently
+# wins the election. It must match the host in `endpoint:`.
+#
+# `link` is the usual reason a VIP silently does nothing: it has to name an
+# interface that exists on the node, and Talos uses predictable names
+# (ens3, enp0s3, ...) unless the image was built with net.ifnames=0. Check
+# with `talosctl -n <ip> get links` and set `vipLink` per node accordingly,
+# rather than assuming eth0.
+apiVersion: v1alpha1
+kind: Layer2VIPConfig
+name: {{ .Node.Values.vip }}
+link: {{ .Node.Values.vipLink }}
