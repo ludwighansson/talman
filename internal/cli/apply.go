@@ -33,15 +33,16 @@ itself what the rendered config would change. Nothing is modified.`
 
 func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 	var (
-		nodes     []string
-		mode      string
-		insecure  bool
-		dryRun    bool
-		wait      bool
-		health    bool
-		noRender  bool
-		stabilize time.Duration
-		timeout   time.Duration
+		nodes      []string
+		mode       string
+		insecure   bool
+		dryRun     bool
+		wait       bool
+		health     bool
+		noRender   bool
+		extraFlags []string
+		stabilize  time.Duration
+		timeout    time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -118,6 +119,8 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 					args = append(args, "--insecure")
 				}
 
+				args = append(args, extraFlags...)
+
 				fmt.Fprintf(os.Stderr, "== %s (%s)\n", n.Hostname, n.IPAddress)
 
 				if err := tal.Stream(args...); err != nil {
@@ -178,6 +181,7 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 		"how long to wait for a single node to come back")
 	cmd.Flags().BoolVar(&noRender, "no-render", false,
 		"apply the configs already in the output directory instead of re-rendering")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }

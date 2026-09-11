@@ -17,6 +17,7 @@ func newRenderCmd() *cobra.Command {
 		dryRun        bool
 		toStdout      bool
 		noTalosconfig bool
+		extraFlags    []string
 	)
 
 	cmd := &cobra.Command{
@@ -45,6 +46,10 @@ output directory or the repository.`,
 				return err
 			}
 			defer r.Close()
+
+			// Forwarded to the per-node `talosctl gen config` calls, which is
+			// the invocation this command exists to drive.
+			r.ExtraArgs = extraFlags
 
 			results := make([]*render.Result, 0, len(targets))
 
@@ -100,6 +105,7 @@ output directory or the repository.`,
 		"write rendered configs to stdout, each preceded by a \"# talman: <hostname>\" banner")
 	cmd.Flags().BoolVar(&noTalosconfig, "no-talosconfig", false,
 		"do not generate a talosconfig")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }

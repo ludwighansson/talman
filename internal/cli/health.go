@@ -8,7 +8,10 @@ import (
 )
 
 func newHealthCmd() *cobra.Command {
-	var serverSide bool
+	var (
+		serverSide bool
+		extraFlags []string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "health",
@@ -46,11 +49,14 @@ func newHealthCmd() *cobra.Command {
 				args = append(args, "--worker-nodes", strings.Join(workers, ","))
 			}
 
+			args = append(args, extraFlags...)
+
 			return runner(cfg).Stream(args...)
 		},
 	}
 
 	cmd.Flags().BoolVar(&serverSide, "server", true, "run the health check on the node rather than the client")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }

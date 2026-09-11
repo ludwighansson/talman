@@ -19,6 +19,7 @@ func newUpgradeCmd() *cobra.Command {
 		stage         bool
 		force         bool
 		skipEtcdCheck bool
+		extraFlags    []string
 	)
 
 	cmd := &cobra.Command{
@@ -95,6 +96,8 @@ and check the target first with "talman image url".`,
 					args = append(args, "--force")
 				}
 
+				args = append(args, extraFlags...)
+
 				fmt.Fprintf(os.Stderr, "   image %s\n", ctx.Node.InstallerImage)
 
 				if err := tal.Stream(args...); err != nil {
@@ -118,15 +121,17 @@ and check the target first with "talman image url".`,
 		"upgrade even when the node already runs the configured version and schematic")
 	cmd.Flags().BoolVar(&skipEtcdCheck, "skip-etcd-check", false,
 		"pass --force to talosctl, skipping its etcd health checks")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }
 
 func newUpgradeK8sCmd() *cobra.Command {
 	var (
-		node   string
-		to     string
-		dryRun bool
+		node     string
+		to       string
+		dryRun   bool
+		extraK8s []string
 	)
 
 	cmd := &cobra.Command{
@@ -155,6 +160,8 @@ func newUpgradeK8sCmd() *cobra.Command {
 				args = append(args, "--dry-run")
 			}
 
+			args = append(args, extraK8s...)
+
 			return tal.Stream(args...)
 		},
 	}
@@ -162,6 +169,7 @@ func newUpgradeK8sCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to drive the upgrade from")
 	cmd.Flags().StringVar(&to, "to", "", "target Kubernetes version (default: kubernetesVersion from the config)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the upgrade plan without running it")
+	addExtraFlags(cmd, &extraK8s)
 
 	return cmd
 }

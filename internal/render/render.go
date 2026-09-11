@@ -28,6 +28,8 @@ type Renderer struct {
 	Submit bool
 	// Log receives progress lines. Nil discards them.
 	Log io.Writer
+	// ExtraArgs are appended verbatim to each `talosctl gen config` call.
+	ExtraArgs []string
 
 	// workspace is a 0700 temp dir holding the decrypted secrets bundle and
 	// the rendered patches for the duration of a pass.
@@ -172,6 +174,7 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 			InstallImage:      ctx.Node.InstallerImage,
 			OutputType:        outputType,
 			Patches:           with,
+			ExtraArgs:         r.ExtraArgs,
 		})
 	}
 

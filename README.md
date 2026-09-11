@@ -283,6 +283,30 @@ and drops a `.gitignore` that excludes the whole output directory.
 repeatable). `-v` echoes every `talosctl` invocation. `-c` points at a config
 other than `./talman.yaml`.
 
+### Reaching talosctl flags talman does not model
+
+Every command that shells out takes `--extra-flags`, appended verbatim to the
+underlying invocation:
+
+```console
+$ talman render --extra-flags=--with-docs=true
+$ talman apply --extra-flags=--timeout=5m
+$ talman upgrade --extra-flags=--reboot-mode=powercycle
+$ talman reset --extra-flags=--system-labels-to-wipe=STATE --extra-flags=--system-labels-to-wipe=EPHEMERAL
+```
+
+It is repeatable rather than one string talman splits: values contain commas,
+spaces and quotes, and splitting them here would mangle exactly the arguments
+most worth passing through.
+
+Flags land last on the command line, so they override what talman set — which
+is the point, and also the caveat. `--extra-flags=--output=/tmp/x` on `render`
+will send a machine config somewhere talman then cannot find. Use `-v` to see
+the full command.
+
+`validate`, `patches`, `nodes`, `schematic id` and `image url` have no such
+flag: none of them invokes `talosctl`.
+
 `render` validates every generated config with `talosctl validate` before
 writing; `--no-validate` skips it, `--dry-run` writes nothing, `--stdout`
 prints instead.
