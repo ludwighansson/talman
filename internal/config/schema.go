@@ -25,7 +25,7 @@ const (
 const (
 	DefaultFileName   = "talman.yaml"
 	DefaultOutputDir  = "clusterconfig"
-	DefaultSecretFile = "talsecret.sops.yaml"
+	DefaultSecretFile = "secrets.sops.yaml"
 	DefaultTalosctl   = "talosctl"
 )
 
