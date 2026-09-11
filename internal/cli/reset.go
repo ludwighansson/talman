@@ -14,9 +14,10 @@ import (
 
 func newResetCmd() *cobra.Command {
 	var (
-		nodes    []string
-		yes      bool
-		graceful bool
+		nodes      []string
+		yes        bool
+		graceful   bool
+		extraFlags []string
 	)
 
 	cmd := &cobra.Command{
@@ -57,6 +58,8 @@ all data on the node and, if run against enough control planes, the cluster.`,
 					fmt.Sprintf("--graceful=%t", graceful),
 				}
 
+				args = append(args, extraFlags...)
+
 				fmt.Fprintf(os.Stderr, "== resetting %s (%s)\n", n.Hostname, n.IPAddress)
 
 				if err := tal.Stream(args...); err != nil {
@@ -71,6 +74,7 @@ all data on the node and, if run against enough control planes, the cluster.`,
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
 	cmd.Flags().BoolVar(&graceful, "graceful", true, "leave etcd cleanly before resetting")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }

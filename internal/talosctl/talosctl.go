@@ -164,6 +164,8 @@ type GenSecretsOptions struct {
 	// config instead of generating new material -- the adoption path for a
 	// cluster that already exists.
 	FromControlPlaneConfig string
+	// ExtraArgs are appended verbatim.
+	ExtraArgs []string
 }
 
 // GenSecrets generates a secrets bundle and returns it as YAML.
@@ -177,6 +179,8 @@ func (r *Runner) GenSecrets(opts GenSecretsOptions) ([]byte, error) {
 	if opts.FromControlPlaneConfig != "" {
 		args = append(args, "--from-controlplane-config", opts.FromControlPlaneConfig)
 	}
+
+	args = append(args, opts.ExtraArgs...)
 
 	return r.Output(args...)
 }

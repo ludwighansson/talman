@@ -27,6 +27,7 @@ func newSecretsGenerateCmd() *cobra.Command {
 		force      bool
 		plaintext  bool
 		toStdout   bool
+		extraFlags []string
 	)
 
 	cmd := &cobra.Command{
@@ -64,6 +65,7 @@ cluster that already exists.`,
 			bundle, err := tal.GenSecrets(talosctl.GenSecretsOptions{
 				TalosVersion:           cfg.TalosVersion,
 				FromControlPlaneConfig: fromConfig,
+				ExtraArgs:              extraFlags,
 			})
 			if err != nil {
 				return err
@@ -103,6 +105,7 @@ cluster that already exists.`,
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing secrets bundle")
 	cmd.Flags().BoolVar(&plaintext, "plaintext", false, "write the bundle unencrypted")
 	cmd.Flags().BoolVar(&toStdout, "stdout", false, "write the plaintext bundle to stdout instead of a file")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }

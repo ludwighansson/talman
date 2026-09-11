@@ -176,3 +176,19 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool,
 
 	return w.Flush()
 }
+
+// addExtraFlags registers the escape hatch every talosctl-invoking command
+// carries.
+//
+// talman models only the talosctl flags it has an opinion about, which leaves
+// everything else -- a new flag in a Talos release, a niche one, anything the
+// author did not anticipate -- unreachable. Rather than grow the surface to
+// chase talosctl's, each command forwards whatever it is given verbatim.
+//
+// Repeatable rather than a single split string: values contain commas, spaces
+// and quotes, and splitting them here would mangle exactly the arguments that
+// most need passing through.
+func addExtraFlags(cmd *cobra.Command, target *[]string) {
+	cmd.Flags().StringArrayVar(target, "extra-flags", nil,
+		"extra flag passed verbatim to the underlying talosctl command (repeatable)")
+}

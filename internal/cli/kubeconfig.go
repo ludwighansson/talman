@@ -8,9 +8,10 @@ import (
 
 func newKubeconfigCmd() *cobra.Command {
 	var (
-		node  string
-		force bool
-		merge bool
+		node       string
+		force      bool
+		merge      bool
+		extraFlags []string
 	)
 
 	cmd := &cobra.Command{
@@ -30,6 +31,7 @@ func newKubeconfigCmd() *cobra.Command {
 			}
 
 			cmdArgs = append(cmdArgs, fmt.Sprintf("--merge=%t", merge))
+			cmdArgs = append(cmdArgs, extraFlags...)
 			cmdArgs = append(cmdArgs, args...)
 
 			return tal.Stream(cmdArgs...)
@@ -39,6 +41,7 @@ func newKubeconfigCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to fetch from (default: the first one)")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing context")
 	cmd.Flags().BoolVar(&merge, "merge", true, "merge into the existing kubeconfig")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }

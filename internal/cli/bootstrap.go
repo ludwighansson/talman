@@ -5,7 +5,10 @@ import (
 )
 
 func newBootstrapCmd() *cobra.Command {
-	var node string
+	var (
+		node       string
+		extraFlags []string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "bootstrap",
@@ -21,11 +24,14 @@ plane node, after that node's config has been applied.`,
 
 			_ = cfg
 
-			return tal.Stream("--talosconfig", tc, "bootstrap", "--nodes", target.IPAddress)
+			args := []string{"--talosconfig", tc, "bootstrap", "--nodes", target.IPAddress}
+
+			return tal.Stream(append(args, extraFlags...)...)
 		},
 	}
 
 	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to bootstrap (default: the first one)")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }
