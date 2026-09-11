@@ -65,7 +65,7 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	requireSops(t)
 
 	dir := newKeyedDir(t, `\.sops\.yaml$`)
-	dest := filepath.Join(dir, "talsecret.sops.yaml")
+	dest := filepath.Join(dir, "secrets.sops.yaml")
 
 	encrypted, err := EncryptTo([]byte(secretBundle), dest)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestEncryptionPreservesKeys(t *testing.T) {
 
 	dir := newKeyedDir(t, `\.sops\.yaml$`)
 
-	encrypted, err := EncryptTo([]byte(secretBundle), filepath.Join(dir, "talsecret.sops.yaml"))
+	encrypted, err := EncryptTo([]byte(secretBundle), filepath.Join(dir, "secrets.sops.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestEncryptRefusesWithoutACreationRule(t *testing.T) {
 
 	dir := newKeyedDir(t, `this-will-never-match$`)
 
-	_, err := EncryptTo([]byte(secretBundle), filepath.Join(dir, "talsecret.sops.yaml"))
+	_, err := EncryptTo([]byte(secretBundle), filepath.Join(dir, "secrets.sops.yaml"))
 	if err == nil {
 		t.Fatal("EncryptTo succeeded with no matching creation rule")
 	}
@@ -176,7 +176,7 @@ func TestDecryptFailsWithoutTheKey(t *testing.T) {
 	requireSops(t)
 
 	dir := newKeyedDir(t, `\.sops\.yaml$`)
-	dest := filepath.Join(dir, "talsecret.sops.yaml")
+	dest := filepath.Join(dir, "secrets.sops.yaml")
 
 	encrypted, err := EncryptTo([]byte(secretBundle), dest)
 	if err != nil {
@@ -200,7 +200,7 @@ func TestDecryptFailsWithoutTheKey(t *testing.T) {
 // baffling parse failure instead.
 func TestEncryptedFileWithoutSopsIsAnError(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "talsecret.sops.yaml")
+	path := filepath.Join(dir, "secrets.sops.yaml")
 
 	if err := os.WriteFile(path, []byte("a: ENC[x]\nsops:\n    version: 3.13.3\n"), 0o600); err != nil {
 		t.Fatal(err)

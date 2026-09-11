@@ -93,7 +93,7 @@ talman's to keep patched.
 base/patches/all/…        # shared across clusters
 development/
   talman.yaml
-  talsecret.sops.yaml     # age-encrypted; the only secret in the repo
+  secrets.sops.yaml       # age-encrypted; the only secret in the repo
   patches/…
   clusterconfig/          # rendered output, gitignored
 ```
@@ -144,7 +144,7 @@ nodes:
 ```
 
 Optional top-level keys: `talosctl` (binary path), `outputDir`
-(`clusterconfig`), `secretFile` (`talsecret.sops.yaml`), `talosMode` (`metal`),
+(`clusterconfig`), `secretFile` (`secrets.sops.yaml`), `talosMode` (`metal`),
 `schematicID`. Per-node: `talosVersion`, `schematic`, `schematicID`.
 
 Unknown keys are an error. In a config whose job is to route patch files, a
@@ -235,7 +235,7 @@ perfectly valid alone and still be the one that makes the config unacceptable.
 ## Secrets
 
 ```console
-$ talman secrets generate     # -> talsecret.sops.yaml, encrypted per .sops.yaml
+$ talman secrets generate     # -> secrets.sops.yaml, encrypted per .sops.yaml
 ```
 
 The bundle is generated with `talosctl gen secrets` and encrypted by invoking
@@ -357,14 +357,23 @@ unknown version is never read as agreement. `--force` upgrades regardless;
 | `nodes[].patches` | unchanged |
 | `controlPlane: true` | `role: controlplane` |
 | `installDisk`, `nodeLabels`, `networkInterfaces`, … | patches templated from `nodes[].values` |
-| `talsecret.sops.yaml` | unchanged — the bundle format is talosctl's |
+| `talsecret.sops.yaml` | `secrets.sops.yaml`, or point `secretFile` at the old name |
 | `talenv.yaml` + `${VAR}` | `values:` and sprig's `env` |
 | `genconfig` | `render` |
 | `gencommand apply \| bash` | `apply` |
 | RFC6902 patches | rewrite as strategic merge (Talos dropped them for multi-doc) |
 | `imageFactory.installerURLTmpl` | unchanged, and `.Mode` still resolves |
 
-Your existing `talsecret.sops.yaml` and `.sops.yaml` keep working unchanged.
+The bundle itself needs no conversion — the format is talosctl's, and talman
+reads exactly what talhelper wrote. Only the filename talman looks for differs,
+so either rename the file or keep the old name and say so:
+
+```yaml
+secretFile: talsecret.sops.yaml
+```
+
+Your `.sops.yaml` needs no changes: a `path_regex` ending in `\.sops\.yaml$`
+matches both names.
 
 ## Migrating from topf
 
