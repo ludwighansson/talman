@@ -269,8 +269,8 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
 | `talman image url` | the installer image reference per node |
-| `talman diff` | what applying would change (server-side dry run) |
-| `talman apply` | apply rendered configs |
+| `talman diff` | re-render, then show what applying would change |
+| `talman apply` | re-render, then apply |
 | `talman bootstrap` | initialise etcd, once |
 | `talman kubeconfig` | fetch the kubeconfig |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
@@ -286,6 +286,16 @@ other than `./talman.yaml`.
 `render` validates every generated config with `talosctl validate` before
 writing; `--no-validate` skips it, `--dry-run` writes nothing, `--stdout`
 prints instead.
+
+### apply renders first
+
+`apply` and `diff` re-render the targeted nodes before doing anything, so what
+reaches a node is what the config and patches currently say. Applying whatever
+happened to be left in the output directory meant a patch added since the last
+render was silently not applied — the change looked like it landed and hadn't —
+and it made `diff` compare live state against a stale artefact and report
+agreement. `--no-render` applies the existing files if you specifically want
+that.
 
 ### Rolling changes out safely
 

@@ -51,20 +51,25 @@ func (e *ExitError) Error() string {
 	return fmt.Sprintf("talosctl %s: %s", e.subcommand(), msg)
 }
 
-// subcommand is the leading non-flag words of the invocation. The full argv of
-// a gen config call is hundreds of characters of temp paths; printing it buries
-// the message that actually matters. Use -v to see the whole command.
 func (e *ExitError) subcommand() string {
+	return subcommand(e.Args)
+}
+
+// subcommand is the leading non-flag words of an invocation. The full argv of
+// a gen config call is hundreds of characters of temp paths, and an apply
+// carries absolute config paths; printing either buries the message that
+// actually matters. Use -v to see the whole command.
+func subcommand(args []string) string {
 	var words []string
 
 	// Skip leading global flags and their values rather than stopping at
 	// them: ConfigEndpoint and ConfigNode both build argv starting with
 	// --talosconfig, and breaking here reported "(no subcommand)".
-	for i := 0; i < len(e.Args); i++ {
-		a := e.Args[i]
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 
 		if strings.HasPrefix(a, "-") {
-			if !strings.Contains(a, "=") && i+1 < len(e.Args) && !strings.HasPrefix(e.Args[i+1], "-") {
+			if !strings.Contains(a, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++ // the flag's value
 			}
 
@@ -128,12 +133,15 @@ func (r *Runner) Stream(args ...string) error {
 	r.echo(args)
 
 	if err := cmd.Run(); err != nil {
+		// Named the same way as a captured failure: the streamed output has
+		// already shown the operator what went wrong, so repeating the argv
+		// only buries it.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return fmt.Errorf("talosctl %s exited with status %d", strings.Join(args, " "), exitErr.ExitCode())
+			return fmt.Errorf("talosctl %s exited with status %d", subcommand(args), exitErr.ExitCode())
 		}
 
-		return fmt.Errorf("talosctl %s: %w", strings.Join(args, " "), err)
+		return fmt.Errorf("talosctl %s: %w", subcommand(args), err)
 	}
 
 	return nil

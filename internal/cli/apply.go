@@ -39,6 +39,7 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 		dryRun    bool
 		wait      bool
 		health    bool
+		noRender  bool
 		stabilize time.Duration
 		timeout   time.Duration
 	)
@@ -70,6 +71,20 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 			targets, err := render.Nodes(cfg, nodes)
 			if err != nil {
 				return err
+			}
+
+			// Render first, every time.
+			//
+			// Applying whatever happens to be sitting in the output directory
+			// means a patch added since the last render is silently not
+			// applied -- the change looks like it landed and did not. It also
+			// makes `diff` compare live state against a stale artefact and
+			// report agreement. Rendering here is what makes both commands
+			// mean what they say.
+			if !noRender {
+				if err := renderForApply(cfg, targets); err != nil {
+					return err
+				}
 			}
 
 			tc, err := requireTalosconfig(cfg)
@@ -161,6 +176,8 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 		"how long a node must stay reachable before it counts as back")
 	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute,
 		"how long to wait for a single node to come back")
+	cmd.Flags().BoolVar(&noRender, "no-render", false,
+		"apply the configs already in the output directory instead of re-rendering")
 
 	return cmd
 }
@@ -189,4 +206,35 @@ func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string)
 	}
 
 	return tal.Stream(args...)
+}
+
+// renderForApply re-renders the targeted nodes and writes them out, so what
+// gets applied is what the config and patches currently say.
+//
+// The talosconfig is regenerated too: it is the credential the apply itself
+// uses, and leaving it behind while the machine configs move forward is how a
+// cluster ends up unreachable by its own tooling.
+func renderForApply(cfg *config.Config, targets []*config.Node) error {
+	r, err := newRenderer(cfg, false, os.Stderr)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	results := make([]*render.Result, 0, len(targets))
+
+	for _, n := range targets {
+		res, err := r.Node(n)
+		if err != nil {
+			return err
+		}
+
+		if err := r.Validate(res, cfg.TalosMode); err != nil {
+			return err
+		}
+
+		results = append(results, res)
+	}
+
+	return r.WriteAll(results, true)
 }
