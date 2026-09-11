@@ -148,3 +148,18 @@ func TestParseSchematicID(t *testing.T) {
 		})
 	}
 }
+
+// Stream failures are reported the same way captured ones are: an apply
+// carries absolute config paths, and repeating them buries the streamed
+// output that already explained the failure.
+func TestSubcommandSharedBetweenOutputAndStream(t *testing.T) {
+	args := []string{
+		"--talosconfig", "/long/path/clusterconfig/talosconfig",
+		"apply-config", "--nodes", "10.0.0.11",
+		"--file", "/long/path/clusterconfig/node.yaml", "--mode", "auto",
+	}
+
+	if got := subcommand(args); got != "apply-config" {
+		t.Errorf("subcommand() = %q, want %q", got, "apply-config")
+	}
+}
