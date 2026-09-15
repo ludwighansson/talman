@@ -44,7 +44,7 @@ and check the target first with "talman image url".`,
 				return err
 			}
 
-			tc, err := requireTalosconfig(cfg)
+			tc, err := ensureTalosconfig(cfg)
 			if err != nil {
 				return err
 			}

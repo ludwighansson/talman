@@ -24,13 +24,7 @@ const gitignoreBody = `# Managed by talman.
 
 // WriteAll writes every rendered config, the talosconfig, and the .gitignore.
 func (r *Renderer) WriteAll(results []*Result, writeTalosconfig bool) error {
-	dir := r.Cfg.OutputPath()
-
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-
-	if err := r.ensureGitignore(dir); err != nil {
+	if err := r.prepareOutput(); err != nil {
 		return err
 	}
 
@@ -54,6 +48,22 @@ func (r *Renderer) WriteAll(results []*Result, writeTalosconfig bool) error {
 	r.logf("wrote %s", Rel(path))
 
 	return nil
+}
+
+// prepareOutput creates the output directory and the .gitignore guarding it.
+//
+// Separate from WriteAll because the talosconfig can be the first thing ever
+// written to a cluster directory: commands that only need the credential
+// generate it on its own, and it carries the same cluster PKI as the machine
+// configs beside it. The directory it lands in has to be ignored either way.
+func (r *Renderer) prepareOutput() error {
+	dir := r.Cfg.OutputPath()
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+
+	return r.ensureGitignore(dir)
 }
 
 func (r *Renderer) ensureGitignore(dir string) error {
@@ -97,6 +107,10 @@ func ignoresEverything(body []byte) bool {
 // step, done with `talosctl config endpoint|node` rather than by editing YAML
 // ourselves.
 func (r *Renderer) WriteTalosconfig() (string, error) {
+	if err := r.prepareOutput(); err != nil {
+		return "", err
+	}
+
 	content, err := r.Tal.GenConfig(talosctl.GenConfigOptions{
 		ClusterName:  r.Cfg.ClusterName,
 		Endpoint:     r.Cfg.Endpoint,

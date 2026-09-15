@@ -488,3 +488,60 @@ func TestWriteAtomicReplacesInPlace(t *testing.T) {
 		t.Errorf("directory holds %d entries, want just the target", len(entries))
 	}
 }
+
+// The talosconfig is often the first thing written to a cluster directory:
+// kubeconfig, health, bootstrap and the rest generate it on its own when it is
+// missing, and a fresh checkout has no output directory at all, because the
+// directory is gitignored.
+func TestWriteTalosconfigCreatesTheOutputDirectory(t *testing.T) {
+	cfg, err := config.Load(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.RemoveAll(cfg.OutputPath()); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Renderer{Cfg: cfg, Tal: talosctl.New(cfg.Talosctl)}
+
+	if err := r.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	path, err := r.WriteTalosconfig()
+	if err != nil {
+		t.Fatalf("writing the talosconfig into a missing output directory: %v", err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Endpoints are the second talosctl call, and the reason this is not just
+	// a gen config away: without them the file cannot reach the cluster.
+	if !strings.Contains(string(body), "10.0.0.10") {
+		t.Errorf("talosconfig has no endpoints:\n%s", body)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("mode = %o, want 600: the talosconfig is a cluster credential", perm)
+	}
+
+	// The guard has to arrive with the file, not with the first render.
+	ignore, err := os.ReadFile(filepath.Join(cfg.OutputPath(), ".gitignore"))
+	if err != nil {
+		t.Fatalf("no .gitignore beside the talosconfig: %v", err)
+	}
+
+	if !strings.Contains(string(ignore), "\n*\n") {
+		t.Errorf("ineffective .gitignore:\n%s", ignore)
+	}
+}

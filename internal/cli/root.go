@@ -122,20 +122,46 @@ func newRenderer(cfg *config.Config, submit bool, log *os.File) (*render.Rendere
 	return r, nil
 }
 
-// requireTalosconfig returns the generated talosconfig path, or an actionable
-// error when it has not been rendered yet.
-func requireTalosconfig(cfg *config.Config) (string, error) {
+// ensureTalosconfig returns the talosconfig every cluster-facing command needs,
+// generating it first when it is not there.
+//
+// It used to fail with "run `talman render` first", which asked the operator
+// to run a command talman can run itself: the file is derived entirely from
+// the secrets bundle and the node list, both of which are already in hand, and
+// nothing about producing it touches the cluster. A fresh checkout of a
+// cluster directory has no output directory at all -- it is gitignored -- so
+// that error met everyone who cloned one and reached for `kubeconfig`.
+//
+// Only a missing file is generated. An existing one is left exactly as it is,
+// because it is also the file an operator may have pointed at a bastion or a
+// different endpoint on purpose; `render` is the command that rewrites it.
+func ensureTalosconfig(cfg *config.Config) (string, error) {
 	path := cfg.TalosconfigPath()
 
-	if _, err := os.Stat(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("no talosconfig at %s: run `talman render` first", path)
-		}
-
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
 
-	return path, nil
+	fmt.Fprintf(os.Stderr, "no talosconfig at %s; generating one from %s\n",
+		render.Rel(path), cfg.SecretFile)
+
+	r, err := newRenderer(cfg, false, os.Stderr)
+	if err != nil {
+		return "", err
+	}
+
+	defer r.Close()
+
+	written, err := r.WriteTalosconfig()
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(written))
+
+	return written, nil
 }
 
 // renderContext is the slice of template context these commands report on.

@@ -88,7 +88,7 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 				}
 			}
 
-			tc, err := requireTalosconfig(cfg)
+			tc, err := ensureTalosconfig(cfg)
 			if err != nil {
 				return err
 			}
