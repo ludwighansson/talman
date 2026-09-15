@@ -9,6 +9,14 @@ on:
 permissions:
   contents: read
 
+# goreleaser's before hook runs the test suite, and the suite drives these two
+# binaries. Keep them in step with ci.yml: a release that installs neither
+# still passes, because the tests that need them skip -- which turns the gate
+# before a tag is published into a gate that tests nothing.
+env:
+  TALOSCTL_VERSION: v1.14.0
+  SOPS_VERSION: 3.13.3
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
@@ -25,6 +33,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Install talosctl
+        run: |
+          os=$(uname | tr '[:upper:]' '[:lower:]')
+          arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=amd64; [ "$arch" = "aarch64" ] && arch=arm64
+          curl -fsSL -o /usr/local/bin/talosctl \
+            "https://github.com/siderolabs/talos/releases/download/${TALOSCTL_VERSION}/talosctl-${os}-${arch}"
+          chmod +x /usr/local/bin/talosctl
+          talosctl version --client
+
+      - name: Install sops
+        run: |
+          os=$(uname | tr '[:upper:]' '[:lower:]')
+          arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=amd64; [ "$arch" = "aarch64" ] && arch=arm64
+          curl -fsSL -o /usr/local/bin/sops \
+            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.${os}.${arch}"
+          chmod +x /usr/local/bin/sops
+          sops --version
 
       - uses: goreleaser/goreleaser-action@v6
         with:
