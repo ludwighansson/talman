@@ -3,6 +3,14 @@
 Manage [Talos Linux](https://www.talos.dev/) clusters and, above all, their
 configuration patches.
 
+> [!WARNING]
+> **talman is early in development.** It is pre-1.0 and ships as alpha
+> releases: the config schema, the commands and their flags can still change in
+> ways that break your cluster directory, and an upgrade may need a manual
+> migration. It also drives real clusters — read what `render` writes and what
+> `diff` reports before you `apply`. Pin a tagged version rather than tracking
+> `main`.
+
 ```console
 $ talman patches -n development-worker-01
 development-worker-01 (worker, groups: db, storage)
@@ -74,8 +82,13 @@ registers it with the factory instead.
 ## Install
 
 ```console
-go install github.com/ludwighansson/talman/cmd/talman@latest
+go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-alpha.0
 ```
+
+Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
+[releases page](https://github.com/ludwighansson/talman/releases). Pin the tag
+rather than reaching for `@latest`: while talman is pre-1.0, `@latest` follows
+every alpha, breaking changes included.
 
 You also need [`talosctl`](https://docs.siderolabs.com/talos/v1.14/talosctl) on
 `PATH`, at least as new as the Talos version you target, and
