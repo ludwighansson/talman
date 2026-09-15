@@ -13,8 +13,15 @@ import (
 
 // fixture lays out a two-node cluster with a shared patch tree one directory
 // up, which is the layout talman exists to support.
+//
+// It generates the secrets bundle with talosctl, so it carries the skip for
+// every test that uses it. On the caller it was a rule three tests forgot,
+// which turned "talosctl is not installed" into three failures with nothing to
+// do with what they test.
 func fixture(t *testing.T) string {
 	t.Helper()
+
+	requireTalosctl(t)
 
 	root := t.TempDir()
 
@@ -141,8 +148,6 @@ func requireTalosctl(t *testing.T) {
 }
 
 func TestRenderProducesTargetedConfigs(t *testing.T) {
-	requireTalosctl(t)
-
 	cfg, err := config.Load(fixture(t))
 	if err != nil {
 		t.Fatal(err)
@@ -217,8 +222,6 @@ func TestRenderProducesTargetedConfigs(t *testing.T) {
 // TestBlameNamesTheOffendingPatch covers the failure path: talosctl reports
 // the offending document but never the file, so talman has to find it.
 func TestBlameNamesTheOffendingPatch(t *testing.T) {
-	requireTalosctl(t)
-
 	path := fixture(t)
 
 	bad := filepath.Join(filepath.Dir(path), "patches", "db", "sysctl.yaml")
@@ -255,8 +258,6 @@ func TestBlameNamesTheOffendingPatch(t *testing.T) {
 }
 
 func TestOpenRequiresSecrets(t *testing.T) {
-	requireTalosctl(t)
-
 	path := fixture(t)
 
 	if err := os.Remove(filepath.Join(filepath.Dir(path), "secrets.yaml")); err != nil {
@@ -284,8 +285,6 @@ func TestOpenRequiresSecrets(t *testing.T) {
 // The decrypted bundle lives in a temp dir for the duration of a pass and must
 // not survive it.
 func TestCloseRemovesDecryptedSecrets(t *testing.T) {
-	requireTalosctl(t)
-
 	cfg, err := config.Load(fixture(t))
 	if err != nil {
 		t.Fatal(err)
@@ -416,8 +415,6 @@ func TestNodeRequiresOpen(t *testing.T) {
 // actually ignores. A truncated one leaves machine configs -- which carry the
 // machine CA key and bootstrap token -- stageable.
 func TestGitignoreRestoredWhenIneffective(t *testing.T) {
-	requireTalosctl(t)
-
 	cfg, err := config.Load(fixture(t))
 	if err != nil {
 		t.Fatal(err)
