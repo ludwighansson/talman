@@ -362,9 +362,13 @@ nothing to upgrade: every node already runs Kubernetes v1.37.0 (use --force to u
 The kubelet is the signal because it is the one Kubernetes component every node
 runs, and the last one `talosctl upgrade-k8s` moves — an upgrade that failed
 part way through leaves it behind, so a kubelet on the target version means the
-control plane components got there first. The check also applies under
-`--dry-run`, where "nothing to upgrade" *is* the plan; `--force --dry-run`
-prints `talosctl`'s own plan instead.
+control plane components got there first.
+
+`--dry-run` answers for talman, not for `talosctl`: on an up-to-date cluster it
+reports nothing to upgrade, because that is what running the command would do.
+A dry run that printed a component-by-component plan the real command would
+never carry out is worse than no dry run at all. `--force --dry-run` reaches
+`talosctl`'s own plan.
 
 ## Migrating from talhelper
 

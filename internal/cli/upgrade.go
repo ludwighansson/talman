@@ -143,9 +143,10 @@ func newUpgradeK8sCmd() *cobra.Command {
 upgrades the whole cluster to kubernetesVersion from the config.
 
 talman first asks every node in the config which Kubernetes version it runs,
-and does nothing when they are all already on the target -- including under
---dry-run, where "nothing to upgrade" is the plan. Pass --force to run the
-upgrade regardless.`,
+and does nothing when they are all already on the target. --dry-run answers for
+talman rather than for talosctl, so on an up-to-date cluster it reports nothing
+to upgrade -- which is what running the command would do. Pass --force to run
+the upgrade regardless, or --force --dry-run for talosctl's own plan.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
