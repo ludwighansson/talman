@@ -274,7 +274,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman bootstrap` | initialise etcd, once |
 | `talman kubeconfig` | fetch the kubeconfig |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
-| `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` |
+| `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` (a noop when every node is already there) |
 | `talman health` | cluster health |
 | `talman reset` | wipe nodes (requires typing the cluster name) |
 | `talman version` | the talman and talosctl versions |
@@ -347,6 +347,24 @@ is pulled from, not what is running, and switching mirrors is not a reason to
 reboot a cluster. Anything talman cannot determine counts as out of date — an
 unknown version is never read as agreement. `--force` upgrades regardless;
 `--skip-etcd-check` is the separate flag that passes `--force` to `talosctl`.
+
+`upgrade-k8s` does the same for Kubernetes: it asks every node which version
+its kubelet runs, and does nothing when they are all already on
+`kubernetesVersion`.
+
+```console
+$ talman upgrade-k8s
+== development-control-01 (10.0.0.11) already runs Kubernetes v1.37.0
+== development-worker-01 (10.0.0.21) already runs Kubernetes v1.37.0
+nothing to upgrade: every node already runs Kubernetes v1.37.0 (use --force to upgrade anyway)
+```
+
+The kubelet is the signal because it is the one Kubernetes component every node
+runs, and the last one `talosctl upgrade-k8s` moves — an upgrade that failed
+part way through leaves it behind, so a kubelet on the target version means the
+control plane components got there first. The check also applies under
+`--dry-run`, where "nothing to upgrade" *is* the plan; `--force --dry-run`
+prints `talosctl`'s own plan instead.
 
 ## Migrating from talhelper
 
