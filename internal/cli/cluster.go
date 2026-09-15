@@ -37,7 +37,7 @@ func controlPlaneTarget(name string) (*config.Config, *talosctl.Runner, string, 
 		target = cps[0]
 	}
 
-	tc, err := requireTalosconfig(cfg)
+	tc, err := ensureTalosconfig(cfg)
 	if err != nil {
 		return nil, nil, "", nil, err
 	}

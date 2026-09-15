@@ -37,7 +37,7 @@ all data on the node and, if run against enough control planes, the cluster.`,
 				return err
 			}
 
-			tc, err := requireTalosconfig(cfg)
+			tc, err := ensureTalosconfig(cfg)
 			if err != nil {
 				return err
 			}

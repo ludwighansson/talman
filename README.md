@@ -296,6 +296,27 @@ and drops a `.gitignore` that excludes the whole output directory.
 repeatable). `-v` echoes every `talosctl` invocation. `-c` points at a config
 other than `./talman.yaml`.
 
+### The talosconfig
+
+`apply`, `diff`, `bootstrap`, `kubeconfig`, `upgrade`, `upgrade-k8s`, `health`
+and `reset` all authenticate with `clusterconfig/talosconfig`, and generate it
+when it is not there:
+
+```console
+$ talman kubeconfig
+no talosconfig at clusterconfig/talosconfig; generating one from secrets.sops.yaml
+wrote clusterconfig/talosconfig
+```
+
+The output directory is gitignored, so a freshly cloned cluster directory has
+no talosconfig in it — and the file is derived entirely from the secrets bundle
+and the node list, without touching the cluster. Demanding a `render` first was
+asking for a command talman can run itself.
+
+An existing talosconfig is never overwritten this way; `render` is the command
+that rewrites it. Nothing in talman reads a kubeconfig — `kubeconfig` fetches
+one over the Talos API for `kubectl`'s benefit, not talman's.
+
 ### Reaching talosctl flags talman does not model
 
 Every command that shells out takes `--extra-flags`, appended verbatim to the

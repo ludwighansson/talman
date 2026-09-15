@@ -23,7 +23,7 @@ func newHealthCmd() *cobra.Command {
 				return err
 			}
 
-			tc, err := requireTalosconfig(cfg)
+			tc, err := ensureTalosconfig(cfg)
 			if err != nil {
 				return err
 			}
