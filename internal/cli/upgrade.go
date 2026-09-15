@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/factory"
 	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/talosctl"
@@ -131,13 +132,21 @@ func newUpgradeK8sCmd() *cobra.Command {
 		node     string
 		to       string
 		dryRun   bool
+		force    bool
 		extraK8s []string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "upgrade-k8s",
 		Short: "Upgrade Kubernetes to the configured version",
-		Args:  cobra.NoArgs,
+		Long: `Upgrade-k8s runs "talosctl upgrade-k8s" from one control plane node, which
+upgrades the whole cluster to kubernetesVersion from the config.
+
+talman first asks every node in the config which Kubernetes version it runs,
+and does nothing when they are all already on the target -- including under
+--dry-run, where "nothing to upgrade" is the plan. Pass --force to run the
+upgrade regardless.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
 			if err != nil {
@@ -146,7 +155,25 @@ func newUpgradeK8sCmd() *cobra.Command {
 
 			version := to
 			if version == "" {
-				version = strings.TrimPrefix(cfg.KubernetesVersion, "v")
+				version = cfg.KubernetesVersion
+			}
+
+			// talosctl takes the version unprefixed; the config and the
+			// kubelet image tag are both written either way.
+			version = strings.TrimPrefix(version, "v")
+
+			if !force {
+				current, err := clusterRunsK8s(tal, tc, cfg.Nodes, version)
+				if err != nil {
+					return err
+				}
+
+				if current {
+					fmt.Fprintf(os.Stderr, "nothing to upgrade: every node already runs Kubernetes v%s "+
+						"(use --force to upgrade anyway)\n", version)
+
+					return nil
+				}
 			}
 
 			args := []string{
@@ -169,9 +196,72 @@ func newUpgradeK8sCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to drive the upgrade from")
 	cmd.Flags().StringVar(&to, "to", "", "target Kubernetes version (default: kubernetesVersion from the config)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the upgrade plan without running it")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"upgrade even when every node already runs the target version")
 	addExtraFlags(cmd, &extraK8s)
 
 	return cmd
+}
+
+// clusterRunsK8s reports whether every node already runs the target
+// Kubernetes version, printing what each node is on.
+//
+// Every node, not just the one driving the upgrade: upgrade-k8s is a
+// cluster-wide operation, and a single worker left behind is the whole reason
+// to run it again.
+func clusterRunsK8s(tal *talosctl.Runner, talosconfig string, nodes []config.Node, want string) (bool, error) {
+	done := true
+
+	for i := range nodes {
+		n := &nodes[i]
+
+		current, err := tal.KubeletVersion(talosconfig, n.IPAddress)
+		if err != nil {
+			return false, fmt.Errorf("reading the Kubernetes version of %s: %w "+
+				"(pass --force to upgrade without checking)", n.Hostname, err)
+		}
+
+		if k8sUpToDate(current, want) {
+			fmt.Fprintf(os.Stderr, "== %s (%s) already runs Kubernetes %s\n",
+				n.Hostname, n.IPAddress, current)
+
+			continue
+		}
+
+		fmt.Fprintf(os.Stderr, "== %s (%s): Kubernetes %s -> v%s\n",
+			n.Hostname, n.IPAddress, describeK8sVersion(current), want)
+
+		done = false
+	}
+
+	return done, nil
+}
+
+// k8sUpToDate reports whether a node's kubelet already runs the target
+// version.
+//
+// The kubelet is the signal because it is the one Kubernetes component every
+// node runs, and the last one "talosctl upgrade-k8s" moves: the control plane
+// components are upgraded before it, so a kubelet on the target version means
+// the rest of the cluster got there first. An upgrade that failed part way
+// through leaves the kubelet behind, which is what makes this check safe to
+// skip on.
+//
+// As with the Talos check, anything talman could not determine counts as out
+// of date: an unknown version must not be read as agreement.
+func k8sUpToDate(current, want string) bool {
+	current = strings.TrimPrefix(current, "v")
+	want = strings.TrimPrefix(want, "v")
+
+	return current != "" && current == want
+}
+
+func describeK8sVersion(current string) string {
+	if current == "" {
+		return "(unknown version)"
+	}
+
+	return current
 }
 
 // upToDate reports whether a node already runs the configured image.

@@ -81,3 +81,59 @@ func TestUpToDate(t *testing.T) {
 		})
 	}
 }
+
+// Same rule as the Talos check, one version deep: a kubelet talman could not
+// read must never be mistaken for one already on the target.
+func TestK8sUpToDate(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		want    string
+		up      bool
+	}{
+		{
+			name:    "same version",
+			current: "v1.37.0",
+			want:    "1.37.0",
+			up:      true,
+		},
+		{
+			name:    "same version, both v-prefixed",
+			current: "v1.37.0",
+			want:    "v1.37.0",
+			up:      true,
+		},
+		{
+			name:    "older kubelet",
+			current: "v1.36.2",
+			want:    "1.37.0",
+			up:      false,
+		},
+		{
+			name:    "newer kubelet than the config asks for",
+			current: "v1.38.0",
+			want:    "1.37.0",
+			up:      false,
+		},
+		{
+			name:    "patch release differs",
+			current: "v1.37.1",
+			want:    "1.37.0",
+			up:      false,
+		},
+		{
+			name:    "version unknown: must not be read as agreement",
+			current: "",
+			want:    "1.37.0",
+			up:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := k8sUpToDate(tt.current, tt.want); got != tt.up {
+				t.Errorf("k8sUpToDate(%q, %q) = %v, want %v", tt.current, tt.want, got, tt.up)
+			}
+		})
+	}
+}

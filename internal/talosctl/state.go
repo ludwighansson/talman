@@ -3,6 +3,7 @@ package talosctl
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -123,6 +124,84 @@ func findSchematic(node any) string {
 	}
 
 	return ""
+}
+
+// KubeletVersion reads the Kubernetes version a node's kubelet runs.
+//
+// Talos publishes no "this node runs Kubernetes X" resource; what it has is
+// the kubelet's image, and the tag on that image is the version. KubeletSpec
+// is the spec the node is actually running the kubelet from -- upgrade-k8s
+// rewrites it and Talos restarts the kubelet -- so it moves when the node
+// moves, which is what a skip decision needs.
+//
+// An empty version means talman could not tell, never that the node is at
+// some default: callers must read it as "cannot prove it is up to date".
+func (r *Runner) KubeletVersion(talosconfig, node string) (string, error) {
+	out, err := r.Output("--talosconfig", talosconfig, "--nodes", node,
+		"get", "kubeletspec", "--output", "yaml")
+	if err != nil {
+		return "", err
+	}
+
+	return parseKubeletVersion(out), nil
+}
+
+// kubeletImage matches the tag on a kubelet image reference, e.g.
+// ghcr.io/siderolabs/kubelet:v1.37.0. A digest may follow the tag when the
+// image is pinned, and is not part of the version.
+var kubeletImage = regexp.MustCompile(`(?:^|/)kubelet:(v?\d+\.\d+\.\d+[^\s@]*)`)
+
+// parseKubeletVersion finds the kubelet version in `talosctl get kubeletspec`.
+//
+// Like parseSchematicID this walks the document rather than indexing a field
+// path: the resource layout is Talos', and a release that nests the image
+// differently should degrade to "unknown" rather than to a wrong answer. Only
+// the kubelet's own image can match, so finding it anywhere is enough.
+func parseKubeletVersion(out []byte) string {
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+
+	for {
+		var doc any
+
+		if err := dec.Decode(&doc); err != nil {
+			return ""
+		}
+
+		if v := findKubeletVersion(doc); v != "" {
+			return v
+		}
+	}
+}
+
+func findKubeletVersion(node any) string {
+	switch v := node.(type) {
+	case string:
+		if m := kubeletImage.FindStringSubmatch(v); m != nil {
+			return vPrefixed(m[1])
+		}
+	case map[string]any:
+		for _, child := range v {
+			if tag := findKubeletVersion(child); tag != "" {
+				return tag
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if tag := findKubeletVersion(child); tag != "" {
+				return tag
+			}
+		}
+	}
+
+	return ""
+}
+
+func vPrefixed(version string) string {
+	if version == "" || strings.HasPrefix(version, "v") {
+		return version
+	}
+
+	return "v" + version
 }
 
 // Reachable reports whether the node answers the Talos API.

@@ -163,3 +163,63 @@ func TestSubcommandSharedBetweenOutputAndStream(t *testing.T) {
 		t.Errorf("subcommand() = %q, want %q", got, "apply-config")
 	}
 }
+
+func TestParseKubeletVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want string
+	}{
+		{
+			name: "kubelet spec",
+			out: "node: 10.0.0.11\nmetadata:\n    id: kubelet\nspec:\n" +
+				"    image: ghcr.io/siderolabs/kubelet:v1.37.0\n" +
+				"    args:\n        - --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubeconfig\n",
+			want: "v1.37.0",
+		},
+		{
+			name: "unprefixed tag",
+			out:  "spec:\n    image: ghcr.io/siderolabs/kubelet:1.37.0\n",
+			want: "v1.37.0",
+		},
+		{
+			name: "pre-release tag",
+			out:  "spec:\n    image: ghcr.io/siderolabs/kubelet:v1.38.0-rc.1\n",
+			want: "v1.38.0-rc.1",
+		},
+		{
+			name: "digest-pinned image: the digest is not part of the version",
+			out:  "spec:\n    image: ghcr.io/siderolabs/kubelet:v1.37.0@sha256:0bad1dea\n",
+			want: "v1.37.0",
+		},
+		{
+			name: "another image alongside it",
+			out: "spec:\n    image: ghcr.io/siderolabs/kubelet:v1.37.0\n" +
+				"    args:\n        - --pod-infra-container-image=registry.k8s.io/pause:3.10\n",
+			want: "v1.37.0",
+		},
+		{
+			name: "no kubelet image present",
+			out:  "spec:\n    image: registry.k8s.io/pause:3.10\n",
+			want: "",
+		},
+		{
+			name: "empty output",
+			out:  "",
+			want: "",
+		},
+		{
+			name: "unexpected shape degrades to unknown rather than guessing",
+			out:  "just: a scalar\n",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseKubeletVersion([]byte(tt.out)); got != tt.want {
+				t.Errorf("parseKubeletVersion() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
