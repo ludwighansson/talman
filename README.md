@@ -277,7 +277,8 @@ and drops a `.gitignore` that excludes the whole output directory.
 | --- | --- |
 | `talman validate` | check keys, paths and templates; needs no secrets or network |
 | `talman patches` | the resolved patch chain per node, in application order |
-| `talman nodes` | the node table (`--status` asks each node what it is) |
+| `talman nodes` | the node table, from the config alone |
+| `talman status` | what each node is actually running, against the config |
 | `talman secrets generate` | create the encrypted secrets bundle |
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
@@ -289,6 +290,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
 | `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` (a noop when every node is already there) |
 | `talman health` | cluster health |
+| `talman dashboard <node>` | the Talos text UI for one node |
 | `talman reset` | wipe nodes (requires typing the cluster name) |
 | `talman version` | the talman and talosctl versions |
 
@@ -332,16 +334,8 @@ $ talman apply --only-new
 == talos-w01 (10.164.0.32) maintenance mode; adopting it
 ```
 
-`talman nodes --status` is the view of the same question, and the only form of
-`nodes` that talks to the cluster:
-
-```console
-$ talman nodes --status
-HOSTNAME    ADDRESS       ROLE           STATUS             GROUPS   PATCHES   TALOS
-talos-c01   10.164.0.27   controlplane   running            -        5         v1.14.0
-talos-w01   10.164.0.32   worker         maintenance mode   -        4         v1.14.0
-talos-w02   10.164.0.29   worker         unreachable        -        4         v1.14.0
-```
+`talman status` is the view of the same question, and of every other question
+about what is actually out there — see below.
 
 `-i` still forces the maintenance service for every node and `--insecure=false`
 forces cluster PKI, for when the answer is known better than the probe can tell
@@ -370,6 +364,40 @@ self-signed maintenance certificate, which `talosctl` reports as `certificate
 signed by unknown authority`. That is a build-out step, not a broken cluster.
 Once every node has joined, the gate runs between nodes as it should, which is
 the roll-out it exists for. `--health` gates regardless.
+
+### Seeing what is out there
+
+`talman nodes` reads the config. `talman status` asks the machines:
+
+```console
+$ talman status
+HOSTNAME    ADDRESS       ROLE           STATUS             TALOS               KUBERNETES          SCHEMATIC
+talos-c01   10.164.0.27   controlplane   running            v1.14.0             v1.37.0             079113ce0508
+talos-c03   10.164.0.30   controlplane   running            v1.13.5 → v1.14.0   v1.36.2 → v1.37.0   079113ce0508
+talos-w01   10.164.0.32   worker         maintenance mode   -                   -                   -
+talos-w02   10.164.0.29   worker         unreachable        -                   -                   -
+3 node(s): 2 running, 1 in maintenance mode, 1 unreachable; 1 not on the configured version
+```
+
+An arrow is drift: what is running on the left, what the config resolves to on
+the right, which is what `upgrade` and `upgrade-k8s` would close. A `-` is
+something talman could not read — never the configured value dressed up as a
+live one. Nodes are asked in parallel, because the report is most wanted when
+something is down, and a machine that is down takes two dial timeouts to admit
+it.
+
+`status` reports and always succeeds; `health` is the one that passes or fails.
+
+`talman dashboard <node>` opens `talosctl`'s text UI — overview, logs and live
+metrics — for exactly one machine, named as a hostname or an address:
+
+```console
+$ talman dashboard talos-c01
+```
+
+The node is reached at its own address rather than through the talosconfig
+endpoints: a dashboard is most wanted when the cluster is unhappy, which is
+when a control plane proxying for the node is least able to serve it.
 
 ### The kubeconfig
 
