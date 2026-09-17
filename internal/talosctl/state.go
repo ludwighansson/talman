@@ -204,6 +204,60 @@ func vPrefixed(version string) string {
 	return "v" + version
 }
 
+// Mode is how a node's Talos API answers.
+type Mode int
+
+// The three answers a node can give.
+const (
+	// ModeUnreachable is neither API answering: the machine is down, or
+	// nothing talman can say applies to it.
+	ModeUnreachable Mode = iota
+	// ModeRunning is cluster PKI: the node has a config and has joined.
+	ModeRunning
+	// ModeMaintenance is the maintenance service: the node is up and waiting
+	// for a config, having never had one or having been reset.
+	ModeMaintenance
+)
+
+func (m Mode) String() string {
+	switch m {
+	case ModeRunning:
+		return "running"
+	case ModeMaintenance:
+		return "maintenance mode"
+	default:
+		return "unreachable"
+	}
+}
+
+// Mode probes one node to find out which API it answers on.
+//
+// The two calls are the two ways to talk to Talos, asked in the order that
+// makes a healthy cluster cheap: a running node answers the first, a node in
+// maintenance refuses it at the TLS handshake and answers the second, and a
+// machine that is down costs both dial timeouts before saying so.
+//
+// --endpoints is pinned to the node itself. Without it talosctl routes --nodes
+// through the talosconfig's endpoints, which are the control planes, so the
+// answer would be about whichever control plane proxied rather than about this
+// machine -- and a node in maintenance has no proxy path at all.
+//
+// --insecure goes after the subcommand: it is a flag on `version`, not a
+// global, and talosctl rejects the invocation outright when it comes first.
+func (r *Runner) Mode(talosconfig, node string) Mode {
+	if _, err := r.Output("--talosconfig", talosconfig,
+		"--endpoints", node, "--nodes", node, "version"); err == nil {
+		return ModeRunning
+	}
+
+	if _, err := r.Output("--endpoints", node, "--nodes", node,
+		"version", "--insecure"); err == nil {
+		return ModeMaintenance
+	}
+
+	return ModeUnreachable
+}
+
 // Reachable reports whether the node answers the Talos API.
 func (r *Runner) Reachable(talosconfig, node string) bool {
 	_, err := r.Output("--talosconfig", talosconfig, "--nodes", node, "version")

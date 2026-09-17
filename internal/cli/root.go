@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -162,6 +163,33 @@ func ensureTalosconfig(cfg *config.Config) (string, error) {
 	fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(written))
 
 	return written, nil
+}
+
+// resumeHint names the nodes a stopped pass did not get to, and spells out the
+// command that picks up where it left off.
+//
+// A node-by-node command stops at the first failure, which leaves the operator
+// holding a half-finished cluster and a scroll-back to read the remainder out
+// of. The node it failed on is part of the remainder: its own work did not
+// finish either.
+//
+// done is the past participle for the message ("applied", "reset"); command is
+// what to type to resume.
+func resumeHint(command, done string, remaining []*config.Node, flags ...string) string {
+	names := make([]string, 0, len(remaining))
+	resume := "talman " + command
+
+	for _, n := range remaining {
+		names = append(names, n.Hostname)
+		resume += " -n " + n.Hostname
+	}
+
+	for _, f := range flags {
+		resume += " " + f
+	}
+
+	return fmt.Sprintf("  %d node(s) were not %s: %s\n  continue with: %s",
+		len(names), done, strings.Join(names, ", "), resume)
 }
 
 // renderContext is the slice of template context these commands report on.

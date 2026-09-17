@@ -277,13 +277,13 @@ and drops a `.gitignore` that excludes the whole output directory.
 | --- | --- |
 | `talman validate` | check keys, paths and templates; needs no secrets or network |
 | `talman patches` | the resolved patch chain per node, in application order |
-| `talman nodes` | the node table |
+| `talman nodes` | the node table (`--status` asks each node what it is) |
 | `talman secrets generate` | create the encrypted secrets bundle |
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
 | `talman image url` | the installer image reference per node |
 | `talman diff` | re-render, then show what applying would change |
-| `talman apply` | re-render, then apply |
+| `talman apply` | re-render, then apply, adopting nodes in maintenance mode |
 | `talman bootstrap` | initialise etcd, once |
 | `talman kubeconfig` | fetch the kubeconfig |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
@@ -295,6 +295,73 @@ and drops a `.gitignore` that excludes the whole output directory.
 `-n/--node` restricts most commands to named nodes (hostname or IP,
 repeatable). `-v` echoes every `talosctl` invocation. `-c` points at a config
 other than `./talman.yaml`.
+
+### Adopting nodes
+
+A node that has never been configured — or that has just been `reset` — answers
+only the maintenance service, while nodes already in the cluster answer with
+cluster PKI. `apply` asks each node which it is, immediately before sending its
+config, so a half-adopted cluster needs no flag:
+
+```console
+$ talman apply
+== talos-c01 (10.164.0.27)
+== talos-w01 (10.164.0.32) maintenance mode; adopting it
+```
+
+The probe pins `--endpoints` to the node itself. Left to its own devices
+`talosctl` routes `--nodes` through the talosconfig's endpoints, which are the
+control planes, so the answer would describe whichever control plane proxied —
+and a node in maintenance mode has no proxy path at all.
+
+A fresh cluster:
+
+```console
+$ talman apply -n talos-c01   # adopted: installs and reboots into its config
+$ talman bootstrap            # once, ever: initialises etcd
+$ talman apply                # the rest, control planes and workers alike
+```
+
+Adding a machine to a live cluster is `talman apply -n <new node>`, and
+re-adopting one after `reset` is the same command. `--only-new` does the whole
+lot at once, restricting the run to the nodes currently in maintenance mode:
+
+```console
+$ talman apply --only-new
+   talos-c01 (10.164.0.27) is running; not new, skipping
+== talos-w01 (10.164.0.32) maintenance mode; adopting it
+```
+
+`talman nodes --status` is the view of the same question, and the only form of
+`nodes` that talks to the cluster:
+
+```console
+$ talman nodes --status
+HOSTNAME    ADDRESS       ROLE           STATUS             GROUPS   PATCHES   TALOS
+talos-c01   10.164.0.27   controlplane   running            -        5         v1.14.0
+talos-w01   10.164.0.32   worker         maintenance mode   -        4         v1.14.0
+talos-w02   10.164.0.29   worker         unreachable        -        4         v1.14.0
+```
+
+`-i` still forces the maintenance service for every node and `--insecure=false`
+forces cluster PKI, for when the answer is known better than the probe can tell
+— but neither is needed for a mixed cluster any more, which is what they used
+to be reached for and what they were never able to do.
+
+A node that answers neither API stops the run and names what is left, since
+that is a fault rather than a state:
+
+```console
+error: talos-w02 (10.164.0.29) answers neither the Talos API nor the maintenance service
+  2 node(s) were not applied: talos-w02, talos-w03
+  continue with: talman apply -n talos-w02 -n talos-w03
+```
+
+The health gate stands down while adopting into a cluster that does not exist
+yet — during a first bootstrap it could only ever fail — and comes back as soon
+as any node in the run answers as part of a cluster, because a machine joining
+a live cluster can break it and the nodes queued behind it are worth stopping
+for.
 
 ### The talosconfig
 
