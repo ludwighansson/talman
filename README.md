@@ -404,6 +404,31 @@ A dry run that printed a component-by-component plan the real command would
 never carry out is worse than no dry run at all. `--force --dry-run` reaches
 `talosctl`'s own plan.
 
+`reset` wipes workers before control planes, and reaches each node at its own
+address rather than through the talosconfig endpoints:
+
+```console
+$ talman reset --graceful=false
+== resetting talos-w01 (10.164.0.32)
+...
+== resetting talos-c01 (10.164.0.27)
+```
+
+The endpoints *are* the control planes, so config order — control planes first
+— cut the reset's own path partway through: a worker's reset would be proxied
+through a control plane wiped three steps earlier, and time out. It is also the
+order a graceful reset needs, since leaving etcd and the Kubernetes API takes a
+control plane that is still serving. `--direct=false` restores endpoint routing
+for a network where node addresses are not reachable from where talman runs.
+
+A reset still stops at the first failure, and names what it did not get to:
+
+```console
+error: talosctl reset exited with status 1
+  2 node(s) were not reset: talos-w02, talos-w03
+  continue with: talman reset -n talos-w02 -n talos-w03 --graceful=false
+```
+
 ## Migrating from talhelper
 
 | talhelper | talman |
