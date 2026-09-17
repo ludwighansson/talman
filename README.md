@@ -585,6 +585,14 @@ order a graceful reset needs, since leaving etcd and the Kubernetes API takes a
 control plane that is still serving. `--direct=false` restores endpoint routing
 for a network where node addresses are not reachable from where talman runs.
 
+A reset node comes back with no config and no identity, so everything that
+needs one waits: containerd, the CRI, and any extension service behind them.
+`iscsi-tools` parks on `waiting for file /etc/iscsi/initiatorname.iscsi to
+exist` — the initiator name is derived from the node identity, which lives in
+STATE — and a console showing that looks like a boot that never finishes. It is
+not: the node is in maintenance mode, and `talman apply -n <node>` adopts it
+and clears the wait. `reset` says so when it finishes.
+
 A reset still stops at the first failure, and names what it did not get to:
 
 ```console
