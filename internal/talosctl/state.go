@@ -24,10 +24,15 @@ type NodeState struct {
 }
 
 // State reads a node's running Talos version and schematic.
+//
+// Pinned to the node, like every other question about one: routed through the
+// talosconfig's endpoints the answer comes back empty whenever the control
+// plane that would proxy is itself down, which reads as "cannot tell what this
+// node runs" about a node that would have said so directly.
 func (r *Runner) State(talosconfig, node string) (NodeState, error) {
 	var state NodeState
 
-	raw, err := r.Output("--talosconfig", talosconfig, "--nodes", node, "version")
+	raw, err := r.Output("--talosconfig", talosconfig, "--endpoints", node, "--nodes", node, "version")
 	if err != nil {
 		return state, err
 	}
@@ -36,7 +41,7 @@ func (r *Runner) State(talosconfig, node string) (NodeState, error) {
 
 	// A node with no schematic extension (not installed from a factory image)
 	// is not an error; it just cannot be compared on schematic.
-	ext, err := r.Output("--talosconfig", talosconfig, "--nodes", node,
+	ext, err := r.Output("--talosconfig", talosconfig, "--endpoints", node, "--nodes", node,
 		"get", "extensions", "--output", "yaml")
 	if err == nil {
 		state.SchematicID = parseSchematicID(ext)
@@ -137,7 +142,7 @@ func findSchematic(node any) string {
 // An empty version means talman could not tell, never that the node is at
 // some default: callers must read it as "cannot prove it is up to date".
 func (r *Runner) KubeletVersion(talosconfig, node string) (string, error) {
-	out, err := r.Output("--talosconfig", talosconfig, "--nodes", node,
+	out, err := r.Output("--talosconfig", talosconfig, "--endpoints", node, "--nodes", node,
 		"get", "kubeletspec", "--output", "yaml")
 	if err != nil {
 		return "", err
