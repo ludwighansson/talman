@@ -357,11 +357,19 @@ error: talos-w02 (10.164.0.29) answers neither the Talos API nor the maintenance
   continue with: talman apply -n talos-w02 -n talos-w03
 ```
 
-The health gate stands down while adopting into a cluster that does not exist
-yet — during a first bootstrap it could only ever fail — and comes back as soon
-as any node in the run answers as part of a cluster, because a machine joining
-a live cluster can break it and the nodes queued behind it are worth stopping
-for.
+The health gate stands down while any node in the config is still outside the
+cluster, naming the ones that are:
+
+```console
+   not gating on cluster health: talos-c02 is maintenance mode, talos-c03 is unreachable (pass --health to check anyway)
+```
+
+The check covers the cluster the config describes, so during a build-out it
+checks machines that have not joined yet — and an unadopted node answers with a
+self-signed maintenance certificate, which `talosctl` reports as `certificate
+signed by unknown authority`. That is a build-out step, not a broken cluster.
+Once every node has joined, the gate runs between nodes as it should, which is
+the roll-out it exists for. `--health` gates regardless.
 
 ### The talosconfig
 

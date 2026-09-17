@@ -78,3 +78,52 @@ func TestNewNodesRefusesToGuessAboutADeadNode(t *testing.T) {
 		t.Errorf("error should name the node and the way out:\n%v", err)
 	}
 }
+
+// The health gate checks the cluster the config describes, so it only means
+// something once that cluster exists. A node that has not been adopted answers
+// with a self-signed maintenance certificate, which the check reports as
+// "certificate signed by unknown authority" -- a build-out step read as a
+// broken cluster.
+func TestNotInCluster(t *testing.T) {
+	cfg := &config.Config{
+		Nodes: []config.Node{
+			{Hostname: "c01", IPAddress: "10.0.0.11", Role: config.RoleControlPlane},
+			{Hostname: "c02", IPAddress: "10.0.0.12", Role: config.RoleControlPlane},
+			{Hostname: "w01", IPAddress: "10.0.0.21", Role: config.RoleWorker},
+		},
+	}
+
+	t.Run("half-built cluster names who is missing", func(t *testing.T) {
+		tal := fakeCluster(t, []string{"10.0.0.11"}, []string{"10.0.0.12"})
+
+		got := notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{})
+
+		if !strings.Contains(got, "c02 is maintenance mode") || !strings.Contains(got, "w01 is unreachable") {
+			t.Errorf("notInCluster() = %q", got)
+		}
+	})
+
+	t.Run("fully built cluster gates", func(t *testing.T) {
+		tal := fakeCluster(t, []string{"10.0.0.11", "10.0.0.12", "10.0.0.21"}, nil)
+
+		if got := notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}); got != "" {
+			t.Errorf("notInCluster() = %q, want \"\": every node answers with cluster PKI", got)
+		}
+	})
+
+	t.Run("answers already in hand are not asked for again", func(t *testing.T) {
+		// A runner that fails every call: if the cache is consulted, nothing
+		// here needs it.
+		tal := fakeCluster(t, nil, nil)
+
+		modes := map[string]talosctl.Mode{
+			"10.0.0.11": talosctl.ModeRunning,
+			"10.0.0.12": talosctl.ModeRunning,
+			"10.0.0.21": talosctl.ModeRunning,
+		}
+
+		if got := notInCluster(cfg, tal, "/tmp/tc", modes); got != "" {
+			t.Errorf("notInCluster() = %q, want \"\": the cached answers say the cluster is whole", got)
+		}
+	})
+}

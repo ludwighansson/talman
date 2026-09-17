@@ -119,11 +119,9 @@ node, and --insecure=false forces cluster PKI.`,
 			// not a hint: honour it for every node and skip the probing.
 			forced := cmd.Flags().Changed("insecure")
 
-			// Whether a cluster is known to exist: set by the first node that
-			// answers with cluster PKI, or asserted by --insecure=false. It
-			// decides whether the health gate has anything to check after an
-			// adoption.
-			clusterSeen := forced && !insecure
+			// What each node answered, so the health gate can tell a cluster
+			// that is still being built from one that is misbehaving.
+			modes := map[string]talosctl.Mode{}
 
 			if onlyNew {
 				targets, err = newNodes(tal, tc, targets)
@@ -154,12 +152,14 @@ node, and --insecure=false forces cluster PKI.`,
 				maintenance := insecure
 
 				if !forced {
-					switch state := tal.Mode(tc, n.IPAddress); state {
+					state := tal.Mode(tc, n.IPAddress)
+					modes[n.IPAddress] = state
+
+					switch state {
 					case talosctl.ModeMaintenance:
 						maintenance = true
 					case talosctl.ModeRunning:
 						maintenance = false
-						clusterSeen = true
 					case talosctl.ModeUnreachable:
 						return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service\n%s",
 							n.Hostname, n.IPAddress, resumeHint(use, done, targets[i:]))
@@ -214,22 +214,30 @@ node, and --insecure=false forces cluster PKI.`,
 						return fmt.Errorf("%w\n  the remaining nodes were left untouched; "+
 							"re-run once it recovers, or pass --wait=false to roll on regardless", err)
 					}
+
+					// It answered on the secure API, so whatever it was
+					// before this, it is in the cluster now.
+					modes[n.IPAddress] = talosctl.ModeRunning
 				}
 
-				// A node that was in maintenance is an install rather than a
-				// roll-out, and if nothing in this run has answered as part of
-				// a cluster, there is no cluster for the gate to check: that
-				// is the bootstrap case, where gating can only ever fail.
+				// The gate checks the cluster the config describes, so it
+				// only means something once that cluster exists. A node that
+				// has not been adopted yet answers with a self-signed
+				// maintenance certificate, which the check reports as
+				// "certificate signed by unknown authority" -- a build-out
+				// step read as a broken cluster.
 				//
-				// Once some node has answered with cluster PKI the gate is
-				// back on, adoptions included -- a machine joining a live
-				// cluster can break it, and the nodes behind it in the queue
-				// are worth stopping for. An explicit --health always gates.
-				if health && maintenance && !clusterSeen && !cmd.Flags().Changed("health") {
-					fmt.Fprintf(os.Stderr, "   not gating on cluster health: %s was being adopted and no node "+
-						"here answers as part of a cluster yet (pass --health to check anyway)\n", n.Hostname)
+				// So while any node is outside the cluster, the gate stands
+				// down and says which nodes those are. Once they have all
+				// joined it gates every node, which is the roll-out case it
+				// exists for. An explicit --health always gates.
+				if health && !cmd.Flags().Changed("health") {
+					if outside := notInCluster(cfg, tal, tc, modes); outside != "" {
+						fmt.Fprintf(os.Stderr, "   not gating on cluster health: %s (pass --health to check anyway)\n",
+							outside)
 
-					continue
+						continue
+					}
 				}
 
 				if health {
@@ -298,6 +306,38 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node) 
 	}
 
 	return out, nil
+}
+
+// notInCluster describes the configured nodes that are not part of the cluster
+// yet, or "" when every one of them is.
+//
+// Nodes this run has already asked about are not asked again: the answers are
+// carried in modes, including for a node this run just adopted and watched
+// come back.
+func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
+	modes map[string]talosctl.Mode,
+) string {
+	var outside []string
+
+	for i := range cfg.Nodes {
+		n := &cfg.Nodes[i]
+
+		state, known := modes[n.IPAddress]
+		if !known {
+			state = tal.Mode(talosconfig, n.IPAddress)
+			modes[n.IPAddress] = state
+		}
+
+		if state != talosctl.ModeRunning {
+			outside = append(outside, fmt.Sprintf("%s is %s", n.Hostname, state))
+		}
+	}
+
+	if len(outside) == 0 {
+		return ""
+	}
+
+	return strings.Join(outside, ", ")
 }
 
 // clusterHealth runs the same check `talman health` performs, from the first
