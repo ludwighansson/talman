@@ -121,6 +121,19 @@ cluster to leave.`,
 				}
 			}
 
+			// A node in maintenance mode has no config and no identity, so
+			// everything that needs one waits: containerd, the CRI, and any
+			// extension service behind them. iscsi-tools parks on "waiting
+			// for file /etc/iscsi/initiatorname.iscsi to exist", which the
+			// console shows as a boot that never finishes. It is a node doing
+			// exactly what it was told to do, and saying so here is cheaper
+			// than working it out from a console.
+			if reboot && !wipeDisk {
+				fmt.Fprintf(os.Stderr, "\n%d node(s) reset; they reboot into maintenance mode with no config,\n"+
+					"so services that need one -- extension services especially -- sit waiting until it arrives.\n"+
+					"  talman apply -n %s   adopts a node again\n", len(targets), targets[0].Hostname)
+			}
+
 			return nil
 		},
 	}
