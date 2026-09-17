@@ -457,6 +457,42 @@ An existing talosconfig is never overwritten this way; `render` is the command
 that rewrites it. Nothing in talman reads a kubeconfig — `kubeconfig` fetches
 one over the Talos API for `kubectl`'s benefit, not talman's.
 
+### Parallelism
+
+Everything talman does per node is a talosctl process, and on a large cluster
+one at a time takes as long as it sounds. `-p/--parallel` sets how many nodes
+are worked on at once:
+
+| command | default | why |
+| --- | --- | --- |
+| `render`, `diff` | 8 | nothing is enacted; the work is local or a dry run |
+| `status` | 8 | always concurrent — it is what you run when a node is down |
+| `apply`, `upgrade`, `reset` | 1 | one node at a time is the unit of risk |
+
+For the three that change a cluster the flag raises the limit for **workers
+only**. A control plane always goes alone, whatever the number says: two
+rebooting together is how a three-node control plane loses quorum, and the
+reason to reach for `--parallel` is a hundred workers rather than a shortcut
+through etcd. Config order is kept — a run of workers batches up to the limit,
+and a control plane interrupts the run:
+
+```console
+$ talman apply --parallel 4
+== talos-c01 (10.164.0.27)      # alone
+   checking cluster health before continuing
+== talos-w01 (10.164.0.32)      # these four together
+== talos-w02 (10.164.0.29)
+== talos-w03 (10.164.0.31)
+== talos-w04 (10.164.0.33)
+   checking cluster health before continuing
+```
+
+The health check and the wait for a node to come back run per batch rather than
+per node, so a batch is also the unit the roll-out stops at. With more than one
+node in flight each node's output is captured and printed whole, because eight
+talosctl processes sharing a terminal interleave into something no one can
+attribute to a machine.
+
 ### Reaching talosctl flags talman does not model
 
 Every command that shells out takes `--extra-flags`, appended verbatim to the

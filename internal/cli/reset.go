@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +19,7 @@ func newResetCmd() *cobra.Command {
 		yes        bool
 		graceful   bool
 		direct     bool
+		parallel   int
 		reboot     bool
 		wipeDisk   bool
 		wipeLabels []string
@@ -84,7 +86,16 @@ cluster to leave.`,
 
 			tal := runner(cfg)
 
-			for i, n := range targets {
+			var printMu sync.Mutex
+
+			say := func(block string) {
+				printMu.Lock()
+				defer printMu.Unlock()
+
+				fmt.Fprint(os.Stderr, block)
+			}
+
+			resetOne := func(n *config.Node, grouped bool) error {
 				args := []string{"--talosconfig", tc}
 
 				// Ahead of the subcommand: --endpoints is one of talosctl's
@@ -109,30 +120,44 @@ cluster to leave.`,
 
 				args = append(args, extraFlags...)
 
-				fmt.Fprintf(os.Stderr, "== resetting %s (%s)\n", n.Hostname, n.IPAddress)
+				header := fmt.Sprintf("== resetting %s (%s)\n", n.Hostname, n.IPAddress)
 
-				if err := tal.Stream(args...); err != nil {
+				if grouped {
+					out, err := tal.Output(args...)
+
+					say(header + string(out))
+
+					return err
+				}
+
+				say(header)
+
+				return tal.Stream(args...)
+			}
+
+			// Control planes one at a time whatever --parallel says. A batch
+			// of workers can be wiped together; two control planes cannot,
+			// and the ordering above puts them last for the same reason.
+			done := 0
+
+			for _, batch := range batches(targets, parallel) {
+				grouped := len(batch) > 1
+
+				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
+					return struct{}{}, resetOne(n, grouped)
+				}); err != nil {
 					var flags []string
 					if !graceful {
 						flags = append(flags, "--graceful=false")
 					}
 
-					return fmt.Errorf("%w\n%s", err, resumeHint("reset", "reset", targets[i:], flags...))
+					return fmt.Errorf("%w\n%s", err, resumeHint("reset", "reset", targets[done:], flags...))
 				}
+
+				done += len(batch)
 			}
 
-			// A node in maintenance mode has no config and no identity, so
-			// everything that needs one waits: containerd, the CRI, and any
-			// extension service behind them. iscsi-tools parks on "waiting
-			// for file /etc/iscsi/initiatorname.iscsi to exist", which the
-			// console shows as a boot that never finishes. It is a node doing
-			// exactly what it was told to do, and saying so here is cheaper
-			// than working it out from a console.
-			if reboot && !wipeDisk {
-				fmt.Fprintf(os.Stderr, "\n%d node(s) reset; they reboot into maintenance mode with no config,\n"+
-					"so services that need one -- extension services especially -- sit waiting until it arrives.\n"+
-					"  talman apply -n %s   adopts a node again\n", len(targets), targets[0].Hostname)
-			}
+			fmt.Fprintf(os.Stderr, "%d node(s) reset successfully\n", len(targets))
 
 			return nil
 		},
@@ -149,6 +174,8 @@ cluster to leave.`,
 		"system partitions to wipe, by label")
 	cmd.Flags().BoolVar(&wipeDisk, "wipe-disk", false,
 		"wipe the system disk whole, Talos installation included, instead of named partitions")
+	addParallelFlag(cmd, &parallel, 1,
+		"how many workers to wipe at once; control planes always go one at a time")
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd

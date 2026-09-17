@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/factory"
@@ -36,7 +37,16 @@ type Renderer struct {
 	workspace   string
 	secretsFile string
 
+	// schematicIDs caches resolved schematics for the pass, so a file shared
+	// by fifty nodes is read, templated and hashed once.
 	schematicIDs map[string]string
+
+	// One Renderer serves a whole pass, and a pass may render nodes
+	// concurrently. Everything per node is already separate -- each writes
+	// its patches under its own hostname -- so these two are the whole of the
+	// sharing: the cache, and the log nobody wants interleaved mid-line.
+	schemaMu sync.Mutex
+	logMu    sync.Mutex
 }
 
 // Result is one node's rendered machine config.
@@ -52,6 +62,9 @@ func (r *Renderer) logf(format string, args ...any) {
 	if r.Log == nil {
 		return
 	}
+
+	r.logMu.Lock()
+	defer r.logMu.Unlock()
 
 	fmt.Fprintf(r.Log, format+"\n", args...)
 }
@@ -285,11 +298,22 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 
 	// Context is reachable without Open (validate does exactly that), so the
 	// cache is created on demand rather than assumed.
+	//
+	// The lock covers the cache, not the work below it: submitting the same
+	// schematic twice in a race returns the same ID from the Image Factory,
+	// which is a far better trade than holding a mutex across a network call
+	// while every other node waits.
+	r.schemaMu.Lock()
+
 	if r.schematicIDs == nil {
 		r.schematicIDs = map[string]string{}
 	}
 
-	if cached, ok := r.schematicIDs[string(canonical)]; ok {
+	cached, ok := r.schematicIDs[string(canonical)]
+
+	r.schemaMu.Unlock()
+
+	if ok {
 		return cached, nil
 	}
 
@@ -312,7 +336,9 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 		return "", err
 	}
 
+	r.schemaMu.Lock()
 	r.schematicIDs[string(canonical)] = id
+	r.schemaMu.Unlock()
 
 	return id, nil
 }

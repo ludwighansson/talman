@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/render"
 )
 
@@ -17,6 +18,7 @@ func newRenderCmd() *cobra.Command {
 		dryRun        bool
 		toStdout      bool
 		noTalosconfig bool
+		parallel      int
 		extraFlags    []string
 	)
 
@@ -51,21 +53,25 @@ output directory or the repository.`,
 			// the invocation this command exists to drive.
 			r.ExtraArgs = extraFlags
 
-			results := make([]*render.Result, 0, len(targets))
-
-			for _, n := range targets {
+			// Two talosctl processes per node -- gen config, then validate --
+			// and nothing between nodes depends on anything else, so a large
+			// cluster has no reason to render one node at a time.
+			results, err := eachNode(targets, parallel, func(n *config.Node) (*render.Result, error) {
 				res, err := r.Node(n)
 				if err != nil {
-					return err
+					return nil, err
 				}
 
 				if !noValidate {
 					if err := r.Validate(res, cfg.TalosMode); err != nil {
-						return err
+						return nil, err
 					}
 				}
 
-				results = append(results, res)
+				return res, nil
+			})
+			if err != nil {
+				return err
 			}
 
 			switch {
@@ -105,6 +111,7 @@ output directory or the repository.`,
 		"write rendered configs to stdout, each preceded by a \"# talman: <hostname>\" banner")
 	cmd.Flags().BoolVar(&noTalosconfig, "no-talosconfig", false,
 		"do not generate a talosconfig")
+	addParallelFlag(cmd, &parallel, defaultParallel, "how many nodes to render at once")
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd

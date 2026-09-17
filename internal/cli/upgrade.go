@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -20,6 +21,7 @@ func newUpgradeCmd() *cobra.Command {
 		stage         bool
 		force         bool
 		skipEtcdCheck bool
+		parallel      int
 		extraFlags    []string
 	)
 
@@ -52,15 +54,28 @@ and check the target first with "talman image url".`,
 			tal := runner(cfg)
 			r := &render.Renderer{Cfg: cfg, Submit: submit}
 
-			var skipped int
+			var (
+				skipped    int
+				countMu    sync.Mutex
+				printMu    sync.Mutex
+				upgradeOne func(*config.Node, bool) error
+			)
 
-			for _, n := range targets {
+			say := func(block string) {
+				printMu.Lock()
+				defer printMu.Unlock()
+
+				fmt.Fprint(os.Stderr, block)
+			}
+
+			upgradeOne = func(n *config.Node, grouped bool) error {
 				ctx, err := r.Context(n)
 				if err != nil {
 					return err
 				}
 
 				want := ctx.Node.TalosVersion
+				header := fmt.Sprintf("== %s (%s)\n", n.Hostname, n.IPAddress)
 
 				if !force {
 					current, err := tal.State(tc, n.IPAddress)
@@ -70,15 +85,17 @@ and check the target first with "talman image url".`,
 					}
 
 					if upToDate(current, want, ctx.Node.SchematicID) {
-						fmt.Fprintf(os.Stderr, "== %s (%s) already runs %s with schematic %s; skipping\n",
-							n.Hostname, n.IPAddress, current.TalosVersion, short(current.SchematicID))
+						say(fmt.Sprintf("== %s (%s) already runs %s with schematic %s; skipping\n",
+							n.Hostname, n.IPAddress, current.TalosVersion, short(current.SchematicID)))
 
+						countMu.Lock()
 						skipped++
+						countMu.Unlock()
 
-						continue
+						return nil
 					}
 
-					fmt.Fprintf(os.Stderr, "== %s (%s): %s -> %s\n",
+					header = fmt.Sprintf("== %s (%s): %s -> %s\n",
 						n.Hostname, n.IPAddress, describeState(current), want)
 				}
 
@@ -99,11 +116,36 @@ and check the target first with "talman image url".`,
 
 				args = append(args, extraFlags...)
 
-				fmt.Fprintf(os.Stderr, "   image %s\n", ctx.Node.InstallerImage)
+				header += fmt.Sprintf("   image %s\n", ctx.Node.InstallerImage)
 
-				if err := tal.Stream(args...); err != nil {
+				if grouped {
+					out, err := tal.Output(args...)
+
+					say(header + string(out))
+
 					return err
 				}
+
+				say(header)
+
+				return tal.Stream(args...)
+			}
+
+			// Control planes one at a time whatever --parallel says: an
+			// upgrade reboots the machine, and two control planes rebooting
+			// together is how a three-node cluster loses quorum.
+			done := 0
+
+			for _, batch := range batches(targets, parallel) {
+				grouped := len(batch) > 1
+
+				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
+					return struct{}{}, upgradeOne(n, grouped)
+				}); err != nil {
+					return fmt.Errorf("%w\n%s", err, resumeHint("upgrade", "upgraded", targets[done:]))
+				}
+
+				done += len(batch)
 			}
 
 			if skipped == len(targets) {
@@ -122,6 +164,8 @@ and check the target first with "talman image url".`,
 		"upgrade even when the node already runs the configured version and schematic")
 	cmd.Flags().BoolVar(&skipEtcdCheck, "skip-etcd-check", false,
 		"pass --force to talosctl, skipping its etcd health checks")
+	addParallelFlag(cmd, &parallel, 1,
+		"how many workers to upgrade at once; control planes always go one at a time")
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
