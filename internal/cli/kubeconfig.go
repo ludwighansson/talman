@@ -88,7 +88,7 @@ overwritten, because it is a generated artefact of this cluster directory.`,
 	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to fetch from (default: the first one)")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing context when merging")
 	cmd.Flags().BoolVar(&merge, "merge", true,
-		"merge into the destination instead of replacing it (default false for talman's own copy)")
+		"merge into a destination you name, rather than replacing it")
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd

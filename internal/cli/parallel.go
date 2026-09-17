@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -17,9 +19,34 @@ import (
 // laptop rendering it happens to be a big one.
 const defaultParallel = 8
 
-// addParallelFlag registers --parallel with the given default.
+// maxParallel bounds --parallel.
+//
+// Not a limit anyone should meet: it is there so a typo asks a question rather
+// than forking a thousand talosctl processes at a cluster.
+const maxParallel = 64
+
+// addParallelFlag registers --parallel with the given default, and the check
+// that the number means something.
+//
+// Silently reading 0 or -1 as 1 would let a scripted typo change what a run
+// does without saying so, which for apply and reset is the difference between
+// one node at a time and something else entirely.
 func addParallelFlag(cmd *cobra.Command, target *int, def int, help string) {
 	cmd.Flags().IntVarP(target, "parallel", "p", def, help)
+
+	previous := cmd.PreRunE
+
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if *target < 1 || *target > maxParallel {
+			return fmt.Errorf("--parallel %d is out of range: it must be between 1 and %d", *target, maxParallel)
+		}
+
+		if previous != nil {
+			return previous(c, args)
+		}
+
+		return nil
+	}
 }
 
 // eachNode runs fn over the nodes, at most parallel at a time, and returns the
@@ -28,8 +55,10 @@ func addParallelFlag(cmd *cobra.Command, target *int, def int, help string) {
 // not a table anyone can read.
 //
 // Every node is attempted even when one fails, because a pass over a cluster
-// that stops at the first problem hides the other four; the first error in
-// node order is what comes back.
+// that stops at the first problem hides the other four -- and every failure
+// comes back, joined in node order. Returning only the first would have let a
+// batch where two nodes failed report one of them and leave the operator to
+// discover the other from the cluster.
 func eachNode[T any](nodes []*config.Node, parallel int, fn func(*config.Node) (T, error)) ([]T, error) {
 	results := make([]T, len(nodes))
 	errs := make([]error, len(nodes))
@@ -57,13 +86,7 @@ func eachNode[T any](nodes []*config.Node, parallel int, fn func(*config.Node) (
 
 	wg.Wait()
 
-	for _, err := range errs {
-		if err != nil {
-			return results, err
-		}
-	}
-
-	return results, nil
+	return results, errors.Join(errs...)
 }
 
 // names lists node hostnames for a message about several of them at once.
@@ -76,6 +99,23 @@ func names(nodes []*config.Node) string {
 	return strings.Join(out, ", ")
 }
 
+// without drops the nodes already accounted for, keeping order.
+//
+// A batch fails as a unit but its nodes do not: three workers go together, one
+// refuses the config, and the two that took it must not appear in the list of
+// what still needs doing.
+func without(nodes []*config.Node, done map[string]bool) []*config.Node {
+	out := make([]*config.Node, 0, len(nodes))
+
+	for _, n := range nodes {
+		if !done[n.IPAddress] {
+			out = append(out, n)
+		}
+	}
+
+	return out
+}
+
 // batches groups nodes that may be worked on at the same time.
 //
 // A control plane is always alone in its batch. Rebooting two at once is how a
@@ -84,6 +124,36 @@ func names(nodes []*config.Node) string {
 // order is preserved: a run of workers batches up to the limit, and a control
 // plane interrupts the run.
 func batches(nodes []*config.Node, parallel int) [][]*config.Node {
+	return batchesFor(nodes, parallel, false)
+}
+
+// batchesFor is batches for a pass that may not be enacting anything: a dry
+// run has no reboots to stagger, so control planes have nothing to be kept
+// apart from.
+func batchesFor(nodes []*config.Node, parallel int, inert bool) [][]*config.Node {
+	if inert {
+		return chunks(nodes, parallel)
+	}
+
+	return controlPlanesAlone(nodes, parallel)
+}
+
+func chunks(nodes []*config.Node, parallel int) [][]*config.Node {
+	if parallel < 1 {
+		parallel = 1
+	}
+
+	var out [][]*config.Node
+
+	for start := 0; start < len(nodes); start += parallel {
+		end := min(start+parallel, len(nodes))
+		out = append(out, nodes[start:end])
+	}
+
+	return out
+}
+
+func controlPlanesAlone(nodes []*config.Node, parallel int) [][]*config.Node {
 	if parallel < 1 {
 		parallel = 1
 	}

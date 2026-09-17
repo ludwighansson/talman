@@ -122,6 +122,39 @@ func (r *Runner) Output(args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// Combined runs talosctl and returns stdout and stderr interleaved, for a
+// caller that will print the result itself.
+//
+// Output is the wrong tool for that: it keeps stderr back unless the command
+// fails, and talosctl's action tracker -- every progress and completion line
+// an upgrade or a reset produces -- writes there. Capturing with Output left a
+// node's block empty, so a parallel pass printed a header per node and nothing
+// underneath it.
+//
+// The bytes come back on failure too. What a command managed to say before it
+// died is usually the explanation.
+func (r *Runner) Combined(args ...string) ([]byte, error) {
+	cmd := exec.Command(r.Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+
+	var buf bytes.Buffer
+
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
+	r.echo(args)
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return buf.Bytes(), fmt.Errorf("talosctl %s exited with status %d", subcommand(args), exitErr.ExitCode())
+		}
+
+		return buf.Bytes(), fmt.Errorf("talosctl %s: %w", subcommand(args), err)
+	}
+
+	return buf.Bytes(), nil
+}
+
 // Stream runs talosctl with the caller's stdio attached, for interactive and
 // long-running commands where progress matters more than capture.
 func (r *Runner) Stream(args ...string) error {

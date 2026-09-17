@@ -105,7 +105,7 @@ node, and --insecure=false forces cluster PKI.`,
 			// report agreement. Rendering here is what makes both commands
 			// mean what they say.
 			if !noRender {
-				if err := renderForApply(cfg, targets); err != nil {
+				if err := renderForApply(cfg, targets, parallel); err != nil {
 					return err
 				}
 			}
@@ -132,7 +132,7 @@ node, and --insecure=false forces cluster PKI.`,
 			var saidUngated bool
 
 			if onlyNew {
-				targets, err = newNodes(tal, tc, targets)
+				targets, err = newNodes(tal, tc, targets, parallel)
 				if err != nil {
 					return err
 				}
@@ -224,13 +224,15 @@ node, and --insecure=false forces cluster PKI.`,
 				}
 
 				if grouped {
-					out, err := tal.Output(args...)
-
-					say(header + string(out))
+					out, err := tal.Combined(args...)
 
 					if err != nil {
+						say(header + string(out) + "   error: " + err.Error() + "\n")
+
 						return err
 					}
+
+					say(header + string(out))
 				} else {
 					say(header)
 
@@ -261,6 +263,16 @@ node, and --insecure=false forces cluster PKI.`,
 					modesMu.Lock()
 					modes[n.IPAddress] = talosctl.ModeRunning
 					modesMu.Unlock()
+				} else {
+					// Without the wait talman did not see what the node did
+					// next, and the answer it has is now stale -- a node
+					// recorded as being in maintenance mode keeps the health
+					// gate down for the whole rest of the run. Forget it, so
+					// the gate asks again rather than trusting a reading from
+					// before the config landed.
+					modesMu.Lock()
+					delete(modes, n.IPAddress)
+					modesMu.Unlock()
 				}
 
 				return nil
@@ -272,13 +284,37 @@ node, and --insecure=false forces cluster PKI.`,
 			// together can.
 			done := 0
 
-			for _, batch := range batches(targets, parallel) {
+			// Nothing is enacted by a dry run or a staged apply, so the rule
+			// that keeps control planes apart has nothing to protect: they
+			// batch with everything else. `apply --dry-run` is `diff` and
+			// should not take fifty turns to say so.
+			inert := dryRun || mode == "staged"
+
+			if inert && !cmd.Flags().Changed("parallel") {
+				parallel = defaultParallel
+			}
+
+			var (
+				okMu      sync.Mutex
+				succeeded = map[string]bool{}
+			)
+
+			for _, batch := range batchesFor(targets, parallel, inert) {
 				grouped := len(batch) > 1
 
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					return struct{}{}, applyOne(n, grouped)
+					if err := applyOne(n, grouped); err != nil {
+						return struct{}{}, err
+					}
+
+					okMu.Lock()
+					succeeded[n.IPAddress] = true
+					okMu.Unlock()
+
+					return struct{}{}, nil
 				}); err != nil {
-					return fmt.Errorf("%w\n%s", err, resumeHint(use, doneWord, targets[done:]))
+					return fmt.Errorf("%w\n%s", err,
+						resumeHint(use, doneWord, without(targets[done:], succeeded)))
 				}
 
 				done += len(batch)
@@ -299,7 +335,7 @@ node, and --insecure=false forces cluster PKI.`,
 				// joined it gates every node, which is the roll-out case it
 				// exists for. An explicit --health always gates.
 				if health && !cmd.Flags().Changed("health") {
-					if outside := notInCluster(cfg, tal, tc, modes); len(outside) > 0 {
+					if outside := notInCluster(cfg, tal, tc, modes, parallel); len(outside) > 0 {
 						if !saidUngated {
 							saidUngated = true
 
@@ -346,22 +382,26 @@ node, and --insecure=false forces cluster PKI.`,
 	}
 
 	addParallelFlag(cmd, &parallel, perPass,
-		"how many workers to work on at once; control planes always go one at a time")
+		"how many nodes to work on at once; control planes go one at a time unless nothing is enacted")
 
+	// Everything below this line is about enacting a change and waiting for
+	// its consequences, which a dry run has none of: diff would advertise
+	// them, accept them, and honour none.
 	if !forceDryRun {
 		cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without applying")
-	}
 
-	// Rolling straight on to the next node is how a bad config takes out a
-	// whole control plane instead of one machine, so both gates default on.
-	cmd.Flags().BoolVar(&wait, "wait", true,
-		"wait for each node to come back before applying to the next")
-	cmd.Flags().BoolVar(&health, "health", true,
-		"run a cluster health check between nodes")
-	cmd.Flags().DurationVar(&stabilize, "stabilize", 30*time.Second,
-		"how long a node must stay reachable before it counts as back")
-	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute,
-		"how long to wait for a single node to come back")
+		// Rolling straight on to the next node is how a bad config takes out
+		// a whole control plane instead of one machine, so both gates default
+		// on.
+		cmd.Flags().BoolVar(&wait, "wait", true,
+			"wait for each node to come back before applying to the next")
+		cmd.Flags().BoolVar(&health, "health", true,
+			"run a cluster health check between nodes")
+		cmd.Flags().DurationVar(&stabilize, "stabilize", 30*time.Second,
+			"how long a node must stay reachable before it counts as back")
+		cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute,
+			"how long to wait for a single node to come back")
+	}
 	cmd.Flags().BoolVar(&noRender, "no-render", false,
 		"apply the configs already in the output directory instead of re-rendering")
 	addExtraFlags(cmd, &extraFlags)
@@ -375,11 +415,21 @@ node, and --insecure=false forces cluster PKI.`,
 // This is the one path that probes every target up front rather than node by
 // node: the filter cannot be applied without knowing all the answers, and
 // paying for them is the point of asking for it.
-func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node) ([]*config.Node, error) {
+func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node, parallel int) ([]*config.Node, error) {
+	// Asked concurrently: this sweep touches every target before anything
+	// happens, and a node that is down costs two dial timeouts to establish
+	// that. Serially, one dead machine delayed the whole run by a minute.
+	states, err := eachNode(targets, parallel, func(n *config.Node) (talosctl.Mode, error) {
+		return tal.Mode(talosconfig, n.IPAddress), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	out := make([]*config.Node, 0, len(targets))
 
-	for _, n := range targets {
-		switch state := tal.Mode(talosconfig, n.IPAddress); state {
+	for i, n := range targets {
+		switch states[i] {
 		case talosctl.ModeMaintenance:
 			out = append(out, n)
 		case talosctl.ModeRunning:
@@ -401,21 +451,33 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node) 
 // carried in modes, including for a node this run just adopted and watched
 // come back.
 func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
-	modes map[string]talosctl.Mode,
+	modes map[string]talosctl.Mode, parallel int,
 ) []string {
+	unknown := make([]*config.Node, 0, len(cfg.Nodes))
+
+	for i := range cfg.Nodes {
+		if _, known := modes[cfg.Nodes[i].IPAddress]; !known {
+			unknown = append(unknown, &cfg.Nodes[i])
+		}
+	}
+
+	// Concurrently, and once: the gate runs between batches, so a node
+	// answered for here is not asked again for the rest of the roll-out.
+	states, _ := eachNode(unknown, parallel, func(n *config.Node) (talosctl.Mode, error) {
+		return tal.Mode(talosconfig, n.IPAddress), nil
+	})
+
+	for i, n := range unknown {
+		modes[n.IPAddress] = states[i]
+	}
+
 	var outside []string
 
 	for i := range cfg.Nodes {
 		n := &cfg.Nodes[i]
 
-		state, known := modes[n.IPAddress]
-		if !known {
-			state = tal.Mode(talosconfig, n.IPAddress)
-			modes[n.IPAddress] = state
-		}
-
-		if state != talosctl.ModeRunning {
-			outside = append(outside, fmt.Sprintf("%s is %s", n.Hostname, state))
+		if modes[n.IPAddress] != talosctl.ModeRunning {
+			outside = append(outside, fmt.Sprintf("%s is %s", n.Hostname, modes[n.IPAddress]))
 		}
 	}
 
@@ -445,26 +507,30 @@ func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string)
 // The talosconfig is regenerated too: it is the credential the apply itself
 // uses, and leaving it behind while the machine configs move forward is how a
 // cluster ends up unreachable by its own tooling.
-func renderForApply(cfg *config.Config, targets []*config.Node) error {
+func renderForApply(cfg *config.Config, targets []*config.Node, parallel int) error {
 	r, err := newRenderer(cfg, false, os.Stderr)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
 
-	results := make([]*render.Result, 0, len(targets))
-
-	for _, n := range targets {
+	// Rendering is the same local work `talman render` parallelises, and it
+	// all happens before the first node is touched: an apply that staggers
+	// its reboots has no reason to stagger its gen config calls too.
+	results, err := eachNode(targets, parallel, func(n *config.Node) (*render.Result, error) {
 		res, err := r.Node(n)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if err := r.Validate(res, cfg.TalosMode); err != nil {
-			return err
+			return nil, err
 		}
 
-		results = append(results, res)
+		return res, nil
+	})
+	if err != nil {
+		return err
 	}
 
 	return r.WriteAll(results, true)

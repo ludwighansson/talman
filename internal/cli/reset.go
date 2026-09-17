@@ -123,9 +123,13 @@ cluster to leave.`,
 				header := fmt.Sprintf("== resetting %s (%s)\n", n.Hostname, n.IPAddress)
 
 				if grouped {
-					out, err := tal.Output(args...)
+					out, err := tal.Combined(args...)
 
-					say(header + string(out))
+					if err != nil {
+						say(header + string(out) + "   error: " + err.Error() + "\n")
+					} else {
+						say(header + string(out))
+					}
 
 					return err
 				}
@@ -140,18 +144,32 @@ cluster to leave.`,
 			// and the ordering above puts them last for the same reason.
 			done := 0
 
+			var (
+				okMu      sync.Mutex
+				succeeded = map[string]bool{}
+			)
+
 			for _, batch := range batches(targets, parallel) {
 				grouped := len(batch) > 1
 
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					return struct{}{}, resetOne(n, grouped)
+					if err := resetOne(n, grouped); err != nil {
+						return struct{}{}, err
+					}
+
+					okMu.Lock()
+					succeeded[n.IPAddress] = true
+					okMu.Unlock()
+
+					return struct{}{}, nil
 				}); err != nil {
 					var flags []string
 					if !graceful {
 						flags = append(flags, "--graceful=false")
 					}
 
-					return fmt.Errorf("%w\n%s", err, resumeHint("reset", "reset", targets[done:], flags...))
+					return fmt.Errorf("%w\n%s", err,
+						resumeHint("reset", "reset", without(targets[done:], succeeded), flags...))
 				}
 
 				done += len(batch)
