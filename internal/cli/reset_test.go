@@ -23,15 +23,6 @@ func nodesOf(order ...string) []*config.Node {
 	return out
 }
 
-func names(nodes []*config.Node) string {
-	out := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		out = append(out, n.Hostname)
-	}
-
-	return strings.Join(out, ",")
-}
-
 // A control plane reset first takes out the endpoint every later node is
 // reached through, and leaves nothing for a graceful reset to leave.
 func TestResetOrder(t *testing.T) {
@@ -43,22 +34,22 @@ func TestResetOrder(t *testing.T) {
 		{
 			name:    "config order: control planes first",
 			targets: nodesOf("c1:controlplane", "c2:controlplane", "w1:worker", "w2:worker"),
-			want:    "w1,w2,c1,c2",
+			want:    "w1, w2, c1, c2",
 		},
 		{
 			name:    "interleaved, and stable within each group",
 			targets: nodesOf("c1:controlplane", "w1:worker", "c2:controlplane", "w2:worker"),
-			want:    "w1,w2,c1,c2",
+			want:    "w1, w2, c1, c2",
 		},
 		{
 			name:    "workers only",
 			targets: nodesOf("w1:worker", "w2:worker"),
-			want:    "w1,w2",
+			want:    "w1, w2",
 		},
 		{
 			name:    "control planes only",
 			targets: nodesOf("c1:controlplane", "c2:controlplane"),
-			want:    "c1,c2",
+			want:    "c1, c2",
 		},
 		{
 			name:    "nothing selected",

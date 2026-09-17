@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,9 +37,9 @@ maintenance mode can be diffed alongside the rest of the cluster.`
 
 func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 	// What the remainder message says a stopped pass did not do.
-	done := "applied"
+	doneWord := "applied"
 	if forceDryRun {
-		done = "diffed"
+		doneWord = "diffed"
 	}
 
 	var (
@@ -46,6 +47,7 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 		mode       string
 		insecure   bool
 		onlyNew    bool
+		parallel   int
 		dryRun     bool
 		wait       bool
 		health     bool
@@ -142,7 +144,23 @@ node, and --insecure=false forces cluster PKI.`,
 				}
 			}
 
-			for i, n := range targets {
+			// Everything the per-node pass touches is per node, except the
+			// probe cache, which several nodes in a batch write at once.
+			var modesMu sync.Mutex
+
+			// Eight talosctl processes writing to one terminal produce an
+			// interleaved mess nobody can attribute to a node, so a batch of
+			// more than one captures each node's output and prints it whole.
+			var printMu sync.Mutex
+
+			say := func(block string) {
+				printMu.Lock()
+				defer printMu.Unlock()
+
+				fmt.Fprint(os.Stderr, block)
+			}
+
+			applyOne := func(n *config.Node, grouped bool) error {
 				file := cfg.MachineConfigPath(n)
 
 				if _, err := os.Stat(file); err != nil {
@@ -159,7 +177,10 @@ node, and --insecure=false forces cluster PKI.`,
 
 				if !forced {
 					state := tal.Mode(tc, n.IPAddress)
+
+					modesMu.Lock()
 					modes[n.IPAddress] = state
+					modesMu.Unlock()
 
 					switch state {
 					case talosctl.ModeMaintenance:
@@ -167,8 +188,8 @@ node, and --insecure=false forces cluster PKI.`,
 					case talosctl.ModeRunning:
 						maintenance = false
 					case talosctl.ModeUnreachable:
-						return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service\n%s",
-							n.Hostname, n.IPAddress, resumeHint(use, done, targets[i:]))
+						return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
+							n.Hostname, n.IPAddress)
 					}
 				}
 
@@ -190,40 +211,80 @@ node, and --insecure=false forces cluster PKI.`,
 
 				args = append(args, extraFlags...)
 
+				var header string
+
 				switch {
 				case maintenance && forced:
-					fmt.Fprintf(os.Stderr, "== %s (%s) through the maintenance service (--insecure)\n",
+					header = fmt.Sprintf("== %s (%s) through the maintenance service (--insecure)\n",
 						n.Hostname, n.IPAddress)
 				case maintenance:
-					fmt.Fprintf(os.Stderr, "== %s (%s) maintenance mode; adopting it\n", n.Hostname, n.IPAddress)
+					header = fmt.Sprintf("== %s (%s) maintenance mode; adopting it\n", n.Hostname, n.IPAddress)
 				default:
-					fmt.Fprintf(os.Stderr, "== %s (%s)\n", n.Hostname, n.IPAddress)
+					header = fmt.Sprintf("== %s (%s)\n", n.Hostname, n.IPAddress)
 				}
 
-				if err := tal.Stream(args...); err != nil {
-					return fmt.Errorf("%w\n%s", err, resumeHint(use, done, targets[i:]))
+				if grouped {
+					out, err := tal.Output(args...)
+
+					say(header + string(out))
+
+					if err != nil {
+						return err
+					}
+				} else {
+					say(header)
+
+					if err := tal.Stream(args...); err != nil {
+						return err
+					}
 				}
 
 				// Nothing to wait for when the change was not enacted: a dry
 				// run touches nothing, and staged config lands on the next
 				// reboot rather than now.
 				if dryRun || mode == "staged" {
-					continue
+					return nil
 				}
 
 				if wait {
 					logf := func(format string, args ...any) {
-						fmt.Fprintf(os.Stderr, format+"\n", args...)
+						say(fmt.Sprintf(format+"\n", args...))
 					}
 
 					if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
-						return fmt.Errorf("%w\n  the remaining nodes were left untouched; "+
-							"re-run once it recovers, or pass --wait=false to roll on regardless", err)
+						return fmt.Errorf("%w\n  re-run once it recovers, "+
+							"or pass --wait=false to roll on regardless", err)
 					}
 
 					// It answered on the secure API, so whatever it was
 					// before this, it is in the cluster now.
+					modesMu.Lock()
 					modes[n.IPAddress] = talosctl.ModeRunning
+					modesMu.Unlock()
+				}
+
+				return nil
+			}
+
+			// Control planes one at a time, workers up to --parallel: the
+			// unit of risk is still a node, and a batch of workers cannot
+			// take out a cluster the way two control planes rebooting
+			// together can.
+			done := 0
+
+			for _, batch := range batches(targets, parallel) {
+				grouped := len(batch) > 1
+
+				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
+					return struct{}{}, applyOne(n, grouped)
+				}); err != nil {
+					return fmt.Errorf("%w\n%s", err, resumeHint(use, doneWord, targets[done:]))
+				}
+
+				done += len(batch)
+
+				if dryRun || mode == "staged" {
+					continue
 				}
 
 				// The gate checks the cluster the config describes, so it
@@ -259,8 +320,8 @@ node, and --insecure=false forces cluster PKI.`,
 					fmt.Fprintf(os.Stderr, "   checking cluster health before continuing\n")
 
 					if err := clusterHealth(cfg, tal, tc); err != nil {
-						return fmt.Errorf("cluster is unhealthy after applying to %s: %w\n"+
-							"  the remaining nodes were left untouched", n.Hostname, err)
+						return fmt.Errorf("cluster is unhealthy after applying to %s: %w\n%s",
+							names(batch), err, resumeHint(use, doneWord, targets[done:]))
 					}
 				}
 			}
@@ -276,6 +337,16 @@ node, and --insecure=false forces cluster PKI.`,
 		"force the maintenance service for every node (default: ask each node which API it answers)")
 	cmd.Flags().BoolVar(&onlyNew, "only-new", false,
 		"restrict the run to nodes that are in maintenance mode")
+
+	// A dry run enacts nothing, so there is nothing to stagger and no reason
+	// to make a fifty-node diff take fifty turns.
+	perPass := 1
+	if forceDryRun {
+		perPass = defaultParallel
+	}
+
+	addParallelFlag(cmd, &parallel, perPass,
+		"how many workers to work on at once; control planes always go one at a time")
 
 	if !forceDryRun {
 		cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without applying")
