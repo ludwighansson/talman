@@ -69,6 +69,19 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 					mode, strings.Join(applyModes, ", "))
 			}
 
+			// --insecure means the node had no certificate to authenticate
+			// with, which is the initial install. There is no cluster for a
+			// health check to pass against yet -- the other nodes may not even
+			// be installed -- so gating on one only ever fails. An explicit
+			// --health still wins, for installing into a cluster that is
+			// already up.
+			if insecure && health && !cmd.Flags().Changed("health") {
+				health = false
+
+				fmt.Fprintf(os.Stderr, "not gating on cluster health: --insecure installs into a cluster "+
+					"that need not exist yet (pass --health to check anyway)\n")
+			}
+
 			targets, err := render.Nodes(cfg, nodes)
 			if err != nil {
 				return err
@@ -186,30 +199,21 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 	return cmd
 }
 
-// clusterHealth runs the same check `talman health` performs.
+// clusterHealth runs the same check `talman health` performs, from the first
+// control plane in the config.
+//
+// Not from the node just applied: a worker cannot answer for the cluster, and
+// picking whichever node the roll-out happens to be on would make a failing
+// gate mean something different at each step.
 func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string) error {
-	var cps, workers []string
-
-	for i := range cfg.Nodes {
-		n := &cfg.Nodes[i]
-		if n.IsControlPlane() {
-			cps = append(cps, n.IPAddress)
-		} else {
-			workers = append(workers, n.IPAddress)
-		}
+	from, err := healthNode(cfg, tal, talosconfig)
+	if err != nil {
+		return err
 	}
 
-	args := []string{"--talosconfig", talosconfig, "health", "--server=false"}
-
-	if len(cps) > 0 {
-		args = append(args, "--control-plane-nodes", strings.Join(cps, ","))
-	}
-
-	if len(workers) > 0 {
-		args = append(args, "--worker-nodes", strings.Join(workers, ","))
-	}
-
-	return tal.Stream(args...)
+	// Client-side: the gate is "can talman still see a healthy cluster from
+	// here", which is the question a roll-out has to stop on.
+	return tal.Stream(healthArgs(cfg, talosconfig, from, false)...)
 }
 
 // renderForApply re-renders the targeted nodes and writes them out, so what

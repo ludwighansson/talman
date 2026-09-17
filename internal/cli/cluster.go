@@ -15,26 +15,9 @@ func controlPlaneTarget(name string) (*config.Config, *talosctl.Runner, string, 
 		return nil, nil, "", nil, err
 	}
 
-	var target *config.Node
-
-	if name != "" {
-		n, ok := cfg.Node(name)
-		if !ok {
-			return nil, nil, "", nil, fmt.Errorf("no node %q in the config", name)
-		}
-
-		if !n.IsControlPlane() {
-			return nil, nil, "", nil, fmt.Errorf("node %s is a worker; this command needs a control plane node", name)
-		}
-
-		target = n
-	} else {
-		cps := cfg.ControlPlanes()
-		if len(cps) == 0 {
-			return nil, nil, "", nil, fmt.Errorf("no control plane nodes in the config")
-		}
-
-		target = cps[0]
+	target, err := controlPlane(cfg, name)
+	if err != nil {
+		return nil, nil, "", nil, err
 	}
 
 	tc, err := ensureTalosconfig(cfg)
@@ -43,4 +26,28 @@ func controlPlaneTarget(name string) (*config.Config, *talosctl.Runner, string, 
 	}
 
 	return cfg, runner(cfg), tc, target, nil
+}
+
+// controlPlane resolves a named control plane node, or the first one in the
+// config when nothing is named.
+func controlPlane(cfg *config.Config, name string) (*config.Node, error) {
+	if name == "" {
+		cps := cfg.ControlPlanes()
+		if len(cps) == 0 {
+			return nil, fmt.Errorf("no control plane nodes in the config")
+		}
+
+		return cps[0], nil
+	}
+
+	n, ok := cfg.Node(name)
+	if !ok {
+		return nil, fmt.Errorf("no node %q in the config", name)
+	}
+
+	if !n.IsControlPlane() {
+		return nil, fmt.Errorf("node %s is a worker; this command needs a control plane node", name)
+	}
+
+	return n, nil
 }

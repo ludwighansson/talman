@@ -363,7 +363,18 @@ then runs a cluster health check, and stops the roll-out if either fails —
 leaving the remaining nodes untouched. That is the difference between a bad
 patch costing you one machine and costing you the control plane. Disable with
 `--wait=false` / `--health=false`; neither runs for `--dry-run` or
-`--mode=staged`, where nothing was enacted.
+`--mode=staged`, where nothing was enacted, and the health gate also stands
+down for `--insecure` — installing a node that had no config to authenticate
+with is the one case where there need not be a cluster yet. Pass `--health`
+explicitly to gate anyway.
+
+Both `apply`'s gate and `talman health` run the check from one control plane —
+the first in the config that answers the Talos API, or `--node` — and report on
+every node the config lists. Not from the VIP: a Talos VIP is only held by a
+control plane in etcd quorum, so it disappears during exactly the outage worth
+checking, and as a node address it means "whichever machine holds it right
+now". The VIP's place is `--endpoints`, where the talosconfig already lists
+every control plane.
 
 `upgrade` first asks each node what it is running, and skips it when the Talos
 version and schematic already match what the config resolves to:
