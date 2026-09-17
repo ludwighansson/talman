@@ -82,7 +82,7 @@ registers it with the factory instead.
 ## Install
 
 ```console
-go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-alpha.1
+go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-alpha.2
 ```
 
 Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
