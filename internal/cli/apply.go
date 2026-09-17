@@ -26,16 +26,26 @@ func newApplyCmd() *cobra.Command {
 func newDiffCmd() *cobra.Command {
 	cmd := applyLikeCmd("diff", "Show what applying the rendered configs would change", true)
 	cmd.Long = `Diff runs "talosctl apply-config --dry-run" for each node, which asks the node
-itself what the rendered config would change. Nothing is modified.`
+itself what the rendered config would change. Nothing is modified.
+
+Like apply, each node is asked which API it answers first, so a node still in
+maintenance mode can be diffed alongside the rest of the cluster.`
 
 	return cmd
 }
 
 func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
+	// What the remainder message says a stopped pass did not do.
+	done := "applied"
+	if forceDryRun {
+		done = "diffed"
+	}
+
 	var (
 		nodes      []string
 		mode       string
 		insecure   bool
+		onlyNew    bool
 		dryRun     bool
 		wait       bool
 		health     bool
@@ -48,7 +58,17 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
-		Args:  cobra.NoArgs,
+		Long: `Apply renders each selected node's machine config and applies it, one node at a
+time, waiting for the node to come back and the cluster to stay healthy before
+moving to the next.
+
+Each node is asked which API it answers before its config is sent: a node that
+has joined is addressed with cluster PKI, and one in maintenance mode -- never
+configured, or reset -- through the maintenance service, which is what adopting
+it means. A mixed cluster therefore needs no flag. --only-new restricts a run
+to the nodes in maintenance mode; -i forces the maintenance service for every
+node, and --insecure=false forces cluster PKI.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
@@ -67,19 +87,6 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 			if !slices.Contains(applyModes, mode) {
 				return fmt.Errorf("--mode %q is invalid: must be one of %s",
 					mode, strings.Join(applyModes, ", "))
-			}
-
-			// --insecure means the node had no certificate to authenticate
-			// with, which is the initial install. There is no cluster for a
-			// health check to pass against yet -- the other nodes may not even
-			// be installed -- so gating on one only ever fails. An explicit
-			// --health still wins, for installing into a cluster that is
-			// already up.
-			if insecure && health && !cmd.Flags().Changed("health") {
-				health = false
-
-				fmt.Fprintf(os.Stderr, "not gating on cluster health: --insecure installs into a cluster "+
-					"that need not exist yet (pass --health to check anyway)\n")
 			}
 
 			targets, err := render.Nodes(cfg, nodes)
@@ -108,12 +115,55 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 
 			tal := runner(cfg)
 
-			for _, n := range targets {
+			// An explicit --insecure (or --insecure=false) is an instruction,
+			// not a hint: honour it for every node and skip the probing.
+			forced := cmd.Flags().Changed("insecure")
+
+			// Whether a cluster is known to exist: set by the first node that
+			// answers with cluster PKI, or asserted by --insecure=false. It
+			// decides whether the health gate has anything to check after an
+			// adoption.
+			clusterSeen := forced && !insecure
+
+			if onlyNew {
+				targets, err = newNodes(tal, tc, targets)
+				if err != nil {
+					return err
+				}
+
+				if len(targets) == 0 {
+					fmt.Fprintf(os.Stderr, "nothing to adopt: no selected node is in maintenance mode\n")
+
+					return nil
+				}
+			}
+
+			for i, n := range targets {
 				file := cfg.MachineConfigPath(n)
 
 				if _, err := os.Stat(file); err != nil {
 					return fmt.Errorf("no rendered config for %s at %s: run `talman render` first",
 						n.Hostname, file)
+				}
+
+				// A cluster is rarely all one thing: after a reset, or when a
+				// machine is added, some nodes answer with cluster PKI and
+				// some only on the maintenance service. Asking each node
+				// which it is costs one call and is the difference between
+				// adopting a node and failing the run.
+				maintenance := insecure
+
+				if !forced {
+					switch state := tal.Mode(tc, n.IPAddress); state {
+					case talosctl.ModeMaintenance:
+						maintenance = true
+					case talosctl.ModeRunning:
+						maintenance = false
+						clusterSeen = true
+					case talosctl.ModeUnreachable:
+						return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service\n%s",
+							n.Hostname, n.IPAddress, resumeHint(use, done, targets[i:]))
+					}
 				}
 
 				args := []string{
@@ -128,16 +178,24 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 					args = append(args, "--dry-run")
 				}
 
-				if insecure {
+				if maintenance {
 					args = append(args, "--insecure")
 				}
 
 				args = append(args, extraFlags...)
 
-				fmt.Fprintf(os.Stderr, "== %s (%s)\n", n.Hostname, n.IPAddress)
+				switch {
+				case maintenance && forced:
+					fmt.Fprintf(os.Stderr, "== %s (%s) through the maintenance service (--insecure)\n",
+						n.Hostname, n.IPAddress)
+				case maintenance:
+					fmt.Fprintf(os.Stderr, "== %s (%s) maintenance mode; adopting it\n", n.Hostname, n.IPAddress)
+				default:
+					fmt.Fprintf(os.Stderr, "== %s (%s)\n", n.Hostname, n.IPAddress)
+				}
 
 				if err := tal.Stream(args...); err != nil {
-					return err
+					return fmt.Errorf("%w\n%s", err, resumeHint(use, done, targets[i:]))
 				}
 
 				// Nothing to wait for when the change was not enacted: a dry
@@ -158,6 +216,22 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 					}
 				}
 
+				// A node that was in maintenance is an install rather than a
+				// roll-out, and if nothing in this run has answered as part of
+				// a cluster, there is no cluster for the gate to check: that
+				// is the bootstrap case, where gating can only ever fail.
+				//
+				// Once some node has answered with cluster PKI the gate is
+				// back on, adoptions included -- a machine joining a live
+				// cluster can break it, and the nodes behind it in the queue
+				// are worth stopping for. An explicit --health always gates.
+				if health && maintenance && !clusterSeen && !cmd.Flags().Changed("health") {
+					fmt.Fprintf(os.Stderr, "   not gating on cluster health: %s was being adopted and no node "+
+						"here answers as part of a cluster yet (pass --health to check anyway)\n", n.Hostname)
+
+					continue
+				}
+
 				if health {
 					fmt.Fprintf(os.Stderr, "   checking cluster health before continuing\n")
 
@@ -176,7 +250,9 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 	cmd.Flags().StringVarP(&mode, "mode", "m", "auto",
 		"apply mode: "+strings.Join(applyModes, ", "))
 	cmd.Flags().BoolVarP(&insecure, "insecure", "i", false,
-		"use the maintenance service (for nodes that have not joined yet)")
+		"force the maintenance service for every node (default: ask each node which API it answers)")
+	cmd.Flags().BoolVar(&onlyNew, "only-new", false,
+		"restrict the run to nodes that are in maintenance mode")
 
 	if !forceDryRun {
 		cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without applying")
@@ -197,6 +273,31 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
+}
+
+// newNodes keeps the targets that are in maintenance mode, which is what
+// "not adopted yet" looks like from outside.
+//
+// This is the one path that probes every target up front rather than node by
+// node: the filter cannot be applied without knowing all the answers, and
+// paying for them is the point of asking for it.
+func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node) ([]*config.Node, error) {
+	out := make([]*config.Node, 0, len(targets))
+
+	for _, n := range targets {
+		switch state := tal.Mode(talosconfig, n.IPAddress); state {
+		case talosctl.ModeMaintenance:
+			out = append(out, n)
+		case talosctl.ModeRunning:
+			fmt.Fprintf(os.Stderr, "   %s (%s) is running; not new, skipping\n", n.Hostname, n.IPAddress)
+		case talosctl.ModeUnreachable:
+			return nil, fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service: "+
+				"--only-new cannot tell whether it needs adopting\n"+
+				"  bring it up, or narrow the run with -n", n.Hostname, n.IPAddress)
+		}
+	}
+
+	return out, nil
 }
 
 // clusterHealth runs the same check `talman health` performs, from the first

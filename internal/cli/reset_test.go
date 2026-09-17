@@ -76,9 +76,9 @@ func TestResetOrder(t *testing.T) {
 	}
 }
 
-// The node that failed is part of the remainder: its own reset did not finish.
-func TestUnresetNamesTheRemainderAndHowToResume(t *testing.T) {
-	got := unreset(nodesOf("w2:worker", "c1:controlplane"), false)
+// The node that failed is part of the remainder: its own work did not finish.
+func TestResumeHint(t *testing.T) {
+	got := resumeHint("reset", "reset", nodesOf("w2:worker", "c1:controlplane"), "--graceful=false")
 
 	for _, want := range []string{
 		"2 node(s) were not reset: w2, c1",
@@ -89,8 +89,15 @@ func TestUnresetNamesTheRemainderAndHowToResume(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(unreset(nodesOf("w1:worker"), true), "--graceful") {
-		t.Error("a graceful pass should not be resumed with --graceful=false")
+	applied := resumeHint("apply", "applied", nodesOf("w1:worker"))
+
+	if !strings.Contains(applied, "1 node(s) were not applied: w1") ||
+		!strings.Contains(applied, "continue with: talman apply -n w1") {
+		t.Errorf("apply's remainder reads wrong:\n%s", applied)
+	}
+
+	if strings.Contains(applied, "--") {
+		t.Errorf("no flags were given, so none should be suggested:\n%s", applied)
 	}
 }
 

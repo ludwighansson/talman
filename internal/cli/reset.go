@@ -112,7 +112,12 @@ cluster to leave.`,
 				fmt.Fprintf(os.Stderr, "== resetting %s (%s)\n", n.Hostname, n.IPAddress)
 
 				if err := tal.Stream(args...); err != nil {
-					return fmt.Errorf("%w\n%s", err, unreset(targets[i:], graceful))
+					var flags []string
+					if !graceful {
+						flags = append(flags, "--graceful=false")
+					}
+
+					return fmt.Errorf("%w\n%s", err, resumeHint("reset", "reset", targets[i:], flags...))
 				}
 			}
 
@@ -165,28 +170,6 @@ func resetOrder(targets []*config.Node) []*config.Node {
 	}
 
 	return out
-}
-
-// unreset names what a failed pass left behind.
-//
-// A reset stops at the first failure, which leaves the operator holding a
-// half-wiped cluster and a scroll-back to read the remainder out of. The
-// failed node is part of it: its reset did not complete either.
-func unreset(remaining []*config.Node, graceful bool) string {
-	names := make([]string, 0, len(remaining))
-	resume := "talman reset"
-
-	for _, n := range remaining {
-		names = append(names, n.Hostname)
-		resume += " -n " + n.Hostname
-	}
-
-	if !graceful {
-		resume += " --graceful=false"
-	}
-
-	return fmt.Sprintf("  %d node(s) were not reset: %s\n  continue with: %s",
-		len(names), strings.Join(names, ", "), resume)
 }
 
 // consequence describes what this particular reset will leave behind.
