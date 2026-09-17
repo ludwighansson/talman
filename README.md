@@ -321,8 +321,17 @@ A fresh cluster:
 ```console
 $ talman apply -n talos-c01   # adopted: installs and reboots into its config
 $ talman bootstrap            # once, ever: initialises etcd
+== bootstrapping etcd on talos-c01 (10.164.0.27)
+cluster bootstrap initiated; etcd is starting on talos-c01
+  talman status      to watch the control plane come up
+  talman kubeconfig  once it is serving
 $ talman apply                # the rest, control planes and workers alike
 ```
+
+`bootstrap` returns as soon as Talos accepts the request — etcd starts
+afterwards and the control plane forms over the following minute — so it says
+so rather than exiting silently on the one command a cluster only ever gets
+once.
 
 Adding a machine to a live cluster is `talman apply -n <new node>`, and
 re-adopting one after `reset` is the same command. `--only-new` does the whole

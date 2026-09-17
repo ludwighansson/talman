@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 )
 
@@ -14,19 +17,34 @@ func newBootstrapCmd() *cobra.Command {
 		Use:   "bootstrap",
 		Short: "Bootstrap etcd on a single control plane node",
 		Long: `Bootstrap initialises etcd. It must be run exactly once, against one control
-plane node, after that node's config has been applied.`,
+plane node, after that node's config has been applied.
+
+Talos accepts the request and returns: etcd starts afterwards and the control
+plane forms over the following minute or so, so a successful bootstrap is the
+beginning of the cluster rather than the end of the command.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, tal, tc, target, err := controlPlaneTarget(node)
+		RunE: func(_ *cobra.Command, _ []string) error {
+			_, tal, tc, target, err := controlPlaneTarget(node)
 			if err != nil {
 				return err
 			}
 
-			_ = cfg
+			fmt.Fprintf(os.Stderr, "== bootstrapping etcd on %s (%s)\n", target.Hostname, target.IPAddress)
 
 			args := []string{"--talosconfig", tc, "bootstrap", "--nodes", target.IPAddress}
 
-			return tal.Stream(append(args, extraFlags...)...)
+			if err := tal.Stream(append(args, extraFlags...)...); err != nil {
+				return err
+			}
+
+			// talosctl prints nothing on success, which left the one command
+			// in a cluster's life that can only be run once looking like it
+			// had done nothing at all.
+			fmt.Fprintf(os.Stderr, "cluster bootstrap initiated; etcd is starting on %s\n"+
+				"  talman status      to watch the control plane come up\n"+
+				"  talman kubeconfig  once it is serving\n", target.Hostname)
+
+			return nil
 		},
 	}
 
