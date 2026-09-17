@@ -352,10 +352,10 @@ error: talos-w02 (10.164.0.29) answers neither the Talos API nor the maintenance
 ```
 
 The health gate stands down while any node in the config is still outside the
-cluster, naming the ones that are:
+cluster, said once for the run — `-v` names them:
 
 ```console
-   not gating on cluster health: talos-c02 is maintenance mode, talos-c03 is unreachable (pass --health to check anyway)
+   not gating on health: 2 node(s) not in the cluster yet (--health to check anyway)
 ```
 
 The check covers the cluster the config describes, so during a build-out it

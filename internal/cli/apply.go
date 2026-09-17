@@ -123,6 +123,12 @@ node, and --insecure=false forces cluster PKI.`,
 			// that is still being built from one that is misbehaving.
 			modes := map[string]talosctl.Mode{}
 
+			// The gate standing down is worth saying once, not after every
+			// node: the reason does not change between them, and a roll-out
+			// across a cluster being built would otherwise repeat it all the
+			// way down the output.
+			var saidUngated bool
+
 			if onlyNew {
 				targets, err = newNodes(tal, tc, targets)
 				if err != nil {
@@ -232,9 +238,18 @@ node, and --insecure=false forces cluster PKI.`,
 				// joined it gates every node, which is the roll-out case it
 				// exists for. An explicit --health always gates.
 				if health && !cmd.Flags().Changed("health") {
-					if outside := notInCluster(cfg, tal, tc, modes); outside != "" {
-						fmt.Fprintf(os.Stderr, "   not gating on cluster health: %s (pass --health to check anyway)\n",
-							outside)
+					if outside := notInCluster(cfg, tal, tc, modes); len(outside) > 0 {
+						if !saidUngated {
+							saidUngated = true
+
+							fmt.Fprintf(os.Stderr, "   not gating on health: %d node(s) not in the cluster yet "+
+								"(--health to check anyway)\n", len(outside))
+
+							// Which ones, for whoever is asking why.
+							if opts.verbose {
+								fmt.Fprintf(os.Stderr, "   %s\n", strings.Join(outside, ", "))
+							}
+						}
 
 						continue
 					}
@@ -309,14 +324,14 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node) 
 }
 
 // notInCluster describes the configured nodes that are not part of the cluster
-// yet, or "" when every one of them is.
+// yet, empty when every one of them is.
 //
 // Nodes this run has already asked about are not asked again: the answers are
 // carried in modes, including for a node this run just adopted and watched
 // come back.
 func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	modes map[string]talosctl.Mode,
-) string {
+) []string {
 	var outside []string
 
 	for i := range cfg.Nodes {
@@ -333,11 +348,7 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		}
 	}
 
-	if len(outside) == 0 {
-		return ""
-	}
-
-	return strings.Join(outside, ", ")
+	return outside
 }
 
 // clusterHealth runs the same check `talman health` performs, from the first

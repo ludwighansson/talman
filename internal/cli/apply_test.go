@@ -96,7 +96,7 @@ func TestNotInCluster(t *testing.T) {
 	t.Run("half-built cluster names who is missing", func(t *testing.T) {
 		tal := fakeCluster(t, []string{"10.0.0.11"}, []string{"10.0.0.12"})
 
-		got := notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{})
+		got := strings.Join(notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}), ", ")
 
 		if !strings.Contains(got, "c02 is maintenance mode") || !strings.Contains(got, "w01 is unreachable") {
 			t.Errorf("notInCluster() = %q", got)
@@ -106,8 +106,8 @@ func TestNotInCluster(t *testing.T) {
 	t.Run("fully built cluster gates", func(t *testing.T) {
 		tal := fakeCluster(t, []string{"10.0.0.11", "10.0.0.12", "10.0.0.21"}, nil)
 
-		if got := notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}); got != "" {
-			t.Errorf("notInCluster() = %q, want \"\": every node answers with cluster PKI", got)
+		if got := notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}); len(got) > 0 {
+			t.Errorf("notInCluster() = %q, want none: every node answers with cluster PKI", got)
 		}
 	})
 
@@ -122,8 +122,8 @@ func TestNotInCluster(t *testing.T) {
 			"10.0.0.21": talosctl.ModeRunning,
 		}
 
-		if got := notInCluster(cfg, tal, "/tmp/tc", modes); got != "" {
-			t.Errorf("notInCluster() = %q, want \"\": the cached answers say the cluster is whole", got)
+		if got := notInCluster(cfg, tal, "/tmp/tc", modes); len(got) > 0 {
+			t.Errorf("notInCluster() = %q, want none: the cached answers say the cluster is whole", got)
 		}
 	})
 }
