@@ -93,3 +93,66 @@ func TestUnresetNamesTheRemainderAndHowToResume(t *testing.T) {
 		t.Error("a graceful pass should not be resumed with --graceful=false")
 	}
 }
+
+// The prompt is where the operator decides, so it has to distinguish a node
+// that comes back in maintenance mode from one that stops booting.
+func TestConsequence(t *testing.T) {
+	tests := []struct {
+		name     string
+		wipeDisk bool
+		labels   []string
+		reboot   bool
+		want     string
+	}{
+		{
+			name:   "default: partitions, then maintenance mode",
+			labels: []string{"EPHEMERAL", "STATE"},
+			reboot: true,
+			want: "This wipes EPHEMERAL and STATE, destroying all data on them and their machine configs, " +
+				"then reboots them into maintenance mode.",
+		},
+		{
+			name:   "no reboot",
+			labels: []string{"EPHEMERAL", "STATE"},
+			reboot: false,
+			want: "This wipes EPHEMERAL and STATE, destroying all data on them and their machine configs, " +
+				"then shuts them down.",
+		},
+		{
+			name:     "whole disk: nothing left to boot",
+			wipeDisk: true,
+			reboot:   true,
+			want: "This wipes their system disks whole, Talos installation included, " +
+				"then reboots them with nothing left to boot.",
+		},
+		{
+			name:     "whole disk, powered off",
+			wipeDisk: true,
+			reboot:   false,
+			want:     "This wipes their system disks whole, Talos installation included, then shuts them down.",
+		},
+		{
+			// STATE holds the machine config: keep it and the node comes back
+			// as itself, not in maintenance mode.
+			name:   "narrowed to EPHEMERAL: the config survives",
+			labels: []string{"EPHEMERAL"},
+			reboot: true,
+			want:   "This wipes EPHEMERAL, destroying all data on them, then reboots them, still holding their machine configs.",
+		},
+		{
+			name:   "STATE only",
+			labels: []string{"STATE"},
+			reboot: true,
+			want: "This wipes STATE, destroying all data on them and their machine configs, " +
+				"then reboots them into maintenance mode.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := consequence(tt.wipeDisk, tt.labels, tt.reboot); got != tt.want {
+				t.Errorf("consequence() =\n  %q\nwant\n  %q", got, tt.want)
+			}
+		})
+	}
+}

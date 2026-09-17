@@ -404,8 +404,30 @@ A dry run that printed a component-by-component plan the real command would
 never carry out is worse than no dry run at all. `--force --dry-run` reaches
 `talosctl`'s own plan.
 
-`reset` wipes workers before control planes, and reaches each node at its own
-address rather than through the talosconfig endpoints:
+`reset` returns a node to maintenance mode. It wipes the EPHEMERAL and STATE
+partitions — all data, and the machine config with it — and reboots the node
+with Talos still installed, waiting for a config:
+
+```console
+$ talman reset --graceful=false
+About to reset 6 node(s) in cluster "sto1-com":
+  talos-w01 (10.164.0.32)
+  ...
+This wipes EPHEMERAL and STATE, destroying all data on them and their machine
+configs, then reboots them into maintenance mode. Type the cluster name to continue:
+```
+
+Those are `talosctl`'s `--system-labels-to-wipe` and `--reboot`, and neither is
+its default: left to itself `talosctl` wipes the system disk whole, bootloader
+included, and powers the machine off — a reinstall, not a reset. `--wipe-disk`
+asks for that state deliberately. `--wipe-labels` narrows what goes:
+`--wipe-labels=EPHEMERAL` keeps STATE, so the node reboots back into the
+cluster as itself rather than into maintenance mode. `--reboot=false` shuts the
+node down instead. The prompt says which of these you are about to do, because
+"destroys all data" reads the same whether a node comes back or stops booting.
+
+Nodes are wiped workers first, control planes last, and each is reached at its
+own address rather than through the talosconfig endpoints:
 
 ```console
 $ talman reset --graceful=false
