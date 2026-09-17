@@ -311,10 +311,14 @@ $ talman apply
 == talos-w01 (10.164.0.32) maintenance mode; adopting it
 ```
 
-The probe pins `--endpoints` to the node itself. Left to its own devices
-`talosctl` routes `--nodes` through the talosconfig's endpoints, which are the
-control planes, so the answer would describe whichever control plane proxied —
-and a node in maintenance mode has no proxy path at all.
+Every question talman asks *about* a node — which API it answers, whether it
+has come back after an apply, which control plane to run a health check from —
+pins `--endpoints` to that node. Left to its own devices `talosctl` routes
+`--nodes` through the talosconfig's endpoints, which are the control planes, so
+the answer describes whichever control plane proxied. On a cluster being built
+those are themselves in maintenance mode and cannot proxy for anyone, which
+turned "wait for this node to come back" into a ten-minute timeout on a node
+that had never gone away.
 
 A fresh cluster:
 

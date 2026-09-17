@@ -103,6 +103,11 @@ func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*
 func healthArgs(cfg *config.Config, talosconfig string, from *config.Node, serverSide bool) []string {
 	args := []string{
 		"--talosconfig", talosconfig,
+		// Pinned to the node the check runs from, for the same reason the
+		// probes are: the talosconfig's endpoints include control planes that
+		// may not be serving, and dialling one of those to ask about the
+		// cluster fails on the connection rather than on the cluster.
+		"--endpoints", from.IPAddress,
 		"health",
 		"--nodes", from.IPAddress,
 		fmt.Sprintf("--server=%t", serverSide),

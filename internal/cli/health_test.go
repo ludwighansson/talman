@@ -22,7 +22,7 @@ func TestHealthArgs(t *testing.T) {
 
 	got := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[1], true), " ")
 
-	want := "--talosconfig /tmp/tc health --nodes 10.0.0.12 --server=true " +
+	want := "--talosconfig /tmp/tc --endpoints 10.0.0.12 health --nodes 10.0.0.12 --server=true " +
 		"--control-plane-nodes 10.0.0.11,10.0.0.12 --worker-nodes 10.0.0.21"
 
 	if got != want {
