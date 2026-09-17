@@ -18,14 +18,24 @@ func newResetCmd() *cobra.Command {
 		yes        bool
 		graceful   bool
 		direct     bool
+		reboot     bool
+		wipeDisk   bool
+		wipeLabels []string
 		extraFlags []string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Wipe nodes and return them to maintenance mode",
-		Long: `Reset wipes a node's disks and returns it to maintenance mode. This destroys
-all data on the node and, if run against enough control planes, the cluster.
+		Long: `Reset returns a node to maintenance mode. The EPHEMERAL and STATE partitions
+are wiped -- all data, and the machine config with it -- and the node reboots
+with Talos still installed, waiting for a config. Run against enough control
+planes, it destroys the cluster.
+
+That is talosctl's --system-labels-to-wipe, not its default: left to itself
+talosctl wipes the disk whole, bootloader included, which leaves a machine with
+nothing to boot rather than a node in maintenance mode. --wipe-disk asks for
+that reinstall-me state deliberately.
 
 Workers are reset before control planes, and each node is reached at its own
 address rather than through the talosconfig endpoints. Both exist for the same
@@ -44,6 +54,20 @@ cluster to leave.`,
 				return err
 			}
 
+			if wipeDisk && cmd.Flags().Changed("wipe-labels") {
+				return fmt.Errorf("--wipe-disk and --wipe-labels ask for different resets: " +
+					"--wipe-disk wipes the system disk whole, --wipe-labels wipes the partitions " +
+					"it names and leaves the rest of the disk alone")
+			}
+
+			// An empty label list is talosctl's whole-disk wipe. Reaching the
+			// most destructive behaviour by emptying a list, rather than by
+			// asking for it, is not something a reset should allow.
+			if !wipeDisk && len(wipeLabels) == 0 {
+				return fmt.Errorf("--wipe-labels is empty, which wipes the whole disk: " +
+					"pass --wipe-disk if that is what you mean")
+			}
+
 			// Before the confirmation, so the order shown is the order run.
 			targets = resetOrder(targets)
 
@@ -53,7 +77,7 @@ cluster to leave.`,
 			}
 
 			if !yes {
-				if err := confirm(cfg.ClusterName, targets); err != nil {
+				if err := confirm(cfg.ClusterName, targets, consequence(wipeDisk, wipeLabels, reboot)); err != nil {
 					return err
 				}
 			}
@@ -74,7 +98,14 @@ cluster to leave.`,
 					"reset",
 					"--nodes", n.IPAddress,
 					fmt.Sprintf("--graceful=%t", graceful),
+					fmt.Sprintf("--reboot=%t", reboot),
 				)
+
+				// Omitted entirely for a whole-disk wipe: that is what
+				// talosctl does when no labels are named.
+				if !wipeDisk {
+					args = append(args, "--system-labels-to-wipe", strings.Join(wipeLabels, ","))
+				}
 
 				args = append(args, extraFlags...)
 
@@ -94,6 +125,12 @@ cluster to leave.`,
 	cmd.Flags().BoolVar(&graceful, "graceful", true, "leave etcd cleanly before resetting")
 	cmd.Flags().BoolVar(&direct, "direct", true,
 		"reach each node at its own address instead of proxying through the talosconfig endpoints")
+	cmd.Flags().BoolVar(&reboot, "reboot", true,
+		"reboot the node after resetting, rather than shutting it down")
+	cmd.Flags().StringSliceVar(&wipeLabels, "wipe-labels", []string{"EPHEMERAL", "STATE"},
+		"system partitions to wipe, by label")
+	cmd.Flags().BoolVar(&wipeDisk, "wipe-disk", false,
+		"wipe the system disk whole, Talos installation included, instead of named partitions")
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
@@ -152,16 +189,58 @@ func unreset(remaining []*config.Node, graceful bool) string {
 		len(names), strings.Join(names, ", "), resume)
 }
 
+// consequence describes what this particular reset will leave behind.
+//
+// The prompt is where an operator decides, so it has to name the outcome the
+// flags actually produce: "destroys all data" reads the same whether the node
+// comes back in maintenance mode or stops booting altogether.
+func consequence(wipeDisk bool, wipeLabels []string, reboot bool) string {
+	var what, then string
+
+	// STATE holds the machine config, so it is what decides whether the node
+	// comes back asking for one or comes back as itself.
+	state := wipeDisk
+
+	for _, l := range wipeLabels {
+		if strings.EqualFold(l, "STATE") {
+			state = true
+		}
+	}
+
+	if wipeDisk {
+		what = "wipes their system disks whole, Talos installation included"
+	} else {
+		what = "wipes " + strings.Join(wipeLabels, " and ") + ", destroying all data on them"
+
+		if state {
+			what += " and their machine configs"
+		}
+	}
+
+	switch {
+	case !reboot:
+		then = "shuts them down"
+	case wipeDisk:
+		then = "reboots them with nothing left to boot"
+	case state:
+		then = "reboots them into maintenance mode"
+	default:
+		then = "reboots them, still holding their machine configs"
+	}
+
+	return "This " + what + ", then " + then + "."
+}
+
 // confirm requires the operator to type the cluster name, so a reset cannot
 // happen because a script passed the wrong config file.
-func confirm(clusterName string, targets []*config.Node) error {
+func confirm(clusterName string, targets []*config.Node, consequence string) error {
 	fmt.Fprintf(os.Stderr, "About to reset %d node(s) in cluster %q:\n", len(targets), clusterName)
 
 	for _, n := range targets {
 		fmt.Fprintf(os.Stderr, "  %s (%s)\n", n.Hostname, n.IPAddress)
 	}
 
-	fmt.Fprintf(os.Stderr, "This destroys all data on them. Type the cluster name to continue: ")
+	fmt.Fprintf(os.Stderr, "%s Type the cluster name to continue: ", consequence)
 
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
