@@ -285,7 +285,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman diff` | re-render, then show what applying would change |
 | `talman apply` | re-render, then apply, adopting nodes in maintenance mode |
 | `talman bootstrap` | initialise etcd, once |
-| `talman kubeconfig` | fetch the kubeconfig |
+| `talman kubeconfig` | fetch the kubeconfig into the output directory |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
 | `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` (a noop when every node is already there) |
 | `talman health` | cluster health |
@@ -370,6 +370,34 @@ self-signed maintenance certificate, which `talosctl` reports as `certificate
 signed by unknown authority`. That is a build-out step, not a broken cluster.
 Once every node has joined, the gate runs between nodes as it should, which is
 the roll-out it exists for. `--health` gates regardless.
+
+### The kubeconfig
+
+`talman kubeconfig` writes to `clusterconfig/kubeconfig`, beside the machine
+configs and the talosconfig:
+
+```console
+$ talman kubeconfig
+wrote clusterconfig/kubeconfig
+  KUBECONFIG=clusterconfig/kubeconfig kubectl get nodes
+```
+
+It never touches `~/.kube/config` unless you name it. `talosctl kubeconfig`
+left to itself merges into whatever kubeconfig the environment points at, which
+for a tool that manages several clusters means one cluster's admin credentials
+landing in another cluster's file — and the output directory is the gitignored
+place a credential belongs.
+
+Name a destination to override it, and `-` for stdout:
+
+```console
+$ talman kubeconfig ~/.kube/config      # merged, as talosctl would
+$ talman kubeconfig - | kubectl --kubeconfig /dev/stdin get nodes
+```
+
+A path you name is merged into; talman's own copy is overwritten, because it is
+a generated artefact of the cluster directory and merging the same context into
+it twice would fail without `--force`. `--merge` set explicitly wins either way.
 
 ### The talosconfig
 

@@ -102,6 +102,15 @@ func (c *Config) TalosconfigPath() string {
 	return filepath.Join(c.OutputPath(), "talosconfig")
 }
 
+// KubeconfigPath is where the fetched kubeconfig is written.
+//
+// Beside the talosconfig, and for the same reason: it is a per-cluster
+// credential that belongs to this cluster directory, not to whatever
+// ~/.kube/config happens to hold.
+func (c *Config) KubeconfigPath() string {
+	return filepath.Join(c.OutputPath(), "kubeconfig")
+}
+
 // FindConfig locates a config file: the explicit path if given, else
 // talman.yaml in the working directory.
 func FindConfig(explicit string) string {

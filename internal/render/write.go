@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,15 @@ func (r *Renderer) WriteAll(results []*Result, writeTalosconfig bool) error {
 	r.logf("wrote %s", Rel(path))
 
 	return nil
+}
+
+// PrepareOutput creates the output directory and the .gitignore guarding it,
+// for callers that put a file there without rendering anything -- the fetched
+// kubeconfig is as much a cluster credential as the configs beside it.
+func PrepareOutput(cfg *config.Config, log io.Writer) error {
+	r := &Renderer{Cfg: cfg, Log: log}
+
+	return r.prepareOutput()
 }
 
 // prepareOutput creates the output directory and the .gitignore guarding it.
