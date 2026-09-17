@@ -141,3 +141,25 @@ func TestModeProbesTheNodeDirectly(t *testing.T) {
 		t.Errorf("the maintenance probe needs no talosconfig: %s", calls[1])
 	}
 }
+
+// "Is this node back?" has to be asked of the node. Routed through the
+// talosconfig's endpoints it is answered by whichever control plane the client
+// dialled, and on a cluster being built those are still in maintenance mode --
+// so a node that never went away is reported as gone, and the apply waiting
+// for it gives up after its timeout.
+func TestReachableProbesTheNodeDirectly(t *testing.T) {
+	r, log := fakeTalosctl(t, true, false)
+
+	if !r.Reachable("/tmp/tc", "10.0.0.11") {
+		t.Fatal("Reachable() = false, want true")
+	}
+
+	calls := argv(t, log)
+	if len(calls) != 1 {
+		t.Fatalf("want one probe, got:\n%s", strings.Join(calls, "\n"))
+	}
+
+	if !strings.Contains(calls[0], "--endpoints 10.0.0.11") {
+		t.Errorf("probe is not pinned to the node: %s", calls[0])
+	}
+}

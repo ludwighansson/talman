@@ -259,8 +259,15 @@ func (r *Runner) Mode(talosconfig, node string) Mode {
 }
 
 // Reachable reports whether the node answers the Talos API.
+//
+// Pinned to the node, like Mode: unpinned, talosctl routes the question
+// through the talosconfig's endpoints, which are the control planes. On a
+// cluster being built those are mostly still in maintenance mode and refuse a
+// PKI connection, so "is this node back?" would be answered by whichever
+// control plane the client happened to dial -- and a node that was up the
+// whole time would be reported as gone.
 func (r *Runner) Reachable(talosconfig, node string) bool {
-	_, err := r.Output("--talosconfig", talosconfig, "--nodes", node, "version")
+	_, err := r.Output("--talosconfig", talosconfig, "--endpoints", node, "--nodes", node, "version")
 
 	return err == nil
 }
