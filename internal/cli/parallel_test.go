@@ -96,3 +96,46 @@ func TestEachNodeKeepsOrderAndReportsTheFirstFailure(t *testing.T) {
 		t.Errorf("want the first failure in node order, got %v", err)
 	}
 }
+
+// A batch fails as a unit but its nodes do not: what already succeeded must
+// not turn up in the list of what still needs doing.
+func TestWithout(t *testing.T) {
+	nodes := nodesOf("w1:worker", "w2:worker", "w3:worker")
+
+	got := names(without(nodes, map[string]bool{"10.0.0.1": true}))
+
+	// nodesOf gives every node the same address, so all three drop out; the
+	// point under test is that the filter keys on the address at all.
+	if got != "" {
+		t.Errorf("without() = %q, want empty", got)
+	}
+
+	if got := names(without(nodes, nil)); got != "w1, w2, w3" {
+		t.Errorf("without(nil) = %q, want every node in order", got)
+	}
+}
+
+// Inert passes have no reboots to stagger, so a control plane has nothing to
+// be kept apart from and a fifty-node diff need not take fifty turns.
+func TestBatchesForInertPassesIgnoreRoles(t *testing.T) {
+	nodes := nodesOf("c1:controlplane", "w1:worker", "c2:controlplane", "w2:worker")
+
+	var got []string
+	for _, batch := range batchesFor(nodes, 4, true) {
+		got = append(got, names(batch))
+	}
+
+	if len(got) != 1 || got[0] != "c1, w1, c2, w2" {
+		t.Errorf("batchesFor(inert) = %v, want one batch of everything", got)
+	}
+
+	// And the enacting path is unchanged.
+	var enacting []string
+	for _, batch := range batchesFor(nodes, 4, false) {
+		enacting = append(enacting, names(batch))
+	}
+
+	if strings.Join(enacting, " | ") != "c1 | w1 | c2 | w2" {
+		t.Errorf("batchesFor(enacting) = %v, want control planes alone", enacting)
+	}
+}

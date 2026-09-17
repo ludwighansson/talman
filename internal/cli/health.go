@@ -66,9 +66,13 @@ The check runs from one control plane node -- the first in the config unless
 // Not the VIP, tempting as it is. A Talos VIP is only held by a control plane
 // that is in etcd quorum, so it vanishes during exactly the outage worth
 // checking, and as a --nodes value it names "whichever node holds it right
-// now" -- ambiguous in a report that is per node. A VIP belongs in
-// --endpoints, where talman already lists every control plane, which gives the
-// same failover without the ambiguity.
+// now" -- ambiguous in a report that is per node.
+//
+// Failover lives here rather than in the endpoint list: the check is pinned to
+// the node this picks, so walking the control planes until one answers is what
+// survives a dead one. Leaving the list to talosctl would let it dial a
+// control plane that is down and report a connection failure as a cluster
+// verdict.
 func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*config.Node, error) {
 	cps := cfg.ControlPlanes()
 	if len(cps) == 0 {

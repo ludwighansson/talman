@@ -119,9 +119,13 @@ and check the target first with "talman image url".`,
 				header += fmt.Sprintf("   image %s\n", ctx.Node.InstallerImage)
 
 				if grouped {
-					out, err := tal.Output(args...)
+					out, err := tal.Combined(args...)
 
-					say(header + string(out))
+					if err != nil {
+						say(header + string(out) + "   error: " + err.Error() + "\n")
+					} else {
+						say(header + string(out))
+					}
 
 					return err
 				}
@@ -136,13 +140,27 @@ and check the target first with "talman image url".`,
 			// together is how a three-node cluster loses quorum.
 			done := 0
 
+			var (
+				okMu      sync.Mutex
+				succeeded = map[string]bool{}
+			)
+
 			for _, batch := range batches(targets, parallel) {
 				grouped := len(batch) > 1
 
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					return struct{}{}, upgradeOne(n, grouped)
+					if err := upgradeOne(n, grouped); err != nil {
+						return struct{}{}, err
+					}
+
+					okMu.Lock()
+					succeeded[n.IPAddress] = true
+					okMu.Unlock()
+
+					return struct{}{}, nil
 				}); err != nil {
-					return fmt.Errorf("%w\n%s", err, resumeHint("upgrade", "upgraded", targets[done:]))
+					return fmt.Errorf("%w\n%s", err,
+						resumeHint("upgrade", "upgraded", without(targets[done:], succeeded)))
 				}
 
 				done += len(batch)

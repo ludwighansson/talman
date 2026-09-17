@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/sopsx"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
@@ -85,7 +86,11 @@ cluster that already exists.`,
 				}
 			}
 
-			if err := os.WriteFile(dest, out, 0o600); err != nil {
+			// Atomically: os.WriteFile truncates first, so an interrupted
+			// write leaves a half-written bundle where the working one was --
+			// and a cluster whose secrets bundle is gone cannot be rendered
+			// for, upgraded or reached again.
+			if err := render.WriteAtomic(dest, out); err != nil {
 				return err
 			}
 

@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -14,7 +13,10 @@ import (
 )
 
 func newStatusCmd() *cobra.Command {
-	var nodes []string
+	var (
+		nodes    []string
+		parallel int
+	)
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -30,7 +32,11 @@ unreachable. Anything talman could not read is shown as "-", never as the
 configured value, because this command exists to say what is actually there.
 
 It reports and always succeeds. "talman health" is the one that passes or
-fails.`,
+fails.
+
+There is no --extra-flags here: this command composes several talosctl calls
+per node rather than driving one, so there is no single invocation for flags to
+be forwarded to.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
@@ -48,7 +54,7 @@ fails.`,
 				return err
 			}
 
-			reports, err := statusReports(cfg, runner(cfg), tc, targets)
+			reports, err := statusReports(cfg, runner(cfg), tc, targets, parallel)
 			if err != nil {
 				return err
 			}
@@ -74,6 +80,7 @@ fails.`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	addParallelFlag(cmd, &parallel, defaultParallel, "how many nodes to ask at once")
 
 	return cmd
 }
@@ -186,7 +193,7 @@ func summarise(reports []nodeReport) string {
 // What the config wants is resolved first, on this goroutine. The renderer
 // caches schematic IDs as it resolves them and is not safe to share.
 func statusReports(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
-	targets []*config.Node,
+	targets []*config.Node, parallel int,
 ) ([]nodeReport, error) {
 	reports := make([]nodeReport, len(targets))
 
@@ -207,36 +214,26 @@ func statusReports(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		}
 	}
 
-	// Enough to keep a cluster's worth of probes in flight without turning a
-	// large config into a fork bomb.
-	const parallel = 8
-
-	var wg sync.WaitGroup
-
-	sem := make(chan struct{}, parallel)
-
+	byAddress := make(map[string]*nodeReport, len(reports))
 	for i := range reports {
-		wg.Add(1)
-
-		go func(rep *nodeReport) {
-			defer wg.Done()
-
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			rep.Mode = tal.Mode(talosconfig, rep.Node.IPAddress)
-			if rep.Mode != talosctl.ModeRunning {
-				return
-			}
-
-			// Best effort by design: a node that answers but cannot say what
-			// it runs leaves the column empty rather than failing the table.
-			rep.State, _ = tal.State(talosconfig, rep.Node.IPAddress)
-			rep.K8s, _ = tal.KubeletVersion(talosconfig, rep.Node.IPAddress)
-		}(&reports[i])
+		byAddress[reports[i].Node.IPAddress] = &reports[i]
 	}
 
-	wg.Wait()
+	// Errors are deliberately swallowed: a node that answers but cannot say
+	// what it runs leaves the column empty rather than failing the table.
+	_, _ = eachNode(targets, parallel, func(n *config.Node) (struct{}, error) {
+		rep := byAddress[n.IPAddress]
+
+		rep.Mode = tal.Mode(talosconfig, n.IPAddress)
+		if rep.Mode != talosctl.ModeRunning {
+			return struct{}{}, nil
+		}
+
+		rep.State, _ = tal.State(talosconfig, n.IPAddress)
+		rep.K8s, _ = tal.KubeletVersion(talosconfig, n.IPAddress)
+
+		return struct{}{}, nil
+	})
 
 	return reports, nil
 }

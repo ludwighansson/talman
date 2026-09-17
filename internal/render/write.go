@@ -166,6 +166,12 @@ func (r *Renderer) WriteTalosconfig() (string, error) {
 	return path, nil
 }
 
+// WriteAtomic replaces path in one step, for callers outside this package --
+// the secrets bundle above all, whose truncation orphans a live cluster.
+func WriteAtomic(path string, content []byte) error {
+	return writeAtomic(path, content)
+}
+
 // writeAtomic replaces path in one step, via a temporary file in the same
 // directory.
 //

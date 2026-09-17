@@ -51,7 +51,7 @@ func targetsOf(addrs ...string) []*config.Node {
 func TestNewNodes(t *testing.T) {
 	tal := fakeCluster(t, []string{"10.0.0.11"}, []string{"10.0.0.21", "10.0.0.22"})
 
-	got, err := newNodes(tal, "/tmp/tc", targetsOf("10.0.0.11", "10.0.0.21", "10.0.0.22"))
+	got, err := newNodes(tal, "/tmp/tc", targetsOf("10.0.0.11", "10.0.0.21", "10.0.0.22"), 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestNewNodes(t *testing.T) {
 func TestNewNodesRefusesToGuessAboutADeadNode(t *testing.T) {
 	tal := fakeCluster(t, []string{"10.0.0.11"}, nil)
 
-	_, err := newNodes(tal, "/tmp/tc", targetsOf("10.0.0.11", "10.0.0.99"))
+	_, err := newNodes(tal, "/tmp/tc", targetsOf("10.0.0.11", "10.0.0.99"), 4)
 	if err == nil {
 		t.Fatal("expected an error for a node that answers neither API")
 	}
@@ -96,7 +96,7 @@ func TestNotInCluster(t *testing.T) {
 	t.Run("half-built cluster names who is missing", func(t *testing.T) {
 		tal := fakeCluster(t, []string{"10.0.0.11"}, []string{"10.0.0.12"})
 
-		got := strings.Join(notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}), ", ")
+		got := strings.Join(notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}, 4), ", ")
 
 		if !strings.Contains(got, "c02 is maintenance mode") || !strings.Contains(got, "w01 is unreachable") {
 			t.Errorf("notInCluster() = %q", got)
@@ -106,7 +106,7 @@ func TestNotInCluster(t *testing.T) {
 	t.Run("fully built cluster gates", func(t *testing.T) {
 		tal := fakeCluster(t, []string{"10.0.0.11", "10.0.0.12", "10.0.0.21"}, nil)
 
-		if got := notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}); len(got) > 0 {
+		if got := notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}, 4); len(got) > 0 {
 			t.Errorf("notInCluster() = %q, want none: every node answers with cluster PKI", got)
 		}
 	})
@@ -122,7 +122,7 @@ func TestNotInCluster(t *testing.T) {
 			"10.0.0.21": talosctl.ModeRunning,
 		}
 
-		if got := notInCluster(cfg, tal, "/tmp/tc", modes); len(got) > 0 {
+		if got := notInCluster(cfg, tal, "/tmp/tc", modes, 4); len(got) > 0 {
 			t.Errorf("notInCluster() = %q, want none: the cached answers say the cluster is whole", got)
 		}
 	})

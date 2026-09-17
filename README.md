@@ -469,9 +469,12 @@ are worked on at once:
 
 | command | default | why |
 | --- | --- | --- |
-| `render`, `diff` | 8 | nothing is enacted; the work is local or a dry run |
-| `status` | 8 | always concurrent — it is what you run when a node is down |
+| `render`, `diff`, `status` | 8 | nothing is enacted; the work is local, a dry run, or a question |
 | `apply`, `upgrade`, `reset` | 1 | one node at a time is the unit of risk |
+
+A run that enacts nothing — `diff`, and equally `apply --dry-run` or
+`--mode=staged` — batches every node together, control planes included: there
+are no reboots to stagger, so there is nothing to keep apart.
 
 For the three that change a cluster the flag raises the limit for **workers
 only**. A control plane always goes alone, whatever the number says: two
@@ -519,7 +522,9 @@ will send a machine config somewhere talman then cannot find. Use `-v` to see
 the full command.
 
 `validate`, `patches`, `nodes`, `schematic id` and `image url` have no such
-flag: none of them invokes `talosctl`.
+flag: none of them invokes `talosctl`. Neither does `status`, for the opposite
+reason — it composes several calls per node rather than driving one, so there
+is no single invocation for a forwarded flag to land on.
 
 `render` validates every generated config with `talosctl validate` before
 writing; `--no-validate` skips it, `--dry-run` writes nothing, `--stdout`
@@ -543,10 +548,10 @@ then runs a cluster health check, and stops the roll-out if either fails —
 leaving the remaining nodes untouched. That is the difference between a bad
 patch costing you one machine and costing you the control plane. Disable with
 `--wait=false` / `--health=false`; neither runs for `--dry-run` or
-`--mode=staged`, where nothing was enacted, and the health gate also stands
-down for `--insecure` — installing a node that had no config to authenticate
-with is the one case where there need not be a cluster yet. Pass `--health`
-explicitly to gate anyway.
+`--mode=staged`, where nothing was enacted. The health gate additionally stands
+down while any configured node is still outside the cluster — see below — which
+is what covers a first bootstrap, where there is no cluster to be healthy yet.
+Pass `--health` explicitly to gate anyway.
 
 Both `apply`'s gate and `talman health` run the check from one control plane —
 the first in the config that answers the Talos API, or `--node` — and report on
@@ -640,7 +645,7 @@ needs one waits: containerd, the CRI, and any extension service behind them.
 exist` — the initiator name is derived from the node identity, which lives in
 STATE — and a console showing that looks like a boot that never finishes. It is
 not: the node is in maintenance mode, and `talman apply -n <node>` adopts it
-and clears the wait. `reset` says so when it finishes.
+and clears the wait.
 
 A reset still stops at the first failure, and names what it did not get to:
 
