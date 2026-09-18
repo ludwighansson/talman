@@ -22,6 +22,7 @@ func newUpgradeCmd() *cobra.Command {
 		force         bool
 		skipEtcdCheck bool
 		parallel      int
+		detailed      bool
 		extraFlags    []string
 	)
 
@@ -33,7 +34,11 @@ node's schematic and talosVersion resolve to -- the same reference talman
 passes to gen config, so an upgrade cannot drift from what render produced.
 
 Nodes are upgraded one at a time in config order. Restrict the set with --node
-and check the target first with "talman image url".`,
+and check the target first with "talman image url".
+
+--detailed-exit-code reports whether anything was upgraded: 2 when at least one
+node was, 0 when every selected node already ran its configured version and
+schematic, 1 on error.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
@@ -56,6 +61,7 @@ and check the target first with "talman image url".`,
 
 			var (
 				skipped    int
+				upgraded   int
 				countMu    sync.Mutex
 				printMu    sync.Mutex
 				upgradeOne func(*config.Node, bool) error
@@ -118,6 +124,10 @@ and check the target first with "talman image url".`,
 
 				header += fmt.Sprintf("   image %s\n", ctx.Node.InstallerImage)
 
+				countMu.Lock()
+				upgraded++
+				countMu.Unlock()
+
 				if grouped {
 					out, err := tal.Combined(args...)
 
@@ -171,6 +181,10 @@ and check the target first with "talman image url".`,
 					"its configured version and schematic (use --force to upgrade anyway)\n")
 			}
 
+			if detailed && upgraded > 0 {
+				return errChanged
+			}
+
 			return nil
 		},
 	}
@@ -184,6 +198,7 @@ and check the target first with "talman image url".`,
 		"pass --force to talosctl, skipping its etcd health checks")
 	addParallelFlag(cmd, &parallel, 1,
 		"how many workers to upgrade at once; control planes always go one at a time")
+	addDetailedExitCode(cmd, &detailed)
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
@@ -195,6 +210,7 @@ func newUpgradeK8sCmd() *cobra.Command {
 		to       string
 		dryRun   bool
 		force    bool
+		detailed bool
 		extraK8s []string
 	)
 
@@ -208,7 +224,10 @@ talman first asks every node in the config which Kubernetes version it runs,
 and does nothing when they are all already on the target. --dry-run answers for
 talman rather than for talosctl, so on an up-to-date cluster it reports nothing
 to upgrade -- which is what running the command would do. Pass --force to run
-the upgrade regardless, or --force --dry-run for talosctl's own plan.`,
+the upgrade regardless, or --force --dry-run for talosctl's own plan.
+
+--detailed-exit-code reports which of the two happened: 2 when the upgrade ran,
+0 when every node was already on the target, 1 on error.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
@@ -252,7 +271,15 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.`,
 
 			args = append(args, extraK8s...)
 
-			return tal.Stream(args...)
+			if err := tal.Stream(args...); err != nil {
+				return err
+			}
+
+			if detailed {
+				return errChanged
+			}
+
+			return nil
 		},
 	}
 
@@ -261,6 +288,7 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the upgrade plan without running it")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"upgrade even when every node already runs the target version")
+	addDetailedExitCode(cmd, &detailed)
 	addExtraFlags(cmd, &extraK8s)
 
 	return cmd

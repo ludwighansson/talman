@@ -27,6 +27,7 @@ func newApplyCmd() *cobra.Command {
 		insecure   bool
 		onlyNew    bool
 		parallel   int
+		detailed   bool
 		dryRun     bool
 		wait       bool
 		health     bool
@@ -53,7 +54,11 @@ node, and --insecure=false forces cluster PKI.
 --dry-run runs "talosctl apply-config --dry-run" instead, which asks each node
 what the rendered config would change without changing it. Nothing is enacted,
 so nothing is staggered: every node is asked at once and the waiting and
-health checking are skipped.`,
+health checking are skipped.
+
+--detailed-exit-code reports the answer as an exit code: 2 when a node changed
+or would change, 0 when none did, 1 on error. It is the same question either
+way, because an apply asks each node for its diff before sending the config.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
@@ -131,6 +136,18 @@ health checking are skipped.`,
 			// Eight talosctl processes writing to one terminal produce an
 			// interleaved mess nobody can attribute to a node, so a batch of
 			// more than one captures each node's output and prints it whole.
+			var (
+				changedMu sync.Mutex
+				changed   bool
+			)
+
+			markChanged := func() {
+				changedMu.Lock()
+				defer changedMu.Unlock()
+
+				changed = true
+			}
+
 			var printMu sync.Mutex
 
 			say := func(block string) {
@@ -203,7 +220,26 @@ health checking are skipped.`,
 					header = fmt.Sprintf("== %s (%s)\n", n.Hostname, n.IPAddress)
 				}
 
-				if grouped {
+				// A real apply says nothing about whether the config it sent
+				// differed from the one already there, so when the answer is
+				// being reported as an exit code it is asked for first. The
+				// dry run is one call and the apply behind it is not.
+				if detailed && !dryRun {
+					probe := append(slices.Clone(args), "--dry-run")
+
+					out, err := tal.Combined(probe...)
+					if err != nil || dryRunChanged(out) {
+						// A dry run talman could not read is a change: for a
+						// gate that decides whether something happened,
+						// "cannot tell" has to mean "assume it did".
+						markChanged()
+					}
+				}
+
+				// Captured when the output has to be read as well as shown:
+				// several nodes in flight, or a dry run whose answer is the
+				// exit code.
+				if grouped || (detailed && dryRun) {
 					out, err := tal.Combined(args...)
 
 					if err != nil {
@@ -213,6 +249,10 @@ health checking are skipped.`,
 					}
 
 					say(header + string(out))
+
+					if detailed && dryRun && dryRunChanged(out) {
+						markChanged()
+					}
 				} else {
 					say(header)
 
@@ -342,6 +382,10 @@ health checking are skipped.`,
 				}
 			}
 
+			if detailed && changed {
+				return errChanged
+			}
+
 			return nil
 		},
 	}
@@ -358,6 +402,7 @@ health checking are skipped.`,
 		"how many nodes to work on at once; control planes go one at a time unless nothing is enacted")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"ask each node what the config would change, and change nothing")
+	addDetailedExitCode(cmd, &detailed)
 
 	// Rolling straight on to the next node is how a bad config takes out a
 	// whole control plane instead of one machine, so both gates default on.
@@ -450,6 +495,17 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	}
 
 	return outside
+}
+
+// dryRunChanged reads talosctl's dry run for whether the node would change.
+//
+// Talos computes the diff on the node and prints "Config diff: No changes."
+// when there is none, which is the only part of that output talman depends on.
+// Anything it cannot find that line in counts as changed: a CI job asking
+// "did something change?" is better told yes it did when talman cannot tell
+// than no it did not.
+func dryRunChanged(out []byte) bool {
+	return !strings.Contains(string(out), "No changes.")
 }
 
 // clusterHealth runs the same check `talman health` performs, from the first
