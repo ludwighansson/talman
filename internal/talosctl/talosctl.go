@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // Runner invokes a talosctl binary.
@@ -24,6 +25,11 @@ type Runner struct {
 	Verbose bool
 	// Trace receives command echoes when Verbose is set.
 	Trace io.Writer
+
+	// routes remembers which way each node answered, so a pass does not pay
+	// a dial timeout per call to rediscover it.
+	routeMu sync.Mutex
+	routes  map[string]bool
 }
 
 // New returns a Runner for the given binary.

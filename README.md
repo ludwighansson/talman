@@ -352,13 +352,18 @@ $ talman apply
 ```
 
 Every question talman asks *about* a node — which API it answers, whether it
-has come back after an apply, which control plane to run a health check from —
-pins `--endpoints` to that node. Left to its own devices `talosctl` routes
-`--nodes` through the talosconfig's endpoints, which are the control planes, so
-the answer describes whichever control plane proxied. On a cluster being built
-those are themselves in maintenance mode and cannot proxy for anyone, which
-turned "wait for this node to come back" into a ten-minute timeout on a node
-that had never gone away.
+has come back after an apply, what it is running — is asked of that node first,
+with `--endpoints` pinned to it, and through the talosconfig's endpoints second
+if that fails.
+
+Both routes are needed, which is why neither is a setting. Pinning is the only
+way to reach a node in maintenance mode, or any node while the control planes
+that would proxy for it are down — a cluster being built, or torn down. Going
+through the endpoints is the only way to reach a node whose API is not exposed
+outside the cluster network, which is how a worker is commonly firewalled:
+talman applies its config through a control plane, so it has to be able to ask
+after it the same way. Whichever route answered is remembered for the rest of
+the run.
 
 A fresh cluster:
 
