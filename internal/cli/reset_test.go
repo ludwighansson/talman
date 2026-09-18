@@ -154,3 +154,52 @@ func TestConsequence(t *testing.T) {
 		})
 	}
 }
+
+// A graceful reset asks etcd to remove the node from its member list, which
+// etcd refuses once too few members are left to agree. Resetting every control
+// plane is that case, and the question is whether the cluster survives the run.
+func TestAllControlPlanes(t *testing.T) {
+	cfg := &config.Config{
+		Nodes: []config.Node{
+			{Hostname: "c1", IPAddress: "10.0.0.11", Role: config.RoleControlPlane},
+			{Hostname: "c2", IPAddress: "10.0.0.12", Role: config.RoleControlPlane},
+			{Hostname: "w1", IPAddress: "10.0.0.21", Role: config.RoleWorker},
+		},
+	}
+
+	pick := func(indices ...int) []*config.Node {
+		out := make([]*config.Node, 0, len(indices))
+		for _, i := range indices {
+			out = append(out, &cfg.Nodes[i])
+		}
+
+		return out
+	}
+
+	tests := []struct {
+		name    string
+		targets []*config.Node
+		want    bool
+	}{
+		{name: "the whole cluster", targets: pick(0, 1, 2), want: true},
+		{name: "every control plane, no workers", targets: pick(0, 1), want: true},
+		{name: "one control plane: the cluster survives", targets: pick(0), want: false},
+		{name: "workers only", targets: pick(2), want: false},
+		{name: "nothing selected", targets: nil, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := allControlPlanes(cfg, tt.targets); got != tt.want {
+				t.Errorf("allControlPlanes() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	// A config with no control planes at all cannot be having them all reset.
+	workersOnly := &config.Config{Nodes: []config.Node{{Hostname: "w1", Role: config.RoleWorker}}}
+
+	if allControlPlanes(workersOnly, []*config.Node{&workersOnly.Nodes[0]}) {
+		t.Error("a config with no control planes must not count as all of them")
+	}
+}

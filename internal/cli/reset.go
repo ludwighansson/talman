@@ -73,6 +73,33 @@ cluster to leave.`,
 			// Before the confirmation, so the order shown is the order run.
 			targets = resetOrder(targets)
 
+			// A graceful reset asks etcd to remove the node from its member
+			// list, and etcd will only agree while enough members are left to
+			// agree on anything. Resetting every control plane in the config
+			// is destroying the cluster, so the last one asks a cluster that
+			// can no longer answer:
+			//
+			//   failed to leave cluster: failed to remove member ...:
+			//   etcdserver: re-configuration failed due to not enough
+			//   started members
+			//
+			// There is nothing to leave cleanly when nothing is left, so the
+			// control planes skip the attempt. Workers still leave gracefully:
+			// they go first, while the cluster is still serving.
+			destroying := graceful && allControlPlanes(cfg, targets)
+
+			if destroying {
+				if cmd.Flags().Changed("graceful") {
+					fmt.Fprintf(os.Stderr, "warning: --graceful with every control plane selected destroys the "+
+						"cluster, so the last one will have no etcd left to leave and will fail there\n")
+
+					destroying = false
+				} else {
+					fmt.Fprintf(os.Stderr, "every control plane is selected, so the cluster is being destroyed: "+
+						"control planes will not try to leave etcd first\n")
+				}
+			}
+
 			tc, err := ensureTalosconfig(cfg)
 			if err != nil {
 				return err
@@ -105,10 +132,12 @@ cluster to leave.`,
 					args = append(args, "--endpoints", n.IPAddress)
 				}
 
+				nodeGraceful := graceful && !(destroying && n.IsControlPlane())
+
 				args = append(args,
 					"reset",
 					"--nodes", n.IPAddress,
-					fmt.Sprintf("--graceful=%t", graceful),
+					fmt.Sprintf("--graceful=%t", nodeGraceful),
 					fmt.Sprintf("--reboot=%t", reboot),
 				)
 
@@ -228,6 +257,29 @@ func resetOrder(targets []*config.Node) []*config.Node {
 	}
 
 	return out
+}
+
+// allControlPlanes reports whether a selection takes out every control plane
+// the config knows about, which is the same question as whether the cluster
+// survives the run.
+func allControlPlanes(cfg *config.Config, targets []*config.Node) bool {
+	cps := cfg.ControlPlanes()
+	if len(cps) == 0 {
+		return false
+	}
+
+	selected := make(map[string]bool, len(targets))
+	for _, n := range targets {
+		selected[n.IPAddress] = true
+	}
+
+	for _, cp := range cps {
+		if !selected[cp.IPAddress] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // consequence describes what this particular reset will leave behind.
