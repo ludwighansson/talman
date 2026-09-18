@@ -499,6 +499,33 @@ node in flight each node's output is captured and printed whole, because eight
 talosctl processes sharing a terminal interleave into something no one can
 attribute to a machine.
 
+### Exit codes for CI
+
+`apply`, `upgrade` and `upgrade-k8s` take `--detailed-exit-code`, which answers
+"did anything change?" without anyone parsing output:
+
+| code | meaning |
+| --- | --- |
+| 0 | nothing changed, or would have |
+| 2 | something changed, or would have |
+| 1 | the command failed |
+
+```console
+$ talman apply --dry-run --detailed-exit-code || [ $? -eq 2 ] && echo "drift"
+```
+
+For `apply` the answer comes from Talos itself: each node computes the diff and
+reports `Config diff: No changes.` when there is none. A real apply asks for
+that diff before sending the config, so the exit code means the same thing
+whether or not `--dry-run` was passed. Output talman cannot read counts as a
+change — for a gate that decides whether something happened, "cannot tell" has
+to mean "assume it did".
+
+`upgrade` reports whether any node was upgraded rather than skipped as already
+running its configured version and schematic, and `upgrade-k8s` whether the
+upgrade ran or the cluster was already on the target. Both already made that
+decision; the flag only surfaces it.
+
 ### Reaching talosctl flags talman does not model
 
 Every command that shells out takes `--extra-flags`, appended verbatim to the

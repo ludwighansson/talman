@@ -127,3 +127,50 @@ func TestNotInCluster(t *testing.T) {
 		}
 	})
 }
+
+// Talos computes the diff on the node; "No changes." is the only part of that
+// output talman reads. Anything else is a change, including output it does not
+// recognise -- a CI job asking whether something changed is better told yes
+// when talman cannot tell than no.
+func TestDryRunChanged(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{
+			name: "no changes",
+			out:  "NODE: 10.0.0.11\nDry run summary:\nConfig diff: No changes.\n",
+			want: false,
+		},
+		{
+			name: "a diff",
+			out: "NODE: 10.0.0.11\nDry run summary:\nConfig diff:\n--- a\n+++ b\n" +
+				"@@ -1 +1 @@\n-  hostname: old\n+  hostname: new\n",
+			want: true,
+		},
+		{
+			name: "a node with no config at all is a change",
+			out:  "NODE: 10.0.0.21\nDry run summary:\nNode is running in maintenance mode and does not have a config yet.\n",
+			want: true,
+		},
+		{
+			name: "output talman does not recognise counts as changed",
+			out:  "something talosctl started printing in a later release\n",
+			want: true,
+		},
+		{
+			name: "nothing at all counts as changed",
+			out:  "",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := dryRunChanged([]byte(tt.out)); got != tt.want {
+				t.Errorf("dryRunChanged() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

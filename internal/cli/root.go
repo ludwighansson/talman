@@ -18,6 +18,18 @@ import (
 // Version is set at build time by goreleaser.
 var Version = "dev"
 
+// errChanged is what a command returns when --detailed-exit-code is set and
+// the run changed something, or would have. It is a result rather than a
+// failure, so Execute turns it into an exit code and prints nothing.
+var errChanged = errors.New("changes")
+
+// addDetailedExitCode registers the flag that turns "did this change
+// anything?" into something a CI job can branch on without parsing output.
+func addDetailedExitCode(cmd *cobra.Command, target *bool) {
+	cmd.Flags().BoolVar(target, "detailed-exit-code", false,
+		"exit 2 when something changed or would change, 0 when nothing did, 1 on error")
+}
+
 type globals struct {
 	configFile string
 	verbose    bool
@@ -28,6 +40,10 @@ var opts globals
 // Execute runs the root command and returns a process exit code.
 func Execute() int {
 	if err := newRootCmd().Execute(); err != nil {
+		if errors.Is(err, errChanged) {
+			return 2
+		}
+
 		// Cobra has already printed usage errors; everything else is ours.
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 
