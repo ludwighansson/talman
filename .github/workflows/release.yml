@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release and upload archives
+      packages: write # push the container image to ghcr.io
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +52,17 @@ jobs:
             "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.${os}.${arch}"
           chmod +x /usr/local/bin/sops
           sops --version
+
+      # The image is multi-arch and built from one runner. Nothing in the
+      # Dockerfile runs -- it copies static binaries out of upstream images --
+      # so buildx crosses architectures without emulation.
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: goreleaser/goreleaser-action@v6
         with:
