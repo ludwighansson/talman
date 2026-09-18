@@ -73,15 +73,17 @@ func TestMode(t *testing.T) {
 			wantCalls: 1,
 		},
 		{
+			// Pinned, then through the endpoints, then the maintenance
+			// service: a node that answers none of those is unreachable.
 			name:       "only the maintenance service answers",
 			insecureOK: true,
 			want:       ModeMaintenance,
-			wantCalls:  2,
+			wantCalls:  3,
 		},
 		{
 			name:      "neither answers",
 			want:      ModeUnreachable,
-			wantCalls: 2,
+			wantCalls: 3,
 		},
 		{
 			// Belt and braces: a running node must not be reported as new
@@ -121,24 +123,67 @@ func TestModeProbesTheNodeDirectly(t *testing.T) {
 	}
 
 	calls := argv(t, log)
-	if len(calls) != 2 {
-		t.Fatalf("want a secure then an insecure probe, got:\n%s", strings.Join(calls, "\n"))
+	if len(calls) != 3 {
+		t.Fatalf("want pinned, then proxied, then insecure, got:\n%s", strings.Join(calls, "\n"))
 	}
 
-	for _, call := range calls {
-		if !strings.Contains(call, "--endpoints 10.0.0.11") {
-			t.Errorf("probe is not pinned to the node: %s", call)
-		}
+	if !strings.Contains(calls[0], "--endpoints 10.0.0.11") {
+		t.Errorf("the first probe is not pinned to the node: %s", calls[0])
+	}
+
+	// The fallback is the route the apply itself uses: through the
+	// talosconfig's endpoints, which is how a firewalled worker is reached.
+	if strings.Contains(calls[1], "--endpoints") {
+		t.Errorf("the second probe should go through the endpoints: %s", calls[1])
 	}
 
 	// --insecure is a flag on `version`, not a global: talosctl rejects the
 	// invocation when it comes before the subcommand.
-	if !strings.HasSuffix(calls[1], "version --insecure") {
-		t.Errorf("--insecure must follow the subcommand: %s", calls[1])
+	if !strings.HasSuffix(calls[2], "version --insecure") {
+		t.Errorf("--insecure must follow the subcommand: %s", calls[2])
 	}
 
-	if strings.Contains(calls[1], "--talosconfig") {
-		t.Errorf("the maintenance probe needs no talosconfig: %s", calls[1])
+	if strings.Contains(calls[2], "--talosconfig") {
+		t.Errorf("the maintenance probe needs no talosconfig: %s", calls[2])
+	}
+}
+
+// A node reachable only through the control planes -- a worker whose API is
+// not exposed outside the cluster network -- has to be found by the fallback,
+// or an apply applies its config and then reports it as gone.
+func TestAskNodeFallsBackToTheEndpoints(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "talosctl")
+	log := filepath.Join(filepath.Dir(bin), "argv")
+
+	// Fails whenever --endpoints names the node, succeeds otherwise: the
+	// firewall that started this.
+	script := "#!/bin/sh\necho \"$@\" >> " + log + "\n" +
+		"case \" $* \" in\n  *\" --endpoints 10.0.0.21 \"*) exit 1 ;;\n  *) exit 0 ;;\nesac\n"
+
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+
+	r := &Runner{Bin: bin}
+
+	if got := r.Mode("/tmp/tc", "10.0.0.21"); got != ModeRunning {
+		t.Errorf("Mode() = %v, want %v: the node answers through the endpoints", got, ModeRunning)
+	}
+
+	if !r.Reachable("/tmp/tc", "10.0.0.21") {
+		t.Error("Reachable() = false: the node answers through the endpoints")
+	}
+
+	// The route that worked is remembered, so a wait polling every five
+	// seconds does not pay the failing probe every time.
+	before := len(argv(t, log))
+
+	if !r.Reachable("/tmp/tc", "10.0.0.21") {
+		t.Error("Reachable() = false on the second ask")
+	}
+
+	if added := len(argv(t, log)) - before; added != 1 {
+		t.Errorf("the second ask made %d calls, want 1: the working route should be remembered", added)
 	}
 }
 

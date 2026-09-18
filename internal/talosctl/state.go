@@ -25,14 +25,11 @@ type NodeState struct {
 
 // State reads a node's running Talos version and schematic.
 //
-// Pinned to the node, like every other question about one: routed through the
-// talosconfig's endpoints the answer comes back empty whenever the control
-// plane that would proxy is itself down, which reads as "cannot tell what this
-// node runs" about a node that would have said so directly.
+// Asked both ways, like everything else about a single node: see askNode.
 func (r *Runner) State(talosconfig, node string) (NodeState, error) {
 	var state NodeState
 
-	raw, err := r.Output("--talosconfig", talosconfig, "--endpoints", node, "--nodes", node, "version")
+	raw, err := r.askNode(talosconfig, node, "version")
 	if err != nil {
 		return state, err
 	}
@@ -41,8 +38,7 @@ func (r *Runner) State(talosconfig, node string) (NodeState, error) {
 
 	// A node with no schematic extension (not installed from a factory image)
 	// is not an error; it just cannot be compared on schematic.
-	ext, err := r.Output("--talosconfig", talosconfig, "--endpoints", node, "--nodes", node,
-		"get", "extensions", "--output", "yaml")
+	ext, err := r.askNode(talosconfig, node, "get", "extensions", "--output", "yaml")
 	if err == nil {
 		state.SchematicID = parseSchematicID(ext)
 	}
@@ -142,8 +138,7 @@ func findSchematic(node any) string {
 // An empty version means talman could not tell, never that the node is at
 // some default: callers must read it as "cannot prove it is up to date".
 func (r *Runner) KubeletVersion(talosconfig, node string) (string, error) {
-	out, err := r.Output("--talosconfig", talosconfig, "--endpoints", node, "--nodes", node,
-		"get", "kubeletspec", "--output", "yaml")
+	out, err := r.askNode(talosconfig, node, "get", "kubeletspec", "--output", "yaml")
 	if err != nil {
 		return "", err
 	}
@@ -209,6 +204,69 @@ func vPrefixed(version string) string {
 	return "v" + version
 }
 
+// askNode runs a read-only talosctl command about one node, pinned to that
+// node first and routed through the talosconfig's endpoints second.
+//
+// Neither route answers on its own, which is the whole reason for trying both.
+// Pinning is the only way to reach a node in maintenance mode, or any node
+// while the control planes that would proxy for it are down -- a cluster being
+// built, or torn down. Going through the endpoints is the only way to reach a
+// node whose API is not exposed beyond the cluster network, which is how a
+// worker is commonly firewalled: talman applies its config through a control
+// plane, so it has to be able to ask after it the same way.
+//
+// Whichever answered is remembered for the node, so a wait that polls every
+// five seconds pays the discovery once instead of a dial timeout each time.
+func (r *Runner) askNode(talosconfig, node string, args ...string) ([]byte, error) {
+	order := []bool{false, true}
+	if r.prefersProxy(node) {
+		order = []bool{true, false}
+	}
+
+	var first error
+
+	for i, viaProxy := range order {
+		base := []string{"--talosconfig", talosconfig}
+
+		if !viaProxy {
+			base = append(base, "--endpoints", node)
+		}
+
+		base = append(base, "--nodes", node)
+
+		out, err := r.Output(append(base, args...)...)
+		if err == nil {
+			r.rememberRoute(node, viaProxy)
+
+			return out, nil
+		}
+
+		if i == 0 {
+			first = err
+		}
+	}
+
+	return nil, first
+}
+
+func (r *Runner) prefersProxy(node string) bool {
+	r.routeMu.Lock()
+	defer r.routeMu.Unlock()
+
+	return r.routes[node]
+}
+
+func (r *Runner) rememberRoute(node string, viaProxy bool) {
+	r.routeMu.Lock()
+	defer r.routeMu.Unlock()
+
+	if r.routes == nil {
+		r.routes = map[string]bool{}
+	}
+
+	r.routes[node] = viaProxy
+}
+
 // Mode is how a node's Talos API answers.
 type Mode int
 
@@ -242,19 +300,16 @@ func (m Mode) String() string {
 // maintenance refuses it at the TLS handshake and answers the second, and a
 // machine that is down costs both dial timeouts before saying so.
 //
-// --endpoints is pinned to the node itself. Without it talosctl routes --nodes
-// through the talosconfig's endpoints, which are the control planes, so the
-// answer would be about whichever control plane proxied rather than about this
-// machine -- and a node in maintenance has no proxy path at all.
-//
 // --insecure goes after the subcommand: it is a flag on `version`, not a
 // global, and talosctl rejects the invocation outright when it comes first.
 func (r *Runner) Mode(talosconfig, node string) Mode {
-	if _, err := r.Output("--talosconfig", talosconfig,
-		"--endpoints", node, "--nodes", node, "version"); err == nil {
+	if _, err := r.askNode(talosconfig, node, "version"); err == nil {
 		return ModeRunning
 	}
 
+	// Pinned, with no fallback: the maintenance service is reached at the node
+	// or not at all. Nothing proxies for a machine that has no cluster PKI to
+	// be proxied with.
 	if _, err := r.Output("--endpoints", node, "--nodes", node,
 		"version", "--insecure"); err == nil {
 		return ModeMaintenance
@@ -265,14 +320,12 @@ func (r *Runner) Mode(talosconfig, node string) Mode {
 
 // Reachable reports whether the node answers the Talos API.
 //
-// Pinned to the node, like Mode: unpinned, talosctl routes the question
-// through the talosconfig's endpoints, which are the control planes. On a
-// cluster being built those are mostly still in maintenance mode and refuse a
-// PKI connection, so "is this node back?" would be answered by whichever
-// control plane the client happened to dial -- and a node that was up the
-// whole time would be reported as gone.
+// Asked of the node first and through the endpoints second, so it answers
+// while the control planes are down -- a cluster being built -- and also when
+// the node's own API is not reachable from here, which is how workers are
+// commonly firewalled. See askNode.
 func (r *Runner) Reachable(talosconfig, node string) bool {
-	_, err := r.Output("--talosconfig", talosconfig, "--endpoints", node, "--nodes", node, "version")
+	_, err := r.askNode(talosconfig, node, "version")
 
 	return err == nil
 }
