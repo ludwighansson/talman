@@ -116,7 +116,7 @@ func TestWithout(t *testing.T) {
 }
 
 // Inert passes have no reboots to stagger, so a control plane has nothing to
-// be kept apart from and a fifty-node diff need not take fifty turns.
+// be kept apart from and a fifty-node dry run need not take fifty turns.
 func TestBatchesForInertPassesIgnoreRoles(t *testing.T) {
 	nodes := nodesOf("c1:controlplane", "w1:worker", "c2:controlplane", "w2:worker")
 

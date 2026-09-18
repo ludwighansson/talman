@@ -8,7 +8,7 @@ configuration patches.
 > releases: the config schema, the commands and their flags can still change in
 > ways that break your cluster directory, and an upgrade may need a manual
 > migration. It also drives real clusters — read what `render` writes and what
-> `diff` reports before you `apply`. Pin a tagged version rather than tracking
+> `apply --dry-run` reports before you `apply`. Pin a tagged version rather than tracking
 > `main`.
 
 ```console
@@ -283,7 +283,6 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
 | `talman image url` | the installer image reference per node |
-| `talman diff` | re-render, then show what applying would change |
 | `talman apply` | re-render, then apply, adopting nodes in maintenance mode |
 | `talman bootstrap` | initialise etcd, once |
 | `talman kubeconfig` | fetch the kubeconfig into the output directory |
@@ -442,7 +441,7 @@ it twice would fail without `--force`. `--merge` set explicitly wins either way.
 
 ### The talosconfig
 
-`apply`, `diff`, `bootstrap`, `kubeconfig`, `upgrade`, `upgrade-k8s`, `health`
+`apply`, `bootstrap`, `kubeconfig`, `upgrade`, `upgrade-k8s`, `health`
 and `reset` all authenticate with `clusterconfig/talosconfig`, and generate it
 when it is not there:
 
@@ -469,12 +468,12 @@ are worked on at once:
 
 | command | default | why |
 | --- | --- | --- |
-| `render`, `diff`, `status` | 8 | nothing is enacted; the work is local, a dry run, or a question |
+| `render`, `status` | 8 | nothing is enacted; the work is local, or a question |
 | `apply`, `upgrade`, `reset` | 1 | one node at a time is the unit of risk |
 
-A run that enacts nothing — `diff`, and equally `apply --dry-run` or
-`--mode=staged` — batches every node together, control planes included: there
-are no reboots to stagger, so there is nothing to keep apart.
+A run that enacts nothing — `apply --dry-run` or `--mode=staged` — batches
+every node together, control planes included, and does so without being asked:
+there are no reboots to stagger, so there is nothing to keep apart.
 
 For the three that change a cluster the flag raises the limit for **workers
 only**. A control plane always goes alone, whatever the number says: two
@@ -532,11 +531,11 @@ prints instead.
 
 ### apply renders first
 
-`apply` and `diff` re-render the targeted nodes before doing anything, so what
+`apply` re-renders the targeted nodes before doing anything, so what
 reaches a node is what the config and patches currently say. Applying whatever
 happened to be left in the output directory meant a patch added since the last
 render was silently not applied — the change looked like it landed and hadn't —
-and it made `diff` compare live state against a stale artefact and report
+and it made `--dry-run` compare live state against a stale artefact and report
 agreement. `--no-render` applies the existing files if you specifically want
 that.
 

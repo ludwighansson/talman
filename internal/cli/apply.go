@@ -21,27 +21,6 @@ import (
 var applyModes = []string{"auto", "no-reboot", "staged", "try"}
 
 func newApplyCmd() *cobra.Command {
-	return applyLikeCmd("apply", "Apply rendered machine configs to the cluster", false)
-}
-
-func newDiffCmd() *cobra.Command {
-	cmd := applyLikeCmd("diff", "Show what applying the rendered configs would change", true)
-	cmd.Long = `Diff runs "talosctl apply-config --dry-run" for each node, which asks the node
-itself what the rendered config would change. Nothing is modified.
-
-Like apply, each node is asked which API it answers first, so a node still in
-maintenance mode can be diffed alongside the rest of the cluster.`
-
-	return cmd
-}
-
-func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
-	// What the remainder message says a stopped pass did not do.
-	doneWord := "applied"
-	if forceDryRun {
-		doneWord = "diffed"
-	}
-
 	var (
 		nodes      []string
 		mode       string
@@ -58,8 +37,8 @@ func applyLikeCmd(use, short string, forceDryRun bool) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   use,
-		Short: short,
+		Use:   "apply",
+		Short: "Apply rendered machine configs to the cluster",
 		Long: `Apply renders each selected node's machine config and applies it, one node at a
 time, waiting for the node to come back and the cluster to stay healthy before
 moving to the next.
@@ -69,16 +48,17 @@ has joined is addressed with cluster PKI, and one in maintenance mode -- never
 configured, or reset -- through the maintenance service, which is what adopting
 it means. A mixed cluster therefore needs no flag. --only-new restricts a run
 to the nodes in maintenance mode; -i forces the maintenance service for every
-node, and --insecure=false forces cluster PKI.`,
+node, and --insecure=false forces cluster PKI.
+
+--dry-run runs "talosctl apply-config --dry-run" instead, which asks each node
+what the rendered config would change without changing it. Nothing is enacted,
+so nothing is staggered: every node is asked at once and the waiting and
+health checking are skipped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
-			}
-
-			if forceDryRun {
-				dryRun = true
 			}
 
 			if mode == "reboot" {
@@ -101,9 +81,9 @@ node, and --insecure=false forces cluster PKI.`,
 			// Applying whatever happens to be sitting in the output directory
 			// means a patch added since the last render is silently not
 			// applied -- the change looks like it landed and did not. It also
-			// makes `diff` compare live state against a stale artefact and
-			// report agreement. Rendering here is what makes both commands
-			// mean what they say.
+			// makes --dry-run compare live state against a stale artefact and
+			// report agreement. Rendering here is what makes the command mean
+			// what it says.
 			if !noRender {
 				if err := renderForApply(cfg, targets, parallel); err != nil {
 					return err
@@ -286,8 +266,8 @@ node, and --insecure=false forces cluster PKI.`,
 
 			// Nothing is enacted by a dry run or a staged apply, so the rule
 			// that keeps control planes apart has nothing to protect: they
-			// batch with everything else. `apply --dry-run` is `diff` and
-			// should not take fifty turns to say so.
+			// batch with everything else: asking fifty nodes what would
+			// change should not take fifty turns.
 			inert := dryRun || mode == "staged"
 
 			if inert && !cmd.Flags().Changed("parallel") {
@@ -314,7 +294,7 @@ node, and --insecure=false forces cluster PKI.`,
 					return struct{}{}, nil
 				}); err != nil {
 					return fmt.Errorf("%w\n%s", err,
-						resumeHint(use, doneWord, without(targets[done:], succeeded)))
+						resumeHint("apply", "applied", without(targets[done:], succeeded)))
 				}
 
 				done += len(batch)
@@ -357,7 +337,7 @@ node, and --insecure=false forces cluster PKI.`,
 
 					if err := clusterHealth(cfg, tal, tc); err != nil {
 						return fmt.Errorf("cluster is unhealthy after applying to %s: %w\n%s",
-							names(batch), err, resumeHint(use, doneWord, targets[done:]))
+							names(batch), err, resumeHint("apply", "applied", targets[done:]))
 					}
 				}
 			}
@@ -374,34 +354,22 @@ node, and --insecure=false forces cluster PKI.`,
 	cmd.Flags().BoolVar(&onlyNew, "only-new", false,
 		"restrict the run to nodes that are in maintenance mode")
 
-	// A dry run enacts nothing, so there is nothing to stagger and no reason
-	// to make a fifty-node diff take fifty turns.
-	perPass := 1
-	if forceDryRun {
-		perPass = defaultParallel
-	}
-
-	addParallelFlag(cmd, &parallel, perPass,
+	addParallelFlag(cmd, &parallel, 1,
 		"how many nodes to work on at once; control planes go one at a time unless nothing is enacted")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
+		"ask each node what the config would change, and change nothing")
 
-	// Everything below this line is about enacting a change and waiting for
-	// its consequences, which a dry run has none of: diff would advertise
-	// them, accept them, and honour none.
-	if !forceDryRun {
-		cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without applying")
-
-		// Rolling straight on to the next node is how a bad config takes out
-		// a whole control plane instead of one machine, so both gates default
-		// on.
-		cmd.Flags().BoolVar(&wait, "wait", true,
-			"wait for each node to come back before applying to the next")
-		cmd.Flags().BoolVar(&health, "health", true,
-			"run a cluster health check between nodes")
-		cmd.Flags().DurationVar(&stabilize, "stabilize", 30*time.Second,
-			"how long a node must stay reachable before it counts as back")
-		cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute,
-			"how long to wait for a single node to come back")
-	}
+	// Rolling straight on to the next node is how a bad config takes out a
+	// whole control plane instead of one machine, so both gates default on.
+	// Neither runs for a dry run, which enacts nothing to wait for.
+	cmd.Flags().BoolVar(&wait, "wait", true,
+		"wait for each node to come back before applying to the next")
+	cmd.Flags().BoolVar(&health, "health", true,
+		"run a cluster health check between nodes")
+	cmd.Flags().DurationVar(&stabilize, "stabilize", 30*time.Second,
+		"how long a node must stay reachable before it counts as back")
+	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute,
+		"how long to wait for a single node to come back")
 	cmd.Flags().BoolVar(&noRender, "no-render", false,
 		"apply the configs already in the output directory instead of re-rendering")
 	addExtraFlags(cmd, &extraFlags)
