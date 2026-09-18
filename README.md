@@ -639,6 +639,24 @@ order a graceful reset needs, since leaving etcd and the Kubernetes API takes a
 control plane that is still serving. `--direct=false` restores endpoint routing
 for a network where node addresses are not reachable from where talman runs.
 
+Selecting *every* control plane means the cluster does not survive the run, so
+those nodes skip the graceful leave. Graceful asks etcd to remove the node from
+its member list, and etcd only agrees while enough members remain to agree on
+anything — so the last control plane of a teardown asks a cluster that cannot
+answer:
+
+```
+failed to leave cluster: failed to remove member 7443577814378962433:
+etcdserver: re-configuration failed due to not enough started members
+```
+
+That fails the reset in its fifth phase with the wipe undone, on the last node,
+after the rest of the cluster is already gone. Workers still leave gracefully —
+they go first, while the cluster is serving — and resetting a subset of the
+control planes keeps the graceful leave, because then there is a cluster to
+leave. An explicit `--graceful` is honoured, with a warning saying where it
+will fail.
+
 A reset node comes back with no config and no identity, so everything that
 needs one waits: containerd, the CRI, and any extension service behind them.
 `iscsi-tools` parks on `waiting for file /etc/iscsi/initiatorname.iscsi to
