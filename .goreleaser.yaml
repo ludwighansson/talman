@@ -39,6 +39,40 @@ archives:
       - README.md
       - LICENSE
 
+# The image carries talosctl and sops as well, because talman drives both and
+# an image without them can lint a config and nothing else. Their versions are
+# pinned here rather than left to the Dockerfile's defaults, so one file decides
+# what a release ships; keep them in step with ci.yml, which tests against the
+# same pair.
+dockers_v2:
+  - id: talman
+    ids:
+      - talman
+    dockerfile: Dockerfile
+    images:
+      - ghcr.io/ludwighansson/talman
+    # No `latest`: every release so far is a prerelease, and a latest tag that
+    # follows alphas is a trap for whoever pulls it expecting stability.
+    tags:
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    build_args:
+      TALOSCTL_VERSION: v1.14.0
+      SOPS_VERSION: v3.13.3
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "Manage Talos clusters and their configuration patches"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.source: "{{ .GitURL }}"
+      org.opencontainers.image.licenses: MIT
+      # Which talosctl is inside, without running the image: the version a
+      # cluster actually meets is this one, not talman's.
+      dev.talman.talosctl.version: v1.14.0
+      dev.talman.sops.version: v3.13.3
+
 checksum:
   name_template: checksums.txt
 
@@ -77,3 +111,10 @@ release:
     ```
 
     talman drives the `talosctl` binary; install that too.
+
+    Or take the image, which carries talosctl and sops with it:
+
+    ```console
+    docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
+      ghcr.io/ludwighansson/talman:{{ .Version }} validate
+    ```

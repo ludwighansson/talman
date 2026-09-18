@@ -90,6 +90,47 @@ Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
 rather than reaching for `@latest`: while talman is pre-1.0, `@latest` follows
 every alpha, breaking changes included.
 
+Or take the image, which carries `talosctl` and `sops` with it:
+
+```console
+$ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
+    ghcr.io/ludwighansson/talman:1.0.0-alpha.5 validate
+```
+
+It holds exactly three binaries — talman and the two it drives — on Alpine,
+and runs as uid 65532. Alpine rather than distroless for the shell: GitLab CI
+runs a job's script through the image's shell and GitHub Actions runs `run:`
+steps the same way, so without one the image can only be used as `docker run`
+rather than as the job image itself.
+
+```yaml
+# .gitlab-ci.yml
+drift:
+  image: ghcr.io/ludwighansson/talman:1.0.0-alpha.5
+  script:
+    - talman apply --dry-run --detailed-exit-code
+```
+
+`--tmpfs /tmp` is not optional when running read-only — rendering decrypts the
+secrets bundle into a temp directory, and a tmpfs is what keeps the plaintext
+off a disk. The cluster directory is mounted at `/cluster`, which is also the
+working directory, and must be writable by uid 65532 for `render` to write its
+output.
+
+The talosctl version inside is the one your cluster meets, so it is on the
+image as a label as well as in `talman version`:
+
+```console
+$ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version" }}' \
+    ghcr.io/ludwighansson/talman:1.0.0-alpha.5
+v1.14.0
+```
+
+That pinning is the one cost of the image: talman is built so that a new Talos
+release needs no talman release, and an image ties you to the talosctl it
+shipped with. `talosctl:` in talman.yaml can point at a newer binary mounted
+into the container when that matters.
+
 You also need [`talosctl`](https://docs.siderolabs.com/talos/v1.14/talosctl) on
 `PATH`, at least as new as the Talos version you target, and
 [`sops`](https://github.com/getsops/sops) if your secrets bundle or any patch
