@@ -318,6 +318,67 @@ func (r *Runner) Mode(talosconfig, node string) Mode {
 	return ModeUnreachable
 }
 
+// EtcdRunning reports whether the node's etcd is up and healthy, which for a
+// control plane is the same question as whether the cluster has been
+// bootstrapped: etcd is what `talman bootstrap` starts, and until it runs a
+// control plane sits in the booting stage with etcd failing to find a cluster
+// to join.
+func (r *Runner) EtcdRunning(talosconfig, node string) bool {
+	out, err := r.askNode(talosconfig, node, "get", "services", "etcd", "--output", "yaml")
+	if err != nil {
+		return false
+	}
+
+	return serviceHealthy(out)
+}
+
+// serviceHealthy finds a service resource's running and healthy flags.
+//
+// Walked structurally like the other resource readers here: the layout is
+// Talos', and a release that moves the fields should read as "not healthy"
+// rather than as a wrong answer.
+func serviceHealthy(out []byte) bool {
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+
+	for {
+		var doc any
+
+		if err := dec.Decode(&doc); err != nil {
+			return false
+		}
+
+		if healthy(doc) {
+			return true
+		}
+	}
+}
+
+func healthy(node any) bool {
+	switch v := node.(type) {
+	case map[string]any:
+		running, hasRunning := v["running"].(bool)
+		well, hasHealthy := v["healthy"].(bool)
+
+		if hasRunning && hasHealthy {
+			return running && well
+		}
+
+		for _, child := range v {
+			if healthy(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if healthy(child) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // Reachable reports whether the node answers the Talos API.
 //
 // Asked of the node first and through the endpoints second, so it answers
@@ -336,34 +397,82 @@ func (r *Runner) Reachable(talosconfig, node string) bool {
 // Continuously, not once: a node that has applied a config reboots, and a
 // single successful probe can land in the window before it goes down. Holding
 // the check for a settling period is what makes "the node came back" mean it.
+//
+// It says what it is waiting for while it waits. A node adopted out of
+// maintenance mode installs Talos to disk and reboots, which takes minutes,
+// and it is away for all of them -- so the version that only spoke when a node
+// first answered printed one line and then nothing, for up to the whole
+// timeout. Silence and a hang look identical from a terminal.
 func (r *Runner) WaitReady(talosconfig, node string, stabilize, timeout time.Duration, log func(string, ...any)) error {
-	const poll = 5 * time.Second
+	const (
+		poll = 5 * time.Second
+		// Often enough to show the wait is alive, rarely enough not to bury
+		// the output of a roll-out in ticks.
+		report = 30 * time.Second
+	)
 
-	deadline := time.Now().Add(timeout)
+	started := time.Now()
+	deadline := started.Add(timeout)
 
-	var steadySince time.Time
+	log("  waiting for %s to come back, up to %s", node, timeout)
+
+	var (
+		steadySince time.Time
+		lastReport  time.Time
+	)
 
 	for {
 		if r.Reachable(talosconfig, node) {
 			if steadySince.IsZero() {
 				steadySince = time.Now()
 
-				log("  %s responding; holding %s to confirm it stays up", node, stabilize)
+				log("  %s responding after %s; holding %s to confirm it stays up",
+					node, round(time.Since(started)), stabilize)
 			}
 
 			if time.Since(steadySince) >= stabilize {
 				return nil
 			}
-		} else if !steadySince.IsZero() {
-			steadySince = time.Time{}
+		} else {
+			if !steadySince.IsZero() {
+				steadySince = time.Time{}
 
-			log("  %s went away again; restarting the stabilization window", node)
+				log("  %s went away again; restarting the stabilization window", node)
+			}
+
+			if time.Since(lastReport) >= report {
+				lastReport = time.Now()
+
+				log("  %s %s (%s elapsed)", node, r.awayBecause(node), round(time.Since(started)))
+			}
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("node %s did not stay reachable for %s within %s", node, stabilize, timeout)
+			return fmt.Errorf("node %s did not stay reachable for %s within %s "+
+				"(--timeout waits longer; a node installing Talos for the first time pulls an "+
+				"installer image before it can reboot)", node, stabilize, timeout)
 		}
 
 		time.Sleep(poll)
 	}
+}
+
+// awayBecause distinguishes a node that has not rebooted yet from one that is
+// down, which is the difference between an install still running and an
+// install that failed.
+func (r *Runner) awayBecause(node string) string {
+	if _, err := r.Output("--endpoints", node, "--nodes", node, "version", "--insecure"); err == nil {
+		return "still in maintenance mode, installing"
+	}
+
+	return "not answering yet, probably rebooting"
+}
+
+// round trims a duration to something worth reading in a progress line.
+func round(d time.Duration) time.Duration {
+	if d < time.Minute {
+		return d.Round(time.Second)
+	}
+
+	return d.Round(10 * time.Second)
 }

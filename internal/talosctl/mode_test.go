@@ -208,3 +208,49 @@ func TestReachableProbesTheNodeDirectly(t *testing.T) {
 		t.Errorf("probe is not pinned to the node: %s", calls[0])
 	}
 }
+
+// etcd running on a control plane is how talman tells a bootstrapped cluster
+// from one that is only installed: a node adopted before bootstrap has nothing
+// to join, and waiting for it to come back is a timeout with extra steps.
+func TestServiceHealthy(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{
+			name: "running and healthy",
+			out: "node: 10.0.0.11\nmetadata:\n    id: etcd\nspec:\n" +
+				"    running: true\n    healthy: true\n    unknown: false\n",
+			want: true,
+		},
+		{
+			name: "running but not healthy yet",
+			out:  "spec:\n    running: true\n    healthy: false\n",
+			want: false,
+		},
+		{
+			name: "failed: etcd cannot find a cluster to join",
+			out:  "spec:\n    running: false\n    healthy: false\n",
+			want: false,
+		},
+		{
+			name: "a shape talman does not recognise is not health",
+			out:  "spec:\n    state: Running\n",
+			want: false,
+		},
+		{
+			name: "nothing at all",
+			out:  "",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := serviceHealthy([]byte(tt.out)); got != tt.want {
+				t.Errorf("serviceHealthy() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
