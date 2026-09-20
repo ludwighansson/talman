@@ -75,6 +75,15 @@ be forwarded to.`,
 
 			fmt.Fprintln(cmd.OutOrStdout(), summarise(reports))
 
+			// A node with a config but no cluster to join never starts
+			// serving the Talos API, which looks exactly like a machine that
+			// is gone. Only asked when something is quiet, and only said when
+			// it is the answer.
+			if quiet(reports) && !anyEtcdRunning(runner(cfg), tc, reports) {
+				fmt.Fprintln(cmd.OutOrStdout(), "cluster: not bootstrapped — a node with a config but no "+
+					"cluster to join stays quiet; run `talman bootstrap`")
+			}
+
 			return nil
 		},
 	}
@@ -182,6 +191,34 @@ func summarise(reports []nodeReport) string {
 	}
 
 	return out
+}
+
+// quiet reports whether anything in the table failed to answer, which is the
+// only case worth asking after the cluster for.
+func quiet(reports []nodeReport) bool {
+	for _, r := range reports {
+		if r.Mode == talosctl.ModeUnreachable {
+			return true
+		}
+	}
+
+	return false
+}
+
+// anyEtcdRunning reports whether some control plane that answered has etcd,
+// which is the difference between a cluster and a set of configured machines.
+func anyEtcdRunning(tal *talosctl.Runner, talosconfig string, reports []nodeReport) bool {
+	for _, r := range reports {
+		if r.Mode != talosctl.ModeRunning || !r.Node.IsControlPlane() {
+			continue
+		}
+
+		if tal.EtcdRunning(talosconfig, r.Node.IPAddress) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // statusReports asks every node what it is running.
