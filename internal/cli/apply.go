@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -116,6 +117,7 @@ way, because an apply asks each node for its diff before sending the config.`,
 			var (
 				saidUngated bool
 				ungated     int
+				gated       int
 			)
 
 			if onlyNew {
@@ -135,42 +137,31 @@ way, because an apply asks each node for its diff before sending the config.`,
 			// probe cache, which several nodes in a batch write at once.
 			var modesMu sync.Mutex
 
-			// Eight talosctl processes writing to one terminal produce an
-			// interleaved mess nobody can attribute to a node, so a batch of
-			// more than one captures each node's output and prints it whole.
+			// Guards the answer --detailed-exit-code reports, which several
+			// nodes in a batch may reach at once.
 			var (
 				changedMu sync.Mutex
 				changed   bool
 			)
 
-			// Whether the cluster has an etcd to join. Worked out at most
-			// once, and only when a node adopted out of maintenance mode is
-			// about to be waited for.
+			// Whether there is a cluster to join. Asked at most once, and
+			// only when the answer would change what talman does.
 			var (
-				bootstrapMu  sync.Mutex
-				bootstrapped *bool
-				adoptedEarly int
+				askOnce sync.Once
+				cluster clusterState
+
+				adoptedEarly atomic.Int64
 			)
 
-			clusterBootstrapped := func() bool {
-				bootstrapMu.Lock()
-				defer bootstrapMu.Unlock()
+			// Deliberately not "the probe said no": a probe that could not
+			// reach a control plane has established nothing, and what this
+			// gates -- waiting for a node, and the health check between nodes
+			// -- is what keeps one bad config from reaching a whole control
+			// plane. Silence must not switch those off.
+			noClusterYet := func() bool {
+				askOnce.Do(func() { cluster = askCluster(cfg, tal, tc) })
 
-				if bootstrapped == nil {
-					up := false
-
-					for _, cp := range cfg.ControlPlanes() {
-						if tal.EtcdRunning(tc, cp.IPAddress) {
-							up = true
-
-							break
-						}
-					}
-
-					bootstrapped = &up
-				}
-
-				return *bootstrapped
+				return cluster == clusterAbsent
 			}
 
 			markChanged := func() {
@@ -227,7 +218,7 @@ way, because an apply asks each node for its diff before sending the config.`,
 						// and a fresh apply that is most of them. Say so when
 						// it is the likely answer, rather than leaving an
 						// operator to wonder which machine died.
-						if !clusterBootstrapped() {
+						if noClusterYet() {
 							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance "+
 								"service\n  the cluster is not bootstrapped, and a node with a config but no "+
 								"cluster to join stays quiet: run `talman bootstrap`", n.Hostname, n.IPAddress)
@@ -320,10 +311,8 @@ way, because an apply asks each node for its diff before sending the config.`,
 					// Bootstrap runs after the configs are applied, by design,
 					// so this is the ordinary shape of building a cluster
 					// rather than a mistake to report.
-					if maintenance && !clusterBootstrapped() {
-						bootstrapMu.Lock()
-						adoptedEarly++
-						bootstrapMu.Unlock()
+					if maintenance && noClusterYet() {
+						adoptedEarly.Add(1)
 
 						// Its state is whatever the install makes of it, which
 						// talman did not watch: forget the reading rather than
@@ -427,7 +416,7 @@ way, because an apply asks each node for its diff before sending the config.`,
 				// exists for. An explicit --health always gates.
 				if health && !cmd.Flags().Changed("health") {
 					if outside := notInCluster(cfg, tal, tc, modes, parallel); len(outside) > 0 {
-						ungated = len(outside)
+						ungated++
 
 						// Which ones, for whoever is asking why; the summary
 						// at the end gives the count.
@@ -442,6 +431,8 @@ way, because an apply asks each node for its diff before sending the config.`,
 				}
 
 				if health {
+					gated++
+
 					fmt.Fprintf(os.Stderr, "%schecking cluster health before continuing\n", detail)
 
 					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
@@ -451,18 +442,26 @@ way, because an apply asks each node for its diff before sending the config.`,
 				}
 			}
 
+			adopted := adoptedEarly.Load()
+
+			// Said once, and said accurately: a gate that stood down for the
+			// first step and ran for the rest is not a run that skipped the
+			// gate, and a summary claiming otherwise is worse than silence.
 			switch {
-			case adoptedEarly > 0 && ungated > 0:
+			case adopted > 0 && ungated > 0 && gated == 0:
 				fmt.Fprintf(os.Stderr, "\nnot waiting, and not gating on health: no cluster to join yet\n")
-			case adoptedEarly > 0:
+			case adopted > 0:
 				fmt.Fprintf(os.Stderr, "\nnot waiting: nothing to join until `talman bootstrap` runs\n")
+			case ungated > 0 && gated == 0:
+				fmt.Fprintf(os.Stderr, "\nnot gating on health: nodes not in the cluster yet "+
+					"(--health to check anyway)\n")
 			case ungated > 0:
-				fmt.Fprintf(os.Stderr, "\nnot gating on health: %d node(s) not in the cluster yet "+
-					"(--health to check anyway)\n", ungated)
+				fmt.Fprintf(os.Stderr, "\nhealth gate stood down for %d of %d step(s): "+
+					"nodes not in the cluster yet\n", ungated, ungated+gated)
 			}
 
-			if adoptedEarly > 0 {
-				fmt.Fprintf(os.Stderr, "%d node(s) adopted → talman bootstrap\n", adoptedEarly)
+			if adopted > 0 {
+				fmt.Fprintf(os.Stderr, "%d node(s) adopted → talman bootstrap\n", adopted)
 			}
 
 			if detailed && changed {
@@ -497,7 +496,7 @@ way, because an apply asks each node for its diff before sending the config.`,
 	cmd.Flags().DurationVar(&stabilize, "stabilize", 30*time.Second,
 		"how long a node must stay reachable before it counts as back")
 	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute,
-		"how long to wait for a single node to come back")
+		"how long to wait for a node to come back, and for the health check between nodes")
 	cmd.Flags().BoolVar(&noRender, "no-render", false,
 		"apply the configs already in the output directory instead of re-rendering")
 	addExtraFlags(cmd, &extraFlags)

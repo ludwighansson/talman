@@ -28,6 +28,45 @@ func controlPlaneTarget(name string) (*config.Config, *talosctl.Runner, string, 
 	return cfg, runner(cfg), tc, target, nil
 }
 
+// clusterState is what talman could establish about whether a cluster exists.
+type clusterState int
+
+const (
+	// clusterUnknown is no control plane answering. It is not evidence that
+	// there is no cluster, and nothing may be concluded from it.
+	clusterUnknown clusterState = iota
+	// clusterAbsent is control planes answering with no etcd running: nothing
+	// has been bootstrapped.
+	clusterAbsent
+	// clusterUp is etcd running somewhere, healthy or not.
+	clusterUp
+)
+
+// askCluster asks the configured control planes whether there is a cluster to
+// join.
+//
+// Every control plane in the config, not merely the ones a command happened to
+// select: "no control plane answered" is a different fact from "no control
+// plane has etcd", and only the second one means anything. Telling an operator
+// to bootstrap because the machine they asked about is a worker, or because
+// the control planes are briefly unreachable, is advice that destroys a
+// cluster.
+func askCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string) clusterState {
+	state := clusterUnknown
+
+	for _, cp := range cfg.ControlPlanes() {
+		switch tal.Etcd(talosconfig, cp.IPAddress) {
+		case talosctl.EtcdRunning:
+			return clusterUp
+		case talosctl.EtcdStopped:
+			state = clusterAbsent
+		case talosctl.EtcdUnknown:
+		}
+	}
+
+	return state
+}
+
 // controlPlane resolves a named control plane node, or the first one in the
 // config when nothing is named.
 func controlPlane(cfg *config.Config, name string) (*config.Node, error) {

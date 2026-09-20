@@ -54,7 +54,12 @@ be forwarded to.`,
 				return err
 			}
 
-			reports, err := statusReports(cfg, runner(cfg), tc, targets, parallel)
+			// One runner for the whole command: it remembers which route
+			// answered for each node, and a second would pay that discovery
+			// again on the path that only runs when something is already down.
+			tal := runner(cfg)
+
+			reports, err := statusReports(cfg, tal, tc, targets, parallel)
 			if err != nil {
 				return err
 			}
@@ -78,8 +83,9 @@ be forwarded to.`,
 			// A node with a config but no cluster to join never starts
 			// serving the Talos API, which looks exactly like a machine that
 			// is gone. Only asked when something is quiet, and only said when
-			// it is the answer.
-			if quiet(reports) && !anyEtcdRunning(runner(cfg), tc, reports) {
+			// the control planes answered that there is no etcd -- not when
+			// they said nothing at all.
+			if quiet(reports) && askCluster(cfg, tal, tc) == clusterAbsent {
 				fmt.Fprintln(cmd.OutOrStdout(), "cluster: not bootstrapped — a node with a config but no "+
 					"cluster to join stays quiet; run `talman bootstrap`")
 			}
@@ -198,22 +204,6 @@ func summarise(reports []nodeReport) string {
 func quiet(reports []nodeReport) bool {
 	for _, r := range reports {
 		if r.Mode == talosctl.ModeUnreachable {
-			return true
-		}
-	}
-
-	return false
-}
-
-// anyEtcdRunning reports whether some control plane that answered has etcd,
-// which is the difference between a cluster and a set of configured machines.
-func anyEtcdRunning(tal *talosctl.Runner, talosconfig string, reports []nodeReport) bool {
-	for _, r := range reports {
-		if r.Mode != talosctl.ModeRunning || !r.Node.IsControlPlane() {
-			continue
-		}
-
-		if tal.EtcdRunning(talosconfig, r.Node.IPAddress) {
 			return true
 		}
 	}

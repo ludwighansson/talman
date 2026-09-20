@@ -123,7 +123,7 @@ image as a label as well as in `talman version`:
 ```console
 $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version" }}' \
     ghcr.io/ludwighansson/talman:1.0.0-alpha.7
-v1.14.0
+v1.14.1
 ```
 
 That pinning is the one cost of the image: talman's own promise is that a new
@@ -464,8 +464,11 @@ something talman could not read — never the configured value dressed up as a
 live one.
 
 `unreachable` reads the same for a machine that is gone and for one that simply
-has nowhere to report to, so when nodes are quiet and no control plane has etcd,
-`status` says which it is:
+has nowhere to report to, so when nodes are quiet and the control planes answer
+that they have no etcd running, `status` says which it is — answer, not
+silence: control planes that cannot be reached have established nothing, and a
+cluster that is merely degraded is still a cluster, which is precisely when
+bootstrapping again would be the wrong advice:
 
 ```console
 6 node(s): 3 running, 3 unreachable
