@@ -444,20 +444,8 @@ way, because an apply asks each node for its diff before sending the config.`,
 
 			adopted := adoptedEarly.Load()
 
-			// Said once, and said accurately: a gate that stood down for the
-			// first step and ran for the rest is not a run that skipped the
-			// gate, and a summary claiming otherwise is worse than silence.
-			switch {
-			case adopted > 0 && ungated > 0 && gated == 0:
-				fmt.Fprintf(os.Stderr, "\nnot waiting, and not gating on health: no cluster to join yet\n")
-			case adopted > 0:
-				fmt.Fprintf(os.Stderr, "\nnot waiting: nothing to join until `talman bootstrap` runs\n")
-			case ungated > 0 && gated == 0:
-				fmt.Fprintf(os.Stderr, "\nnot gating on health: nodes not in the cluster yet "+
-					"(--health to check anyway)\n")
-			case ungated > 0:
-				fmt.Fprintf(os.Stderr, "\nhealth gate stood down for %d of %d step(s): "+
-					"nodes not in the cluster yet\n", ungated, ungated+gated)
+			if summary := gateSummary(adopted, ungated, gated); summary != "" {
+				fmt.Fprintf(os.Stderr, "\n%s\n", summary)
 			}
 
 			if adopted > 0 {
@@ -577,6 +565,28 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	}
 
 	return outside
+}
+
+// gateSummary says what a run did less of, once and at the end.
+//
+// Accurately, which is the whole difficulty: a gate that stood down for the
+// first step and ran for the rest is not a run that skipped the gate, and a
+// summary claiming otherwise is worse than no summary. Empty when there is
+// nothing to report.
+func gateSummary(adopted int64, ungated, gated int) string {
+	switch {
+	case adopted > 0 && ungated > 0 && gated == 0:
+		return "not waiting, and not gating on health: no cluster to join yet"
+	case adopted > 0:
+		return "not waiting: nothing to join until `talman bootstrap` runs"
+	case ungated > 0 && gated == 0:
+		return "not gating on health: nodes not in the cluster yet (--health to check anyway)"
+	case ungated > 0:
+		return fmt.Sprintf("health gate stood down for %d of %d step(s): nodes not in the cluster yet",
+			ungated, ungated+gated)
+	default:
+		return ""
+	}
 }
 
 // indent puts a prefix on every line of a command's output.

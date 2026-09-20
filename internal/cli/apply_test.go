@@ -174,3 +174,59 @@ func TestDryRunChanged(t *testing.T) {
 		})
 	}
 }
+
+// The summary is written after the fact, which is exactly how it comes to
+// describe a run that did not happen: a gate that stood down once and ran
+// three times is not a run that skipped the gate.
+func TestGateSummary(t *testing.T) {
+	tests := []struct {
+		name    string
+		adopted int64
+		ungated int
+		gated   int
+		want    string
+	}{
+		{
+			name: "an ordinary run says nothing",
+		},
+		{
+			name:    "every step ungated, nodes adopted: a cluster being built",
+			adopted: 2,
+			ungated: 3,
+			want:    "not waiting, and not gating on health: no cluster to join yet",
+		},
+		{
+			name:    "adopted, but the gate did run",
+			adopted: 1,
+			ungated: 1,
+			gated:   2,
+			want:    "not waiting: nothing to join until `talman bootstrap` runs",
+		},
+		{
+			name:    "gate stood down throughout, nothing adopted",
+			ungated: 2,
+			want:    "not gating on health: nodes not in the cluster yet (--health to check anyway)",
+		},
+		{
+			// The regression: one ungated step out of four used to be
+			// reported as though the whole run had skipped the gate.
+			name:    "gate stood down once and ran three times",
+			ungated: 1,
+			gated:   3,
+			want:    "health gate stood down for 1 of 4 step(s): nodes not in the cluster yet",
+		},
+		{
+			name:  "the gate ran every time",
+			gated: 4,
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := gateSummary(tt.adopted, tt.ungated, tt.gated); got != tt.want {
+				t.Errorf("gateSummary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
