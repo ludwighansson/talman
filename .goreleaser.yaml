@@ -3,6 +3,14 @@ version: 2
 
 project_name: talman
 
+# What the image carries. Named once because the label that tells an operator
+# which talosctl is inside has to be the one that was built in: two constants
+# spelling the same version is how an image comes to advertise a binary it does
+# not contain. ci.yml installs the same pair, so what is tested is what ships.
+env:
+  - TALOSCTL_VERSION=v1.14.1
+  - SOPS_VERSION=v3.13.3
+
 before:
   hooks:
     - go mod download
@@ -40,10 +48,9 @@ archives:
       - LICENSE
 
 # The image carries talosctl and sops as well, because talman drives both and
-# an image without them can lint a config and nothing else. Their versions are
-# pinned here rather than left to the Dockerfile's defaults, so one file decides
-# what a release ships; keep them in step with ci.yml, which tests against the
-# same pair.
+# an image without them can lint a config and nothing else. The versions come
+# from the variables above rather than the Dockerfile's defaults, so one file
+# decides what a release ships.
 dockers_v2:
   - id: talman
     ids:
@@ -59,8 +66,8 @@ dockers_v2:
       - linux/amd64
       - linux/arm64
     build_args:
-      TALOSCTL_VERSION: v1.14.1
-      SOPS_VERSION: v3.13.3
+      TALOSCTL_VERSION: "{{ .Env.TALOSCTL_VERSION }}"
+      SOPS_VERSION: "{{ .Env.SOPS_VERSION }}"
     labels:
       org.opencontainers.image.title: "{{ .ProjectName }}"
       org.opencontainers.image.description: "Manage Talos clusters and their configuration patches"
@@ -70,8 +77,8 @@ dockers_v2:
       org.opencontainers.image.licenses: MIT
       # Which talosctl is inside, without running the image: the version a
       # cluster actually meets is this one, not talman's.
-      dev.talman.talosctl.version: v1.14.1
-      dev.talman.sops.version: v3.13.3
+      dev.talman.talosctl.version: "{{ .Env.TALOSCTL_VERSION }}"
+      dev.talman.sops.version: "{{ .Env.SOPS_VERSION }}"
 
 checksum:
   name_template: checksums.txt

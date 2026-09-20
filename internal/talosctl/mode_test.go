@@ -209,47 +209,58 @@ func TestReachableProbesTheNodeDirectly(t *testing.T) {
 	}
 }
 
-// etcd running on a control plane is how talman tells a bootstrapped cluster
-// from one that is only installed: a node adopted before bootstrap has nothing
-// to join, and waiting for it to come back is a timeout with extra steps.
-func TestServiceHealthy(t *testing.T) {
+// The difference between "no etcd" and "etcd that is not healthy" is the
+// difference between a cluster that was never bootstrapped and one that has
+// lost quorum -- and the remedy for the first destroys the second.
+func TestParseServiceRunning(t *testing.T) {
 	tests := []struct {
 		name string
 		out  string
-		want bool
+		want EtcdState
 	}{
 		{
-			name: "running and healthy",
+			name: "running and healthy: a cluster",
 			out: "node: 10.0.0.11\nmetadata:\n    id: etcd\nspec:\n" +
 				"    running: true\n    healthy: true\n    unknown: false\n",
-			want: true,
+			want: EtcdRunning,
 		},
 		{
-			name: "running but not healthy yet",
+			// A degraded cluster is still a cluster. Reading this as "not
+			// bootstrapped" would have talman recommend bootstrapping over
+			// the top of one that exists.
+			name: "running but unhealthy: still a cluster",
 			out:  "spec:\n    running: true\n    healthy: false\n",
-			want: false,
+			want: EtcdRunning,
 		},
 		{
-			name: "failed: etcd cannot find a cluster to join",
+			name: "not running: nothing has been bootstrapped here",
 			out:  "spec:\n    running: false\n    healthy: false\n",
-			want: false,
+			want: EtcdStopped,
 		},
 		{
-			name: "a shape talman does not recognise is not health",
+			// Running anywhere in the document wins: a nested block saying no
+			// must not outvote the one saying yes.
+			name: "one block says no, another says yes",
+			out: "spec:\n    instances:\n      - running: false\n        healthy: false\n" +
+				"    running: true\n    healthy: true\n",
+			want: EtcdRunning,
+		},
+		{
+			name: "a shape talman does not recognise establishes nothing",
 			out:  "spec:\n    state: Running\n",
-			want: false,
+			want: EtcdUnknown,
 		},
 		{
 			name: "nothing at all",
 			out:  "",
-			want: false,
+			want: EtcdUnknown,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := serviceHealthy([]byte(tt.out)); got != tt.want {
-				t.Errorf("serviceHealthy() = %v, want %v", got, tt.want)
+			if got := parseServiceRunning([]byte(tt.out)); got != tt.want {
+				t.Errorf("parseServiceRunning() = %v, want %v", got, tt.want)
 			}
 		})
 	}

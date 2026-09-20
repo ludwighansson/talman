@@ -296,9 +296,10 @@ func (m Mode) String() string {
 // Mode probes one node to find out which API it answers on.
 //
 // The two calls are the two ways to talk to Talos, asked in the order that
-// makes a healthy cluster cheap: a running node answers the first, a node in
-// maintenance refuses it at the TLS handshake and answers the second, and a
-// machine that is down costs both dial timeouts before saying so.
+// makes a healthy cluster cheap: a running node answers the first call, a node
+// in maintenance refuses it and answers the maintenance probe, and a machine
+// that is down costs every route a dial timeout before saying so -- the two
+// askNode tries plus the maintenance one.
 //
 // --insecure goes after the subcommand: it is a flag on `version`, not a
 // global, and talosctl rejects the invocation outright when it comes first.
@@ -307,76 +308,121 @@ func (r *Runner) Mode(talosconfig, node string) Mode {
 		return ModeRunning
 	}
 
-	// Pinned, with no fallback: the maintenance service is reached at the node
-	// or not at all. Nothing proxies for a machine that has no cluster PKI to
-	// be proxied with.
-	if _, err := r.Output("--endpoints", node, "--nodes", node,
-		"version", "--insecure"); err == nil {
+	if r.inMaintenance(node) {
 		return ModeMaintenance
 	}
 
 	return ModeUnreachable
 }
 
-// EtcdRunning reports whether the node's etcd is up and healthy, which for a
-// control plane is the same question as whether the cluster has been
-// bootstrapped: etcd is what `talman bootstrap` starts, and until it runs a
-// control plane sits in the booting stage with etcd failing to find a cluster
-// to join.
-func (r *Runner) EtcdRunning(talosconfig, node string) bool {
-	out, err := r.askNode(talosconfig, node, "get", "services", "etcd", "--output", "yaml")
-	if err != nil {
-		return false
-	}
+// inMaintenance asks the maintenance service directly, with no fallback:
+// it is reached at the node or not at all, because nothing proxies for a
+// machine that has no cluster PKI to be proxied with.
+//
+// --insecure goes after the subcommand: it is a flag on `version`, not a
+// global, and talosctl rejects the invocation outright when it comes first.
+func (r *Runner) inMaintenance(node string) bool {
+	_, err := r.Output("--endpoints", node, "--nodes", node, "version", "--insecure")
 
-	return serviceHealthy(out)
+	return err == nil
 }
 
-// serviceHealthy finds a service resource's running and healthy flags.
+// EtcdState is what a control plane can tell talman about its etcd.
+type EtcdState int
+
+// The three answers, and the difference between the last two matters: the
+// remedy for a cluster that was never bootstrapped is `talman bootstrap`, and
+// the remedy for a bootstrapped cluster that has lost quorum is anything but.
+const (
+	// EtcdUnknown is a node that did not answer, or answered in a shape
+	// talman does not recognise. It is not evidence of anything.
+	EtcdUnknown EtcdState = iota
+	// EtcdStopped is etcd not running: no cluster has been bootstrapped here,
+	// and a control plane sits in the booting stage waiting for one.
+	EtcdStopped
+	// EtcdRunning is etcd up, healthy or not. A degraded cluster is still a
+	// cluster.
+	EtcdRunning
+)
+
+// Etcd asks a control plane about its etcd service.
+func (r *Runner) Etcd(talosconfig, node string) EtcdState {
+	out, err := r.askNode(talosconfig, node, "get", "services", "etcd", "--output", "yaml")
+	if err != nil {
+		return EtcdUnknown
+	}
+
+	return parseServiceRunning(out)
+}
+
+// parseServiceRunning finds a service resource's running flag.
 //
 // Walked structurally like the other resource readers here: the layout is
-// Talos', and a release that moves the fields should read as "not healthy"
-// rather than as a wrong answer.
-func serviceHealthy(out []byte) bool {
+// Talos', and a release that moves the fields should read as "cannot tell"
+// rather than as a wrong answer. A block is only taken for the service's
+// status if it carries both flags, and running anywhere in the document wins
+// -- a nested per-instance block saying no must not outvote the one saying
+// yes.
+func parseServiceRunning(out []byte) EtcdState {
 	dec := yaml.NewDecoder(bytes.NewReader(out))
+
+	state := EtcdUnknown
 
 	for {
 		var doc any
 
 		if err := dec.Decode(&doc); err != nil {
-			return false
+			return state
 		}
 
-		if healthy(doc) {
-			return true
+		switch found := running(doc); found {
+		case EtcdRunning:
+			return EtcdRunning
+		case EtcdStopped:
+			state = EtcdStopped
+		case EtcdUnknown:
 		}
 	}
 }
 
-func healthy(node any) bool {
+func running(node any) EtcdState {
+	state := EtcdUnknown
+
 	switch v := node.(type) {
 	case map[string]any:
-		running, hasRunning := v["running"].(bool)
-		well, hasHealthy := v["healthy"].(bool)
+		up, hasRunning := v["running"].(bool)
+		_, hasHealthy := v["healthy"].(bool)
 
 		if hasRunning && hasHealthy {
-			return running && well
+			if up {
+				return EtcdRunning
+			}
+
+			state = EtcdStopped
 		}
 
 		for _, child := range v {
-			if healthy(child) {
-				return true
+			if found := running(child); found > state {
+				state = found
+			}
+
+			if state == EtcdRunning {
+				return EtcdRunning
 			}
 		}
 	case []any:
 		for _, child := range v {
-			if healthy(child) {
-				return true
+			if found := running(child); found > state {
+				state = found
+			}
+
+			if state == EtcdRunning {
+				return EtcdRunning
 			}
 		}
 	}
 
-	return false
+	return state
 }
 
 // Reachable reports whether the node answers the Talos API.
@@ -461,7 +507,7 @@ func (r *Runner) WaitReady(talosconfig, node string, stabilize, timeout time.Dur
 // down, which is the difference between an install still running and an
 // install that failed.
 func (r *Runner) awayBecause(node string) string {
-	if _, err := r.Output("--endpoints", node, "--nodes", node, "version", "--insecure"); err == nil {
+	if r.inMaintenance(node) {
 		return "still in maintenance mode, installing"
 	}
 
