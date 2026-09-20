@@ -59,7 +59,7 @@ dockers_v2:
       - linux/amd64
       - linux/arm64
     build_args:
-      TALOSCTL_VERSION: v1.14.0
+      TALOSCTL_VERSION: v1.14.1
       SOPS_VERSION: v3.13.3
     labels:
       org.opencontainers.image.title: "{{ .ProjectName }}"
@@ -70,7 +70,7 @@ dockers_v2:
       org.opencontainers.image.licenses: MIT
       # Which talosctl is inside, without running the image: the version a
       # cluster actually meets is this one, not talman's.
-      dev.talman.talosctl.version: v1.14.0
+      dev.talman.talosctl.version: v1.14.1
       dev.talman.sops.version: v3.13.3
 
 checksum:
