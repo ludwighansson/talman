@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ludwighansson/talman/internal/config"
 )
@@ -20,7 +21,7 @@ func TestHealthArgs(t *testing.T) {
 		},
 	}
 
-	got := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[1], true), " ")
+	got := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[1], true, 0), " ")
 
 	want := "--talosconfig /tmp/tc --endpoints 10.0.0.12 health --nodes 10.0.0.12 --server=true " +
 		"--control-plane-nodes 10.0.0.11,10.0.0.12 --worker-nodes 10.0.0.21"
@@ -29,8 +30,26 @@ func TestHealthArgs(t *testing.T) {
 		t.Errorf("healthArgs() =\n  %s\nwant\n  %s", got, want)
 	}
 
-	if client := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[0], false), " "); !strings.Contains(client, "--server=false") {
+	if client := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[0], false, 0), " "); !strings.Contains(client, "--server=false") {
 		t.Errorf("--server=false not forwarded: %s", client)
+	}
+}
+
+// apply bounds the gate by its own --timeout, because talosctl otherwise
+// waits twenty minutes to report that a gate will not pass.
+func TestHealthArgsBoundsTheWait(t *testing.T) {
+	cfg := &config.Config{
+		Nodes: []config.Node{{Hostname: "c1", IPAddress: "10.0.0.11", Role: config.RoleControlPlane}},
+	}
+
+	got := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[0], false, 10*time.Minute), " ")
+
+	if !strings.Contains(got, "--wait-timeout 10m0s") {
+		t.Errorf("the gate is unbounded: %s", got)
+	}
+
+	if bare := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[0], false, 0), " "); strings.Contains(bare, "--wait-timeout") {
+		t.Errorf("`talman health` should keep talosctl's own patience: %s", bare)
 	}
 }
 
@@ -41,7 +60,7 @@ func TestHealthArgsOmitsEmptyLists(t *testing.T) {
 		Nodes: []config.Node{{Hostname: "c1", IPAddress: "10.0.0.11", Role: config.RoleControlPlane}},
 	}
 
-	got := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[0], true), " ")
+	got := strings.Join(healthArgs(cfg, "/tmp/tc", &cfg.Nodes[0], true, 0), " ")
 
 	if strings.Contains(got, "--worker-nodes") {
 		t.Errorf("empty worker list was passed anyway: %s", got)

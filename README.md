@@ -365,7 +365,21 @@ talman applies its config through a control plane, so it has to be able to ask
 after it the same way. Whichever route answered is remembered for the rest of
 the run.
 
-A fresh cluster:
+A fresh cluster, where the configs go out before there is a cluster to join:
+
+```console
+$ talman apply                # adopts every node; does not wait for what cannot finish
+   not waiting for talos-w01: nothing to join until `talman bootstrap` runs
+2 node(s) adopted; they finish joining once the cluster exists
+  talman bootstrap   next, then `talman health`
+```
+
+A node adopted out of maintenance mode installs Talos, reboots, and then waits
+for a cluster. Before `bootstrap` there is no etcd and no cluster, so its API
+never comes back — waiting for it is a ten-minute timeout per node, on the one
+path where every node is in that state. So talman doesn't: it checks whether
+any control plane has etcd running, and when none does it says what is missing
+instead of waiting for it. Step by step, that flow is:
 
 ```console
 $ talman apply -n talos-c01   # adopted: installs and reboots into its config
@@ -620,7 +634,11 @@ then runs a cluster health check, and stops the roll-out if either fails —
 leaving the remaining nodes untouched. That is the difference between a bad
 patch costing you one machine and costing you the control plane. Disable with
 `--wait=false` / `--health=false`; neither runs for `--dry-run` or
-`--mode=staged`, where nothing was enacted. The health gate additionally stands
+`--mode=staged`, where nothing was enacted. The wait says what it is waiting
+for while it waits — a node installing Talos for the first time is away for
+minutes, and silence is indistinguishable from a hang — and the health gate is
+bounded by the same `--timeout`, because `talosctl` otherwise takes twenty
+minutes to report that a gate will not pass. The health gate additionally stands
 down while any configured node is still outside the cluster — see below — which
 is what covers a first bootstrap, where there is no cluster to be healthy yet.
 Pass `--health` explicitly to gate anyway.

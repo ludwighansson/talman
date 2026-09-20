@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -42,7 +43,10 @@ The check runs from one control plane node -- the first in the config unless
 				}
 			}
 
-			args := append(healthArgs(cfg, tc, target, serverSide), extraFlags...)
+			// No bound here: `talman health` was asked for on purpose, and
+			// talosctl's own patience is the right default for a command
+			// whose whole job is to wait for a cluster.
+			args := append(healthArgs(cfg, tc, target, serverSide, 0), extraFlags...)
 
 			return tal.Stream(args...)
 		},
@@ -104,7 +108,9 @@ func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*
 //
 // The node lists come from the config rather than from the cluster, so a node
 // that is supposed to exist and does not is a failure rather than an absence.
-func healthArgs(cfg *config.Config, talosconfig string, from *config.Node, serverSide bool) []string {
+func healthArgs(cfg *config.Config, talosconfig string, from *config.Node, serverSide bool,
+	waitFor time.Duration,
+) []string {
 	args := []string{
 		"--talosconfig", talosconfig,
 		// Pinned to the node the check runs from, for the same reason the
@@ -115,6 +121,13 @@ func healthArgs(cfg *config.Config, talosconfig string, from *config.Node, serve
 		"health",
 		"--nodes", from.IPAddress,
 		fmt.Sprintf("--server=%t", serverSide),
+	}
+
+	// talosctl waits 20 minutes by default, which is a long time to find out
+	// that a gate is not going to pass. A caller that has its own patience --
+	// apply, which already knows how long it will wait for a node -- says so.
+	if waitFor > 0 {
+		args = append(args, "--wait-timeout", waitFor.String())
 	}
 
 	var cps, workers []string

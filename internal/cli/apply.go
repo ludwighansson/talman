@@ -141,6 +141,36 @@ way, because an apply asks each node for its diff before sending the config.`,
 				changed   bool
 			)
 
+			// Whether the cluster has an etcd to join. Worked out at most
+			// once, and only when a node adopted out of maintenance mode is
+			// about to be waited for.
+			var (
+				bootstrapMu  sync.Mutex
+				bootstrapped *bool
+				adoptedEarly int
+			)
+
+			clusterBootstrapped := func() bool {
+				bootstrapMu.Lock()
+				defer bootstrapMu.Unlock()
+
+				if bootstrapped == nil {
+					up := false
+
+					for _, cp := range cfg.ControlPlanes() {
+						if tal.EtcdRunning(tc, cp.IPAddress) {
+							up = true
+
+							break
+						}
+					}
+
+					bootstrapped = &up
+				}
+
+				return *bootstrapped
+			}
+
 			markChanged := func() {
 				changedMu.Lock()
 				defer changedMu.Unlock()
@@ -269,6 +299,34 @@ way, because an apply asks each node for its diff before sending the config.`,
 				}
 
 				if wait {
+					// A node adopted out of maintenance mode installs Talos,
+					// reboots, and then waits for a cluster to join. Before
+					// `talman bootstrap` there is no cluster and no etcd, so
+					// its API never comes back and waiting for it is a timeout
+					// with extra steps -- ten silent minutes per node, on the
+					// one path where every node is in that state.
+					//
+					// Bootstrap runs after the configs are applied, by design,
+					// so this is the ordinary shape of building a cluster
+					// rather than a mistake to report.
+					if maintenance && !clusterBootstrapped() {
+						say(fmt.Sprintf("   not waiting for %s: nothing to join until `talman bootstrap` runs\n",
+							n.Hostname))
+
+						bootstrapMu.Lock()
+						adoptedEarly++
+						bootstrapMu.Unlock()
+
+						// Its state is whatever the install makes of it, which
+						// talman did not watch: forget the reading rather than
+						// leave a stale one for the health gate.
+						modesMu.Lock()
+						delete(modes, n.IPAddress)
+						modesMu.Unlock()
+
+						return nil
+					}
+
 					logf := func(format string, args ...any) {
 						say(fmt.Sprintf(format+"\n", args...))
 					}
@@ -375,11 +433,16 @@ way, because an apply asks each node for its diff before sending the config.`,
 				if health {
 					fmt.Fprintf(os.Stderr, "   checking cluster health before continuing\n")
 
-					if err := clusterHealth(cfg, tal, tc); err != nil {
+					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
 						return fmt.Errorf("cluster is unhealthy after applying to %s: %w\n%s",
 							names(batch), err, resumeHint("apply", "applied", targets[done:]))
 					}
 				}
+			}
+
+			if adoptedEarly > 0 {
+				fmt.Fprintf(os.Stderr, "%d node(s) adopted; they finish joining once the cluster exists\n"+
+					"  talman bootstrap   next, then `talman health`\n", adoptedEarly)
 			}
 
 			if detailed && changed {
@@ -514,7 +577,7 @@ func dryRunChanged(out []byte) bool {
 // Not from the node just applied: a worker cannot answer for the cluster, and
 // picking whichever node the roll-out happens to be on would make a failing
 // gate mean something different at each step.
-func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string) error {
+func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string, waitFor time.Duration) error {
 	from, err := healthNode(cfg, tal, talosconfig)
 	if err != nil {
 		return err
@@ -522,7 +585,7 @@ func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string)
 
 	// Client-side: the gate is "can talman still see a healthy cluster from
 	// here", which is the question a roll-out has to stop on.
-	return tal.Stream(healthArgs(cfg, talosconfig, from, false)...)
+	return tal.Stream(healthArgs(cfg, talosconfig, from, false, waitFor)...)
 }
 
 // renderForApply re-renders the targeted nodes and writes them out, so what
