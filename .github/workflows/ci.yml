@@ -16,7 +16,7 @@ env:
   # The render tests shell out to this talosctl. It must be at least as new as
   # the newest document kind any test config uses, since talosctl parses and
   # validates the config it is handed.
-  TALOSCTL_VERSION: v1.14.0
+  TALOSCTL_VERSION: v1.14.1
   # internal/sopsx drives this binary; without it those tests skip.
   SOPS_VERSION: 3.13.3
 

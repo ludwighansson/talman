@@ -14,7 +14,7 @@ permissions:
 # still passes, because the tests that need them skip -- which turns the gate
 # before a tag is published into a gate that tests nothing.
 env:
-  TALOSCTL_VERSION: v1.14.0
+  TALOSCTL_VERSION: v1.14.1
   SOPS_VERSION: 3.13.3
 
 jobs:

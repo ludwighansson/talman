@@ -7,7 +7,7 @@
 # Both come from their own projects' images rather than being curled into a
 # build stage, so they arrive with the provenance their publishers gave them
 # and this file has nothing to verify.
-ARG TALOSCTL_VERSION=v1.14.0
+ARG TALOSCTL_VERSION=v1.14.1
 ARG SOPS_VERSION=v3.13.3
 
 FROM ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} AS talosctl
