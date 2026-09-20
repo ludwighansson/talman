@@ -110,11 +110,13 @@ way, because an apply asks each node for its diff before sending the config.`,
 			// that is still being built from one that is misbehaving.
 			modes := map[string]talosctl.Mode{}
 
-			// The gate standing down is worth saying once, not after every
-			// node: the reason does not change between them, and a roll-out
-			// across a cluster being built would otherwise repeat it all the
-			// way down the output.
-			var saidUngated bool
+			// Why talman did less than usual is said once, at the end: the
+			// reason does not change between nodes, and repeating it under
+			// each one buries the roll-out in its own footnotes.
+			var (
+				saidUngated bool
+				ungated     int
+			)
 
 			if onlyNew {
 				targets, err = newNodes(tal, tc, targets, parallel)
@@ -187,7 +189,12 @@ way, because an apply asks each node for its diff before sending the config.`,
 				fmt.Fprint(os.Stderr, block)
 			}
 
-			applyOne := func(n *config.Node, grouped bool) error {
+			// The detail under a node's heading is talosctl's, indented to
+			// read as detail: the heading says which node, the lines below it
+			// say what that node's talosctl said.
+			const detail = "     "
+
+			applyOne := func(n *config.Node, position int) error {
 				file := cfg.MachineConfigPath(n)
 
 				if _, err := os.Stat(file); err != nil {
@@ -215,6 +222,17 @@ way, because an apply asks each node for its diff before sending the config.`,
 					case talosctl.ModeRunning:
 						maintenance = false
 					case talosctl.ModeUnreachable:
+						// A node that has its config but no cluster to join
+						// goes quiet in exactly this way, and after a reset
+						// and a fresh apply that is most of them. Say so when
+						// it is the likely answer, rather than leaving an
+						// operator to wonder which machine died.
+						if !clusterBootstrapped() {
+							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance "+
+								"service\n  the cluster is not bootstrapped, and a node with a config but no "+
+								"cluster to join stays quiet: run `talman bootstrap`", n.Hostname, n.IPAddress)
+						}
+
 						return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
 							n.Hostname, n.IPAddress)
 					}
@@ -238,17 +256,17 @@ way, because an apply asks each node for its diff before sending the config.`,
 
 				args = append(args, extraFlags...)
 
-				var header string
+				var note string
 
 				switch {
 				case maintenance && forced:
-					header = fmt.Sprintf("== %s (%s) through the maintenance service (--insecure)\n",
-						n.Hostname, n.IPAddress)
+					note = " · through the maintenance service (--insecure)"
 				case maintenance:
-					header = fmt.Sprintf("== %s (%s) maintenance mode; adopting it\n", n.Hostname, n.IPAddress)
-				default:
-					header = fmt.Sprintf("== %s (%s)\n", n.Hostname, n.IPAddress)
+					note = " · adopting"
 				}
+
+				header := fmt.Sprintf("== [%d/%d] %s (%s)%s\n",
+					position, len(targets), n.Hostname, n.IPAddress, note)
 
 				// A real apply says nothing about whether the config it sent
 				// differed from the one already there, so when the answer is
@@ -266,29 +284,22 @@ way, because an apply asks each node for its diff before sending the config.`,
 					}
 				}
 
-				// Captured when the output has to be read as well as shown:
-				// several nodes in flight, or a dry run whose answer is the
-				// exit code.
-				if grouped || (detailed && dryRun) {
-					out, err := tal.Combined(args...)
+				// Captured rather than streamed, so the node's heading and
+				// what talosctl said under it arrive together: eight nodes in
+				// flight would otherwise interleave, and one node's apply
+				// returns in a breath anyway.
+				out, err := tal.Combined(args...)
 
-					if err != nil {
-						say(header + string(out) + "   error: " + err.Error() + "\n")
+				if err != nil {
+					say(header + indent(detail, out) + detail + "error: " + err.Error() + "\n")
 
-						return err
-					}
+					return err
+				}
 
-					say(header + string(out))
+				say(header + indent(detail, out))
 
-					if detailed && dryRun && dryRunChanged(out) {
-						markChanged()
-					}
-				} else {
-					say(header)
-
-					if err := tal.Stream(args...); err != nil {
-						return err
-					}
+				if detailed && dryRun && dryRunChanged(out) {
+					markChanged()
 				}
 
 				// Nothing to wait for when the change was not enacted: a dry
@@ -310,9 +321,6 @@ way, because an apply asks each node for its diff before sending the config.`,
 					// so this is the ordinary shape of building a cluster
 					// rather than a mistake to report.
 					if maintenance && !clusterBootstrapped() {
-						say(fmt.Sprintf("   not waiting for %s: nothing to join until `talman bootstrap` runs\n",
-							n.Hostname))
-
 						bootstrapMu.Lock()
 						adoptedEarly++
 						bootstrapMu.Unlock()
@@ -328,7 +336,7 @@ way, because an apply asks each node for its diff before sending the config.`,
 					}
 
 					logf := func(format string, args ...any) {
-						say(fmt.Sprintf(format+"\n", args...))
+						say(detail + strings.TrimLeft(fmt.Sprintf(format+"\n", args...), " "))
 					}
 
 					if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
@@ -372,16 +380,21 @@ way, because an apply asks each node for its diff before sending the config.`,
 				parallel = defaultParallel
 			}
 
+			// [n/m] is the node's place in the run, not the order it
+			// finished in: a batch of workers reports as it goes.
+			positions := make(map[string]int, len(targets))
+			for i, n := range targets {
+				positions[n.IPAddress] = i + 1
+			}
+
 			var (
 				okMu      sync.Mutex
 				succeeded = map[string]bool{}
 			)
 
 			for _, batch := range batchesFor(targets, parallel, inert) {
-				grouped := len(batch) > 1
-
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					if err := applyOne(n, grouped); err != nil {
+					if err := applyOne(n, positions[n.IPAddress]); err != nil {
 						return struct{}{}, err
 					}
 
@@ -414,16 +427,14 @@ way, because an apply asks each node for its diff before sending the config.`,
 				// exists for. An explicit --health always gates.
 				if health && !cmd.Flags().Changed("health") {
 					if outside := notInCluster(cfg, tal, tc, modes, parallel); len(outside) > 0 {
-						if !saidUngated {
+						ungated = len(outside)
+
+						// Which ones, for whoever is asking why; the summary
+						// at the end gives the count.
+						if opts.verbose && !saidUngated {
 							saidUngated = true
 
-							fmt.Fprintf(os.Stderr, "   not gating on health: %d node(s) not in the cluster yet "+
-								"(--health to check anyway)\n", len(outside))
-
-							// Which ones, for whoever is asking why.
-							if opts.verbose {
-								fmt.Fprintf(os.Stderr, "   %s\n", strings.Join(outside, ", "))
-							}
+							fmt.Fprintf(os.Stderr, "%s%s\n", detail, strings.Join(outside, ", "))
 						}
 
 						continue
@@ -431,7 +442,7 @@ way, because an apply asks each node for its diff before sending the config.`,
 				}
 
 				if health {
-					fmt.Fprintf(os.Stderr, "   checking cluster health before continuing\n")
+					fmt.Fprintf(os.Stderr, "%schecking cluster health before continuing\n", detail)
 
 					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
 						return fmt.Errorf("cluster is unhealthy after applying to %s: %w\n%s",
@@ -440,9 +451,18 @@ way, because an apply asks each node for its diff before sending the config.`,
 				}
 			}
 
+			switch {
+			case adoptedEarly > 0 && ungated > 0:
+				fmt.Fprintf(os.Stderr, "\nnot waiting, and not gating on health: no cluster to join yet\n")
+			case adoptedEarly > 0:
+				fmt.Fprintf(os.Stderr, "\nnot waiting: nothing to join until `talman bootstrap` runs\n")
+			case ungated > 0:
+				fmt.Fprintf(os.Stderr, "\nnot gating on health: %d node(s) not in the cluster yet "+
+					"(--health to check anyway)\n", ungated)
+			}
+
 			if adoptedEarly > 0 {
-				fmt.Fprintf(os.Stderr, "%d node(s) adopted; they finish joining once the cluster exists\n"+
-					"  talman bootstrap   next, then `talman health`\n", adoptedEarly)
+				fmt.Fprintf(os.Stderr, "%d node(s) adopted → talman bootstrap\n", adoptedEarly)
 			}
 
 			if detailed && changed {
@@ -558,6 +578,21 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	}
 
 	return outside
+}
+
+// indent puts a prefix on every line of a command's output.
+func indent(prefix string, out []byte) string {
+	text := strings.TrimRight(string(out), "\n")
+	if text == "" {
+		return ""
+	}
+
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // dryRunChanged reads talosctl's dry run for whether the node would change.
