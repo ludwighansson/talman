@@ -461,7 +461,16 @@ talos-w02   10.164.0.29   worker         unreachable        -                   
 An arrow is drift: what is running on the left, what the config resolves to on
 the right, which is what `upgrade` and `upgrade-k8s` would close. A `-` is
 something talman could not read — never the configured value dressed up as a
-live one. Nodes are asked in parallel, because the report is most wanted when
+live one.
+
+`unreachable` reads the same for a machine that is gone and for one that simply
+has nowhere to report to, so when nodes are quiet and no control plane has etcd,
+`status` says which it is:
+
+```console
+6 node(s): 3 running, 3 unreachable
+cluster: not bootstrapped — a node with a config but no cluster to join stays quiet; run `talman bootstrap`
+``` Nodes are asked in parallel, because the report is most wanted when
 something is down, and a machine that is down takes two dial timeouts to admit
 it.
 
