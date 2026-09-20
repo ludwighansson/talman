@@ -82,7 +82,7 @@ registers it with the factory instead.
 ## Install
 
 ```console
-go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-alpha.6
+go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-alpha.7
 ```
 
 Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
@@ -94,7 +94,7 @@ Or take the image, which carries `talosctl` and `sops` with it:
 
 ```console
 $ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
-    ghcr.io/ludwighansson/talman:1.0.0-alpha.6 validate
+    ghcr.io/ludwighansson/talman:1.0.0-alpha.7 validate
 ```
 
 It holds exactly three binaries — talman and the two it drives — on Alpine,
@@ -106,7 +106,7 @@ rather than as the job image itself.
 ```yaml
 # .gitlab-ci.yml
 drift:
-  image: ghcr.io/ludwighansson/talman:1.0.0-alpha.6
+  image: ghcr.io/ludwighansson/talman:1.0.0-alpha.7
   script:
     - talman apply --dry-run --detailed-exit-code
 ```
@@ -122,7 +122,7 @@ image as a label as well as in `talman version`:
 
 ```console
 $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version" }}' \
-    ghcr.io/ludwighansson/talman:1.0.0-alpha.6
+    ghcr.io/ludwighansson/talman:1.0.0-alpha.7
 v1.14.0
 ```
 
