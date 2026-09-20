@@ -17,8 +17,9 @@ env:
   # the newest document kind any test config uses, since talosctl parses and
   # validates the config it is handed.
   TALOSCTL_VERSION: v1.14.1
-  # internal/sopsx drives this binary; without it those tests skip.
-  SOPS_VERSION: 3.13.3
+  # internal/sopsx drives this binary; without it those tests skip. Spelled
+  # the way .goreleaser.yaml spells it, so the two can be compared by eye.
+  SOPS_VERSION: v3.13.3
 
 jobs:
   test:
@@ -49,9 +50,23 @@ jobs:
           os=$(uname | tr '[:upper:]' '[:lower:]')
           arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=amd64; [ "$arch" = "aarch64" ] && arch=arm64
           curl -fsSL -o /usr/local/bin/sops \
-            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.${os}.${arch}"
+            "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.${os}.${arch}"
           chmod +x /usr/local/bin/sops
           sops --version
+
+      - name: The image and the tests carry the same binaries
+        # goreleaser decides what the image ships; this job decides what is
+        # tested. A release only means something if they are the same binary,
+        # and nothing else compares the two.
+        run: |
+          for var in TALOSCTL_VERSION SOPS_VERSION; do
+            want=$(grep -oE "^  - ${var}=.*" .goreleaser.yaml | cut -d= -f2)
+            have=$(eval printf '%s' "\$$var")
+            if [ "$want" != "$have" ]; then
+              echo "::error::$var is $have here and $want in .goreleaser.yaml"
+              exit 1
+            fi
+          done
 
       - name: Check formatting
         run: |
