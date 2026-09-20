@@ -347,9 +347,16 @@ config, so a half-adopted cluster needs no flag:
 
 ```console
 $ talman apply
-== talos-c01 (10.164.0.27)
-== talos-w01 (10.164.0.32) maintenance mode; adopting it
+== [1/2] talos-c01 (10.164.0.27)
+     Applied configuration without a reboot
+== [2/2] talos-w01 (10.164.0.32) · adopting
+     Applied configuration without a reboot
 ```
+
+Each node gets a heading with its place in the run, and what `talosctl` said
+underneath it, indented as the detail it is. Anything talman decided not to do
+— waiting, health checking — is said once at the end rather than under every
+node, because the reason does not change between them.
 
 Every question talman asks *about* a node — which API it answers, whether it
 has come back after an apply, what it is running — is asked of that node first,
