@@ -808,6 +808,25 @@ error: talosctl reset exited with status 1
   continue with: talman reset -n talos-w02 -n talos-w03 --graceful=false
 ```
 
+## Tests
+
+`go test ./...` covers the parts that can be reasoned about without a cluster:
+patch resolution, template rendering, schematic IDs, every decision talman
+makes about what a node is and whether it needs anything done to it. The render
+tests shell out to a real `talosctl` and skip without one.
+
+`hack/e2e.sh` drives a real cluster. It builds one with `talosctl`'s docker
+provisioner, adopts its secrets, and then runs talman against it: render,
+validate, status, kubeconfig, health, an apply with its wait, and the decisions
+`upgrade` and `upgrade-k8s` make about whether there is anything to do. CI runs
+it on every pull request.
+
+What it cannot cover is worth naming. Docker nodes have no disks, so there is
+no install, no reboot, no maintenance mode and no Talos upgrade — the qemu
+provisioner has all of those and needs KVM, which hosted runners do not
+reliably have. Adoption out of maintenance mode and `talman upgrade` actually
+upgrading a node are therefore still checked by hand, on a real cluster.
+
 ## Migrating from talhelper
 
 | talhelper | talman |

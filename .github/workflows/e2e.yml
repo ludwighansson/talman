@@ -1,0 +1,63 @@
+name: e2e
+
+# Slow and cluster-shaped, so it runs on its own: pull requests, pushes to
+# main, and on demand.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TALOSCTL_VERSION: v1.14.1
+  SOPS_VERSION: v3.13.3
+
+jobs:
+  cluster:
+    # Linux only, and docker rather than qemu: the qemu provisioner needs KVM,
+    # which hosted runners do not reliably have. What that costs is written
+    # down in hack/e2e.sh.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install talosctl
+        run: |
+          curl -fsSL -o /usr/local/bin/talosctl \
+            "https://github.com/siderolabs/talos/releases/download/${TALOSCTL_VERSION}/talosctl-linux-amd64"
+          chmod +x /usr/local/bin/talosctl
+          talosctl version --client
+
+      - name: Install sops
+        run: |
+          curl -fsSL -o /usr/local/bin/sops \
+            "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64"
+          chmod +x /usr/local/bin/sops
+          sops --version
+
+      - name: Build talman
+        run: go build -o /usr/local/bin/talman ./cmd/talman
+
+      - name: Drive a real cluster
+        run: ./hack/e2e.sh
+
+      - name: What the cluster was doing, if it went wrong
+        if: failure()
+        run: |
+          talosctl --nodes 10.5.0.2 --endpoints 10.5.0.2 services || true
+          talosctl --nodes 10.5.0.2 --endpoints 10.5.0.2 dmesg --tail || true
+          docker ps -a || true
