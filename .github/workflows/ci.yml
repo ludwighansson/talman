@@ -79,6 +79,14 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Lint
+        # Only on one runner: the findings do not differ by operating system,
+        # and a second copy of them helps nobody.
+        if: matrix.os == 'ubuntu-latest'
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.1
+
       - name: Test
         run: go test -race ./...
 

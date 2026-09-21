@@ -107,8 +107,8 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 		n := &c.Nodes[i]
 		where := fmt.Sprintf("nodes[%d]", i)
 
-		switch {
-		case n.Hostname == "":
+		switch n.Hostname {
+		case "":
 			add("%s: hostname is required", where)
 		default:
 			if prev, dup := seenHost[n.Hostname]; dup {

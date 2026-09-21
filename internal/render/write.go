@@ -219,9 +219,11 @@ func writeAtomic(path string, content []byte) error {
 // endpoints are the control plane addresses: the Talos API is only served
 // with full functionality there.
 func (r *Renderer) endpoints() []string {
-	var out []string
+	cps := r.Cfg.ControlPlanes()
 
-	for _, n := range r.Cfg.ControlPlanes() {
+	out := make([]string, 0, len(cps))
+
+	for _, n := range cps {
 		out = append(out, n.IPAddress)
 	}
 

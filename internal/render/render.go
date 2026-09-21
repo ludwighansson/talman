@@ -3,6 +3,7 @@
 package render
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -137,7 +138,7 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 	// (validate and the schematic commands rely on it), so Node() has to say
 	// so itself.
 	if r.workspace == "" {
-		return nil, fmt.Errorf("renderer used before Open: this is a talman bug, please report it")
+		return nil, errors.New("renderer used before Open: this is a talman bug, please report it")
 	}
 
 	chain := r.Cfg.PatchChain(n)

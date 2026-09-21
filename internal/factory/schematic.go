@@ -227,7 +227,7 @@ func (c Config) Submit(s *Schematic) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("submitting schematic to %s: %w", url, err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close() //nolint:errcheck // closing a response body whose contents are already read
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

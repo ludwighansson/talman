@@ -194,19 +194,22 @@ func ensureTalosconfig(cfg *config.Config) (string, error) {
 // what to type to resume.
 func resumeHint(command, done string, remaining []*config.Node, flags ...string) string {
 	names := make([]string, 0, len(remaining))
-	resume := "talman " + command
+
+	var resume strings.Builder
+
+	resume.WriteString("talman " + command)
 
 	for _, n := range remaining {
 		names = append(names, n.Hostname)
-		resume += " -n " + n.Hostname
+		resume.WriteString(" -n " + n.Hostname)
 	}
 
 	for _, f := range flags {
-		resume += " " + f
+		resume.WriteString(" " + f)
 	}
 
 	return fmt.Sprintf("  %d node(s) were not %s: %s\n  continue with: %s",
-		len(names), done, strings.Join(names, ", "), resume)
+		len(names), done, strings.Join(names, ", "), resume.String())
 }
 
 // renderContext is the slice of template context these commands report on.

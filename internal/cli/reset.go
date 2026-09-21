@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -57,7 +58,7 @@ cluster to leave.`,
 			}
 
 			if wipeDisk && cmd.Flags().Changed("wipe-labels") {
-				return fmt.Errorf("--wipe-disk and --wipe-labels ask for different resets: " +
+				return errors.New("--wipe-disk and --wipe-labels ask for different resets: " +
 					"--wipe-disk wipes the system disk whole, --wipe-labels wipes the partitions " +
 					"it names and leaves the rest of the disk alone")
 			}
@@ -66,7 +67,7 @@ cluster to leave.`,
 			// most destructive behaviour by emptying a list, rather than by
 			// asking for it, is not something a reset should allow.
 			if !wipeDisk && len(wipeLabels) == 0 {
-				return fmt.Errorf("--wipe-labels is empty, which wipes the whole disk: " +
+				return errors.New("--wipe-labels is empty, which wipes the whole disk: " +
 					"pass --wipe-disk if that is what you mean")
 			}
 
@@ -132,7 +133,7 @@ cluster to leave.`,
 					args = append(args, "--endpoints", n.IPAddress)
 				}
 
-				nodeGraceful := graceful && !(destroying && n.IsControlPlane())
+				nodeGraceful := graceful && (!destroying || !n.IsControlPlane())
 
 				args = append(args,
 					"reset",
@@ -153,7 +154,6 @@ cluster to leave.`,
 
 				if grouped {
 					out, err := tal.Combined(args...)
-
 					if err != nil {
 						say(header + string(out) + "   error: " + err.Error() + "\n")
 					} else {

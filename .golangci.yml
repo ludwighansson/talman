@@ -1,0 +1,57 @@
+version: "2"
+
+# The set is deliberately wider than the default: talman shells out to a binary
+# that rewrites machine configurations and wipes disks, so the linters that
+# catch an ignored error or a shadowed variable earn their noise.
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - godot
+    - misspell
+    - nilerr
+    - nolintlint
+    - perfsprint
+    - prealloc
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wsl_v5
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      # Writing to a tabwriter or to stderr and checking the error would mean
+      # handling the failure to report a failure. The Flush that matters is
+      # checked.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    # No shadow: `if err := f(); err != nil` is the language's own idiom, and
+    # the 26 hits it found here were all that.
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    rules:
+      # Tests say what they mean with long tables and repeated setup; holding
+      # them to the same shape as the code they test buys nothing.
+      - path: _test\.go
+        linters:
+          - dupl
+          - errcheck
+          - gocritic
+          - prealloc
+          - unparam
+          - wsl_v5
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
