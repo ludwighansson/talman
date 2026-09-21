@@ -154,6 +154,14 @@ func newRenderer(cfg *config.Config, submit bool, log *os.File) (*render.Rendere
 // because it is also the file an operator may have pointed at a bastion or a
 // different endpoint on purpose; `render` is the command that rewrites it.
 func ensureTalosconfig(cfg *config.Config) (string, error) {
+	// Every command that reaches a cluster passes through here, which makes
+	// it the place to find out that the binary doing the reaching is too old
+	// -- before an operation stops halfway with talosctl's words about a flag
+	// it does not have.
+	if err := runner(cfg).Ensure(); err != nil {
+		return "", err
+	}
+
 	path := cfg.TalosconfigPath()
 
 	if _, err := os.Stat(path); err == nil {
