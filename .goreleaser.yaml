@@ -83,6 +83,45 @@ dockers_v2:
 checksum:
   name_template: checksums.txt
 
+# A tool that renders machine CA keys and reaches clusters with admin
+# credentials should be verifiable before it is trusted. Keyless, so there is
+# no private key to keep: cosign binds the signature to the workflow identity
+# that produced it, recorded in the public transparency log.
+#
+# Verify a release with:
+#
+#	cosign verify-blob checksums.txt \
+#	  --signature checksums.txt.sig --certificate checksums.txt.pem \
+#	  --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
+#	  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+#
+# The checksum file is what is signed, and it covers every archive.
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+docker_signs:
+  - cmd: cosign
+    args:
+      - sign
+      - "--yes"
+      - "${artifact}"
+    artifacts: all
+    output: true
+
+# What is in each archive, for whoever has to answer that question about a
+# binary they did not build.
+sboms:
+  - artifacts: archive
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
