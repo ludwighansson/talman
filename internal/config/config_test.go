@@ -498,3 +498,68 @@ nodes:
 		}
 	}
 }
+
+// The field exists so a later, incompatible schema can be told apart from
+// this one. A config written before it existed still has to work.
+func TestAPIVersion(t *testing.T) {
+	base := `clusterName: dev
+endpoint: https://10.0.0.1:6443
+talosVersion: v1.14.1
+kubernetesVersion: v1.37.0
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.11
+    role: controlplane
+`
+
+	tests := []struct {
+		name    string
+		header  string
+		wantErr string
+	}{
+		{
+			name:   "absent: read as this schema",
+			header: "",
+		},
+		{
+			name:   "the schema talman speaks",
+			header: "apiVersion: " + APIVersion + "\n",
+		},
+		{
+			// Refused rather than read hopefully: the fields talman
+			// recognises may mean something else in another schema, and
+			// guessing at a machine configuration is how a cluster gets a
+			// setting nobody wrote.
+			name:    "a schema from the future",
+			header:  "apiVersion: talman.dev/v2\n",
+			wantErr: "not one this talman understands",
+		},
+		{
+			name:    "something else entirely",
+			header:  "apiVersion: v1\n",
+			wantErr: "not one this talman understands",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "talman.yaml")
+
+			if err := os.WriteFile(path, []byte(tt.header+base), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := Load(path)
+
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("Load() = %v, want no error", err)
+			case tt.wantErr != "" && err == nil:
+				t.Fatal("Load() succeeded, want an error naming the schema")
+			case tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr):
+				t.Errorf("error does not say which schema is wrong: %v", err)
+			}
+		})
+	}
+}

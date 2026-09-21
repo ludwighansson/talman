@@ -38,6 +38,14 @@ func (c *Config) Validate() error {
 			"(an unset version silently adopts whatever contract the local talosctl defaults to)")
 	}
 
+	// A config naming a schema talman does not know is refused rather than
+	// read hopefully: the fields it does recognise may mean something else
+	// there, and guessing at a machine configuration is how a cluster gets a
+	// setting nobody wrote.
+	if c.APIVersion != "" && c.APIVersion != APIVersion {
+		add("apiVersion %q is not one this talman understands: it speaks %q", c.APIVersion, APIVersion)
+	}
+
 	if c.KubernetesVersion == "" {
 		add("kubernetesVersion is required")
 	}
