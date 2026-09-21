@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -30,6 +31,9 @@ type Runner struct {
 	// a dial timeout per call to rediscover it.
 	routeMu sync.Mutex
 	routes  map[string]bool
+
+	ensureOnce sync.Once
+	ensureErr  error
 }
 
 // New returns a Runner for the given binary.
@@ -98,14 +102,101 @@ func subcommand(args []string) string {
 
 func (e *ExitError) Unwrap() error { return e.Err }
 
+// MinVersion is the oldest talosctl talman drives.
+//
+// Not a guess at what happens to work: talman relies on flags and resources
+// that arrived over time -- `version --insecure` for the maintenance probe,
+// `get services` for whether etcd is up, `reset --wipe-labels`. An older
+// binary fails in the middle of an operation with talosctl's own words about
+// an unknown flag, which is a worse way to learn this than being told.
+//
+// It is also the version CI tests against, so it is a claim talman keeps
+// rather than one it hopes for.
+const MinVersion = "v1.14.0"
+
 // Ensure reports a helpful error if the binary is not usable.
+//
+// Checked once per Runner: it costs a process, and a pass over fifty nodes
+// should not pay for it fifty times.
 func (r *Runner) Ensure() error {
+	r.ensureOnce.Do(func() { r.ensureErr = r.check() })
+
+	return r.ensureErr
+}
+
+func (r *Runner) check() error {
 	if _, err := exec.LookPath(r.Bin); err != nil {
 		return fmt.Errorf("talosctl not found on PATH as %q: talman drives Talos entirely through it "+
 			"(install it, or set `talosctl:` in talman.yaml to a path)", r.Bin)
 	}
 
+	version, err := r.ClientVersion()
+	if err != nil {
+		// Unreadable is not too old. Something that answers oddly to
+		// `version --client` may still do everything else correctly, and
+		// refusing to run on that basis would be worse than the risk.
+		return nil //nolint:nilerr // deliberate: an unreadable version is not evidence of an old one
+	}
+
+	if olderThan(version, MinVersion) {
+		return fmt.Errorf("talosctl %s is too old: talman needs %s or newer "+
+			"(it uses `version --insecure`, `get services` and `reset --wipe-labels`)",
+			version, MinVersion)
+	}
+
 	return nil
+}
+
+// olderThan compares two v-prefixed versions on major, minor and patch.
+//
+// Anything it cannot parse is not old: a build tagged something unexpected --
+// a distribution's own string, a development build -- should be allowed to
+// run rather than stopped by a comparison talman could not make.
+func olderThan(version, minimum string) bool {
+	have, ok := semver(version)
+	if !ok {
+		return false
+	}
+
+	want, ok := semver(minimum)
+	if !ok {
+		return false
+	}
+
+	for i := range have {
+		if have[i] != want[i] {
+			return have[i] < want[i]
+		}
+	}
+
+	return false
+}
+
+// semver pulls major, minor and patch out of a tag, ignoring any pre-release
+// suffix: v1.15.0-alpha.1 is newer than v1.14.0, which is the only question
+// being asked.
+func semver(tag string) ([3]int, bool) {
+	var out [3]int
+
+	tag = strings.TrimPrefix(strings.TrimSpace(tag), "v")
+	tag, _, _ = strings.Cut(tag, "-")
+	tag, _, _ = strings.Cut(tag, "+")
+
+	parts := strings.Split(tag, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return out, false
+		}
+
+		out[i] = n
+	}
+
+	return out, true
 }
 
 // Output runs talosctl and returns stdout. stderr is captured and surfaced

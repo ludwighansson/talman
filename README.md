@@ -132,7 +132,11 @@ shipped with. `talosctl:` in talman.yaml can point at a newer binary mounted
 into the container when that matters.
 
 You also need [`talosctl`](https://docs.siderolabs.com/talos/v1.14/talosctl) on
-`PATH`, at least as new as the Talos version you target, and
+`PATH`, at least as new as the Talos version you target — and no older than
+v1.14.0, which talman checks before it reaches a cluster. It relies on flags
+that arrived over time (`version --insecure`, `get services`,
+`reset --wipe-labels`), and being told that up front beats an operation
+stopping halfway through on an unknown flag. You also need
 [`sops`](https://github.com/getsops/sops) if your secrets bundle or any patch
 is encrypted.
 
