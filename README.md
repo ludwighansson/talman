@@ -131,6 +131,23 @@ release needs no talman release, and an image ties you to the talosctl it
 shipped with. `talosctl:` in talman.yaml can point at a newer binary mounted
 into the container when that matters.
 
+Every release is signed, keylessly, by the workflow that built it, and each
+archive ships a bill of materials beside it:
+
+```console
+$ cosign verify-blob checksums.txt \
+    --signature checksums.txt.sig --certificate checksums.txt.pem \
+    --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+$ cosign verify ghcr.io/ludwighansson/talman:1.0.0-alpha.7 \
+    --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The checksum file is what is signed, and it covers every archive. There is no
+private key to trust or lose: the signature is bound to the workflow identity
+that produced it and recorded in a public transparency log.
+
 You also need [`talosctl`](https://docs.siderolabs.com/talos/v1.14/talosctl) on
 `PATH`, at least as new as the Talos version you target — and no older than
 v1.14.0, which talman checks before it reaches a cluster. It relies on flags
