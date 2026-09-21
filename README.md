@@ -163,7 +163,12 @@ See [`example/`](example/) for a working tree.
 
 ## Configuration
 
+`apiVersion` names the schema the file is written against. It is what lets a
+later, incompatible schema be told apart from this one instead of misread — a
+config that omits it is read as this one, with a note.
+
 ```yaml
+apiVersion: talman.dev/v1       # the schema this file is written against
 clusterName: development
 endpoint: https://10.0.0.10:6443
 talosVersion: v1.14.0            # required: pinning it is what makes renders reproducible

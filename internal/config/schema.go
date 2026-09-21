@@ -58,8 +58,20 @@ func (r *Role) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
+// APIVersion is the schema this talman speaks.
+//
+// It exists so a later, incompatible schema can be told apart from this one
+// rather than misread: without it, the choice when the shape has to change is
+// between breaking every config silently and never changing it. A config that
+// does not name a version is read as this one, with a note -- there are
+// configs in the world written before the field existed.
+const APIVersion = "talman.dev/v1"
+
 // Config is the whole of talman.yaml.
 type Config struct {
+	// APIVersion names the schema. Empty means this one.
+	APIVersion string `yaml:"apiVersion,omitempty"`
+
 	ClusterName       string `yaml:"clusterName"`
 	Endpoint          string `yaml:"endpoint"`
 	TalosVersion      string `yaml:"talosVersion"`
