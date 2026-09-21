@@ -2,6 +2,9 @@ package talosctl
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -221,5 +224,105 @@ func TestParseKubeletVersion(t *testing.T) {
 				t.Errorf("parseKubeletVersion() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// The version floor exists so an old binary is refused before an operation
+// stops halfway through with talosctl's own words about an unknown flag.
+func TestOlderThan(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		want    bool
+	}{
+		{name: "the floor itself", version: "v1.14.0", want: false},
+		{name: "one patch below", version: "v1.13.9", want: true},
+		{name: "a whole minor below", version: "v1.9.0", want: true},
+		{name: "a major below", version: "v0.14.0", want: true},
+		{name: "newer patch", version: "v1.14.1", want: false},
+		{name: "newer minor", version: "v1.15.0", want: false},
+		{name: "unprefixed", version: "1.13.0", want: true},
+		{
+			// A pre-release of a newer version is newer: the question is
+			// whether the flags exist, not whether the build is final.
+			name:    "pre-release of a newer minor",
+			version: "v1.15.0-alpha.1",
+			want:    false,
+		},
+		{
+			// Anything unparseable runs: a distribution's own version string
+			// should not stop talman on a comparison it could not make.
+			name:    "not a version talman understands",
+			version: "talosctl-from-somewhere",
+			want:    false,
+		},
+		{name: "empty", version: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := olderThan(tt.version, MinVersion); got != tt.want {
+				t.Errorf("olderThan(%q, %q) = %v, want %v", tt.version, MinVersion, got, tt.want)
+			}
+		})
+	}
+}
+
+// Ensure runs once however many times it is called: a pass over fifty nodes
+// must not spawn fifty processes to ask the same question.
+func TestEnsureChecksOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake binary is a shell script")
+	}
+
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	bin := filepath.Join(dir, "talosctl")
+
+	script := "#!/bin/sh\necho x >> " + log + "\nprintf 'Client:\\n\\tTag:\\tv1.14.1\\n'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+
+	r := New(bin)
+
+	for range 3 {
+		if err := r.Ensure(); err != nil {
+			t.Fatalf("Ensure() = %v", err)
+		}
+	}
+
+	body, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if calls := strings.Count(string(body), "x"); calls != 1 {
+		t.Errorf("Ensure asked %d times, want 1", calls)
+	}
+}
+
+// An old binary is named, with what talman needs from a newer one.
+func TestEnsureRefusesAnOldTalosctl(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake binary is a shell script")
+	}
+
+	bin := filepath.Join(t.TempDir(), "talosctl")
+
+	script := "#!/bin/sh\nprintf 'Client:\\n\\tTag:\\tv1.9.5\\n'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+
+	err := New(bin).Ensure()
+	if err == nil {
+		t.Fatal("expected an error for a talosctl older than the floor")
+	}
+
+	for _, want := range []string{"v1.9.5", MinVersion, "--wipe-labels"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q: %v", want, err)
+		}
 	}
 }
