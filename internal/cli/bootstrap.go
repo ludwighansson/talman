@@ -31,7 +31,8 @@ beginning of the cluster rather than the end of the command.`,
 
 			fmt.Fprintf(os.Stderr, "== bootstrapping etcd on %s (%s)\n", target.Hostname, target.IPAddress)
 
-			args := []string{"--talosconfig", tc, "bootstrap", "--nodes", target.IPAddress}
+			args := make([]string, 0, 5+len(extraFlags))
+			args = append(args, "--talosconfig", tc, "bootstrap", "--nodes", target.IPAddress)
 
 			if err := tal.Stream(append(args, extraFlags...)...); err != nil {
 				return err

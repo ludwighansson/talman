@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -68,7 +69,7 @@ way, because an apply asks each node for its diff before sending the config.`,
 			}
 
 			if mode == "reboot" {
-				return fmt.Errorf("--mode=reboot was removed in Talos 1.14; " +
+				return errors.New("--mode=reboot was removed in Talos 1.14; " +
 					"use --mode=auto (apply now, reboot only if required) or --mode=staged")
 			}
 
@@ -280,7 +281,6 @@ way, because an apply asks each node for its diff before sending the config.`,
 				// flight would otherwise interleave, and one node's apply
 				// returns in a breath anyway.
 				out, err := tal.Combined(args...)
-
 				if err != nil {
 					say(header + indent(detail, out) + detail + "error: " + err.Error() + "\n")
 
