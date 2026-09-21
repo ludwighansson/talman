@@ -26,7 +26,30 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Said once, to the operator, not to a log nobody reads: a config without
+	// the field works exactly as before, and naming it is what lets a future
+	// schema change be a message rather than a misreading.
+	if cfg.APIVersion == "" {
+		fmt.Fprintf(os.Stderr, "note: %s has no apiVersion; add `apiVersion: %s` so a later schema "+
+			"can be told apart from this one\n", Rel(cfg.Path), APIVersion)
+	}
+
 	return cfg, nil
+}
+
+// Rel shortens a path against the working directory for a message.
+func Rel(path string) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+
+	rel, err := filepath.Rel(wd, path)
+	if err != nil || len(rel) > len(path) {
+		return path
+	}
+
+	return rel
 }
 
 // LoadNoValidate reads and decodes without running semantic validation. Used
