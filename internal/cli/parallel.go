@@ -173,6 +173,7 @@ func controlPlanesAlone(nodes []*config.Node, parallel int) [][]*config.Node {
 	for _, n := range nodes {
 		if n.IsControlPlane() {
 			flush()
+
 			out = append(out, []*config.Node{n})
 
 			continue

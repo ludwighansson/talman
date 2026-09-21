@@ -43,12 +43,13 @@ when a control plane proxying for the node is least able to serve it.`,
 
 			n := targets[0]
 
-			cmdArgs := []string{
+			cmdArgs := make([]string, 0, 7+len(extraFlags))
+			cmdArgs = append(cmdArgs,
 				"--talosconfig", tc,
 				"--endpoints", n.IPAddress,
 				"--nodes", n.IPAddress,
 				"dashboard",
-			}
+			)
 
 			return runner(cfg).Stream(append(cmdArgs, extraFlags...)...)
 		},

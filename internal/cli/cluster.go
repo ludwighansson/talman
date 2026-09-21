@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/ludwighansson/talman/internal/config"
@@ -73,7 +74,7 @@ func controlPlane(cfg *config.Config, name string) (*config.Node, error) {
 	if name == "" {
 		cps := cfg.ControlPlanes()
 		if len(cps) == 0 {
-			return nil, fmt.Errorf("no control plane nodes in the config")
+			return nil, errors.New("no control plane nodes in the config")
 		}
 
 		return cps[0], nil

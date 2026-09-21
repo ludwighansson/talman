@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ pods and every node's readiness.
 The check runs from one control plane node -- the first in the config unless
 --node names another -- and reports on the whole cluster, not on that node.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
 			if err != nil {
 				return err
@@ -80,7 +81,7 @@ The check runs from one control plane node -- the first in the config unless
 func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*config.Node, error) {
 	cps := cfg.ControlPlanes()
 	if len(cps) == 0 {
-		return nil, fmt.Errorf("no control plane nodes in the config: nothing can answer for cluster health")
+		return nil, errors.New("no control plane nodes in the config: nothing can answer for cluster health")
 	}
 
 	addrs := make([]string, 0, len(cps))

@@ -40,7 +40,7 @@ and check the target first with "talman image url".
 node was, 0 when every selected node already ran its configured version and
 schematic, 1 on error.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -130,7 +130,6 @@ schematic, 1 on error.`,
 
 				if grouped {
 					out, err := tal.Combined(args...)
-
 					if err != nil {
 						say(header + string(out) + "   error: " + err.Error() + "\n")
 					} else {
@@ -229,7 +228,7 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 --detailed-exit-code reports which of the two happened: 2 when the upgrade ran,
 0 when every node was already on the target, 1 on error.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
 			if err != nil {
 				return err

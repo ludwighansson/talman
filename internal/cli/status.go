@@ -137,10 +137,10 @@ func (r nodeReport) schematic() string {
 // differ. What talman could not read shows as "-" and never as the configured
 // value: a node that did not answer must not be printed as if it agreed.
 func drift(current, want string) string {
-	switch {
-	case current == "":
+	switch current {
+	case "":
 		return "-"
-	case current == want:
+	case want:
 		return current
 	default:
 		return current + " → " + want

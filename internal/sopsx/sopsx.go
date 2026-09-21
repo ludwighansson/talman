@@ -105,16 +105,16 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 
 	tmpName := tmp.Name()
 
-	defer os.Remove(tmpName) //nolint:errcheck // best effort cleanup of a 0600 temp file
+	defer os.Remove(tmpName) //nolint:errcheck // best effort cleanup; the error that matters is returned below // best effort cleanup of a 0600 temp file
 
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close() //nolint:errcheck
+		tmp.Close() //nolint:errcheck // best effort cleanup; the error that matters is returned below
 
 		return nil, err
 	}
 
 	if _, err := tmp.Write(plaintext); err != nil {
-		tmp.Close() //nolint:errcheck
+		tmp.Close() //nolint:errcheck // best effort cleanup; the error that matters is returned below
 
 		return nil, err
 	}
