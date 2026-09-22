@@ -1,0 +1,71 @@
+name: e2e-qemu
+
+# Real virtual machines: installs, reboots, maintenance mode and an actual
+# Talos upgrade. None of that runs on a hosted runner, because none of them
+# reliably offer KVM, so this waits for a self-hosted one labelled `kvm` and is
+# never a gate on a pull request.
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly, after the hosted suites have had their say.
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One cluster of virtual machines per runner: two of these at once would
+  # fight over the same bridge and the same addresses.
+  group: e2e-qemu
+  cancel-in-progress: false
+
+env:
+  TALOSCTL_VERSION: v1.14.1
+  SOPS_VERSION: v3.13.3
+
+jobs:
+  cluster:
+    runs-on: [self-hosted, linux, x64, kvm]
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install talosctl and sops
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/talosctl \
+            "https://github.com/siderolabs/talos/releases/download/${TALOSCTL_VERSION}/talosctl-linux-amd64"
+          sudo curl -fsSL -o /usr/local/bin/sops \
+            "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64"
+          sudo chmod +x /usr/local/bin/talosctl /usr/local/bin/sops
+          talosctl version --client
+          sops --version
+
+      - name: Build talman
+        run: |
+          go build -o "$RUNNER_TEMP/talman" ./cmd/talman
+          sudo install -m 0755 "$RUNNER_TEMP/talman" /usr/local/bin/talman
+
+      - name: Drive real machines
+        # Root because the provisioner makes bridges and taps; -E so the
+        # versions above and any proxy settings survive sudo.
+        run: sudo -E ./hack/e2e-qemu.sh
+        env:
+          FROM_VERSION: v1.14.0
+          TO_VERSION: v1.14.1
+
+      - name: What the machines were doing, if it went wrong
+        if: failure()
+        run: |
+          sudo talosctl --nodes 10.5.0.2 --endpoints 10.5.0.2 services || true
+          sudo talosctl --nodes 10.5.0.2 --endpoints 10.5.0.2 dmesg --tail || true
+          sudo talosctl cluster show --name talman-e2e-qemu || true
+
+      - name: Leave no machines behind
+        if: always()
+        run: sudo talosctl cluster destroy --name talman-e2e-qemu || true
