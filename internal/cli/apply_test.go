@@ -230,3 +230,38 @@ func TestGateSummary(t *testing.T) {
 		})
 	}
 }
+
+// The answer to "what would change?" costs a call, and both --diff and
+// --detailed-exit-code want it. Asking twice for one answer would double the
+// cost of a flag combination an operator has every reason to use together.
+func TestAskFirst(t *testing.T) {
+	tests := []struct {
+		name     string
+		dryRun   bool
+		detailed bool
+		diff     bool
+		want     bool
+	}{
+		{name: "a plain apply asks nothing extra"},
+		{name: "--diff asks", diff: true, want: true},
+		{name: "--detailed-exit-code asks", detailed: true, want: true},
+		{name: "both, and still one call", detailed: true, diff: true, want: true},
+		{
+			// A dry run is the question itself; asking it again before
+			// asking it would be absurd.
+			name:   "--dry-run is already the question",
+			dryRun: true,
+			diff:   true,
+		},
+		{name: "--dry-run with an exit code", dryRun: true, detailed: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := askFirst(tt.dryRun, tt.detailed, tt.diff); got != tt.want {
+				t.Errorf("askFirst(dryRun=%v, detailed=%v, diff=%v) = %v, want %v",
+					tt.dryRun, tt.detailed, tt.diff, got, tt.want)
+			}
+		})
+	}
+}
