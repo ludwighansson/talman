@@ -876,11 +876,24 @@ validate, status, kubeconfig, health, an apply with its wait, and the decisions
 `upgrade` and `upgrade-k8s` make about whether there is anything to do. CI runs
 it on every pull request.
 
-What it cannot cover is worth naming. Docker nodes have no disks, so there is
-no install, no reboot, no maintenance mode and no Talos upgrade — the qemu
-provisioner has all of those and needs KVM, which hosted runners do not
-reliably have. Adoption out of maintenance mode and `talman upgrade` actually
-upgrading a node are therefore still checked by hand, on a real cluster.
+What it cannot cover is what a docker node cannot do: it has no disk, so
+nothing installs, nothing reboots, nothing sits in maintenance mode and Talos
+cannot be upgraded.
+
+`hack/e2e-qemu.sh` covers exactly those, on real virtual machines, and needs
+KVM — which hosted runners do not reliably offer. It builds a cluster one patch
+release behind, has talman upgrade a worker and then the control plane, resets
+the worker back to maintenance mode, and adopts it into the cluster it just
+left. On a fresh Ubuntu 24.04 machine:
+
+```console
+$ sudo ./hack/e2e-qemu.sh --install-deps   # qemu, the CNI plugins, once
+$ sudo -E ./hack/e2e-qemu.sh
+```
+
+Root because the provisioner creates bridges and tap devices. CI runs it
+nightly on a self-hosted runner labelled `kvm`, and never as a gate on a pull
+request.
 
 ## Migrating from talhelper
 
