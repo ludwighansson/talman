@@ -25,7 +25,7 @@ controlplane=10.5.0.2
 worker=10.5.0.3
 
 # shellcheck source=hack/lib.sh
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]:-$0}")/lib.sh"
 
 cleanup() {
 	if [ -n "$keep" ]; then
