@@ -48,7 +48,7 @@ jobs:
 
       - name: Build talman
         run: |
-          go build -o "$RUNNER_TEMP/talman" ./cmd/talman
+          CGO_ENABLED=0 go build -o "$RUNNER_TEMP/talman" ./cmd/talman
           sudo install -m 0755 "$RUNNER_TEMP/talman" /usr/local/bin/talman
 
       - name: Drive real machines
