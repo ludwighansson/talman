@@ -47,7 +47,7 @@ install_deps() {
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
 	apt-get install -y --no-install-recommends \
-		qemu-system-x86 qemu-utils bridge-utils iproute2 iptables dnsmasq-base curl ca-certificates tar
+		qemu-system-x86 qemu-utils ovmf bridge-utils iproute2 iptables dnsmasq-base curl ca-certificates tar
 
 	# The provisioner wires the cluster network with CNI plugins and expects
 	# them where CNI puts them.
@@ -190,6 +190,11 @@ preflight() {
 
 	[ -x /opt/cni/bin/bridge ] ||
 		fail "the CNI plugins are not in /opt/cni/bin -- run \`sudo $0 --install-deps\` first"
+
+	# The provisioner boots its machines through UEFI, and Ubuntu ships the
+	# firmware as a package of its own that qemu does not pull in.
+	[ -e /usr/share/OVMF/OVMF_CODE_4M.fd ] || [ -e /usr/share/ovmf/OVMF.fd ] ||
+		fail "no UEFI firmware (OVMF) -- run \`sudo $0 --install-deps\` first"
 
 	talman=$(talman_binary) ||
 		fail "no talman to test: the reason is above, and TALMAN=/path/to/talman skips this entirely"
