@@ -344,8 +344,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | --- | --- |
 | `talman validate` | check keys, paths and templates; needs no secrets or network |
 | `talman patches` | the resolved patch chain per node, in application order |
-| `talman nodes` | the node table, from the config alone |
-| `talman status` | what each node is actually running, against the config |
+| `talman status` | the node table, with what each one is running (`--offline` asks nothing) |
 | `talman secrets generate` | create the encrypted secrets bundle |
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
@@ -472,7 +471,7 @@ the roll-out it exists for. `--health` gates regardless.
 
 ### Seeing what is out there
 
-`talman nodes` reads the config. `talman status` asks the machines:
+`talman status` lists the nodes and asks each one what it is:
 
 ```console
 $ talman status
@@ -502,6 +501,22 @@ cluster: not bootstrapped — a node with a config but no cluster to join stays 
 ``` Nodes are asked in parallel, because the report is most wanted when
 something is down, and a machine that is down takes two dial timeouts to admit
 it.
+
+`--offline` asks nothing at all. The table keeps its shape — same columns, same
+order — with a dash wherever the answer could only have come from a node, and
+the config's own answers still in place:
+
+```console
+$ talman status --offline
+HOSTNAME    ADDRESS       ROLE           STATUS   TALOS     KUBERNETES   GROUPS   PATCHES
+talos-c01   10.164.0.27   controlplane   -        v1.14.1   v1.37.0      -        5
+talos-w01   10.164.0.32   worker         -        v1.14.1   v1.37.0      db       4
+6 node(s)
+```
+
+It needs no cluster, no secrets bundle and no talosconfig, which is what makes
+it the way to read a config while writing one — and the way to see the table
+when the machines are off. `--wide` adds the schematic column.
 
 `status` reports and always succeeds; `health` is the one that passes or fails.
 
