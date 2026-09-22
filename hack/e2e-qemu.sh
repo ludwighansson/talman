@@ -242,6 +242,12 @@ main() {
 	preflight
 	trap cleanup EXIT
 
+	# Into the work directory before anything else: the provisioner writes the
+	# machine configs it generates into the current directory, and that would
+	# otherwise be the checkout this script was started from.
+	mkdir -p "$workdir"
+	cd "$workdir"
+
 	step "creating a cluster of virtual machines running Talos $from_version"
 	talosctl cluster create qemu \
 		--name "$cluster" \
@@ -259,8 +265,15 @@ main() {
 	note "the cluster runs Talos $from_version, Kubernetes $kubernetes_version"
 
 	step "adopting the cluster's secrets"
-	cd "$workdir"
-	talosctl --nodes "$controlplane" read /system/state/config.yaml > controlplane.yaml
+	# The provisioner left the control plane config it injected right here,
+	# which is the most direct source there is. Reading it back off the node
+	# is the fallback, and the path it lives at differs between a docker node
+	# and one booted from an ISO -- which is how this was found.
+	if [ ! -s controlplane.yaml ]; then
+		talosctl --nodes "$controlplane" get machineconfig -o jsonpath='{.spec}' > controlplane.yaml
+	fi
+
+	[ -s controlplane.yaml ] || fail "found no control plane config to adopt the secrets from"
 
 	cat > talman.yaml <<-EOF
 		apiVersion: talman.dev/v1
