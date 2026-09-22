@@ -65,10 +65,57 @@ install_deps() {
 	# sops is deliberately absent: the bundle this script generates is
 	# plaintext, and talman only reaches for sops when a bundle is encrypted.
 
+	install_go
+
 	pass "qemu $(qemu-system-x86_64 --version | head -1 | awk '{print $4}')"
 	pass "cni plugins $cni_version in /opt/cni/bin"
-	pass "talosctl $(talosctl version --client --short 2>/dev/null || talosctl version --client | awk '/Tag/ {print $2; exit}')"
+	pass "talosctl $(talosctl version --client | awk '/Tag/ {print $2; exit}')"
+	pass "go $("$(go_binary)" version | awk '{print $3}')"
 	note "talman itself is built from this repository; run the script again without --install-deps"
+}
+
+# go_binary is Go wherever this machine keeps it. Not on sudo's PATH when it
+# came from go.dev, which is where this script puts it.
+go_binary() {
+	if command -v go >/dev/null; then
+		command -v go
+		return 0
+	fi
+
+	if [ -x /usr/local/go/bin/go ]; then
+		printf '%s' /usr/local/go/bin/go
+		return 0
+	fi
+
+	return 1
+}
+
+# install_go fetches the toolchain this module needs.
+#
+# Not from apt: Ubuntu 24.04 ships a Go far older than go.mod asks for, and a
+# build that fails on the version line is a worse first experience than a
+# download. Skipped when the machine already has one new enough -- a CI runner
+# that set Go up itself should not have it replaced underneath.
+install_go() {
+	local repo want have
+	repo=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
+	want=${GO_VERSION:-$(awk '/^go /{print $2; exit}' "$repo/go.mod")}
+
+	if have=$("$(go_binary)" version 2>/dev/null | awk '{print $3}' | sed 's/^go//'); then
+		if [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -1)" = "$want" ]; then
+			note "go $have is already here and new enough for go.mod ($want)"
+
+			return 0
+		fi
+
+		note "go $have is older than go.mod asks for ($want); installing a newer one"
+	fi
+
+	rm -rf /usr/local/go
+	curl -fsSL "https://go.dev/dl/go${want}.linux-amd64.tar.gz" | tar -C /usr/local -xz
+
+	# So the first real run does not spend its time fetching modules.
+	(cd "$repo" && /usr/local/go/bin/go mod download) || true
 }
 
 # talman_binary finds talman, or builds it from the repository this script
@@ -90,9 +137,7 @@ talman_binary() {
 
 	local repo go
 	repo=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
-
-	go=$(command -v go || true)
-	[ -z "$go" ] && [ -x /usr/local/go/bin/go ] && go=/usr/local/go/bin/go
+	go=$(go_binary || true)
 
 	if [ -n "$go" ] && [ -f "$repo/go.mod" ]; then
 		mkdir -p "$workdir"
@@ -130,7 +175,7 @@ preflight() {
 		fail "the CNI plugins are not in /opt/cni/bin -- run \`sudo $0 --install-deps\` first"
 
 	talman=$(talman_binary) ||
-		fail "no talman: build one with \`go build -o /usr/local/bin/talman ./cmd/talman\`, or set TALMAN to its path"
+		fail "no talman, and no Go to build one with -- run \`sudo $0 --install-deps\`, which installs the toolchain this module needs, or set TALMAN to a talman you built elsewhere"
 
 	note "talman:   $talman ($("$talman" version | head -1 | awk '{print $2}'))"
 	note "talosctl: $(command -v talosctl)"
