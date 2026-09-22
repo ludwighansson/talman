@@ -653,6 +653,27 @@ $ talman apply --diff
 `--dry-run` stops after the asking, so it prints the diff by itself. However
 many of these flags are passed, the node is asked once.
 
+A diff is a diff of the machine configuration, so it carries what that carries:
+join tokens, the cluster secret, the machine CA. This cluster's own secrets are
+replaced before anything is printed —
+
+```console
++    token: [redacted]
++        crt: [redacted]
++  id: [redacted]
+     hostname: talos-w01
+```
+
+— by value rather than by guessing which fields are sensitive. talman decrypted
+those values and rendered them into the config it is sending, so it knows
+exactly what to look for, wherever it appears. `--redact-secrets=false` prints
+them as they are.
+
+Two things follow from being exact. Secrets talman has never seen cannot be
+found this way — a node still holding a previous cluster's keys would show them
+— and if the bundle cannot be read, the diff is refused rather than printed
+unredacted.
+
 For `apply` the answer comes from Talos itself: each node computes the diff and
 reports `Config diff: No changes.` when there is none. A real apply asks for
 that diff before sending the config, so the exit code means the same thing

@@ -13,7 +13,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/redact"
 	"github.com/ludwighansson/talman/internal/render"
+	"github.com/ludwighansson/talman/internal/sopsx"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -31,6 +33,7 @@ func newApplyCmd() *cobra.Command {
 		parallel   int
 		detailed   bool
 		diff       bool
+		hideSecret bool
 		dryRun     bool
 		wait       bool
 		health     bool
@@ -63,6 +66,14 @@ health checking are skipped.
 node is asked what would change, the answer is printed under its heading, and
 then the config is sent. --dry-run stops after the asking, so it prints the
 diff by itself.
+
+A diff is a diff of the machine configuration, so it carries what that carries:
+join tokens, the cluster secret, the machine CA. This cluster's own secrets are
+replaced with [redacted] before anything is printed, by value rather than by
+guessing which fields are sensitive -- talman decrypted them and rendered them
+into the config it is sending, so it knows exactly what to look for.
+--redact-secrets=false prints them. Note that secrets talman has never seen,
+such as those of a cluster a node used to belong to, cannot be found this way.
 
 --detailed-exit-code reports the answer as an exit code: 2 when a node changed
 or would change, 0 when none did, 1 on error. It is the same question either
@@ -179,6 +190,41 @@ once, however many of these flags are passed.`,
 				changed = true
 			}
 
+			// Talos' diff is a diff of the machine config, so it carries what
+			// the machine config carries: join tokens, the cluster secret,
+			// the machine CA. talman knows those values -- it decrypted them
+			// and rendered them into the config it is sending -- so it can
+			// take them back out of anything it prints.
+			//
+			// Built once, and only when something will actually print a
+			// config: a plain apply prints none, and should not decrypt a
+			// bundle to prove it.
+			var (
+				redactOnce sync.Once
+				redactor   *redact.Redactor
+				redactErr  error
+			)
+
+			hide := func(out []byte) []byte {
+				if !hideSecret {
+					return out
+				}
+
+				redactOnce.Do(func() {
+					plaintext, err := sopsx.ReadFile(cfg.SecretPath())
+					if err != nil {
+						redactErr = fmt.Errorf("cannot hide this cluster's secrets in the diff: %w\n"+
+							"  pass --redact-secrets=false to print it with them in", err)
+
+						return
+					}
+
+					redactor, redactErr = redact.FromBundle(plaintext)
+				})
+
+				return redactor.Bytes(out)
+			}
+
 			var printMu sync.Mutex
 
 			say := func(block string) {
@@ -288,6 +334,12 @@ once, however many of these flags are passed.`,
 					}
 
 					if diff {
+						out = hide(out)
+
+						if redactErr != nil {
+							return redactErr
+						}
+
 						block += indent(detail, out)
 					}
 				}
@@ -297,6 +349,15 @@ once, however many of these flags are passed.`,
 				// flight would otherwise interleave, and one node's apply
 				// returns in a breath anyway.
 				out, err := tal.Combined(args...)
+
+				if dryRun {
+					out = hide(out)
+
+					if redactErr != nil {
+						return redactErr
+					}
+				}
+
 				if err != nil {
 					say(block + indent(detail, out) + detail + "error: " + err.Error() + "\n")
 
@@ -490,6 +551,8 @@ once, however many of these flags are passed.`,
 		"ask each node what the config would change, and change nothing")
 	cmd.Flags().BoolVar(&diff, "diff", false,
 		"print what each node would change before changing it (implied by --dry-run)")
+	cmd.Flags().BoolVar(&hideSecret, "redact-secrets", true,
+		"replace this cluster's own secrets with [redacted] in printed diffs")
 	addDetailedExitCode(cmd, &detailed)
 
 	// Rolling straight on to the next node is how a bad config takes out a
