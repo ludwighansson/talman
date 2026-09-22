@@ -50,7 +50,7 @@ jobs:
           sops --version
 
       - name: Build talman
-        run: go build -o /usr/local/bin/talman ./cmd/talman
+        run: CGO_ENABLED=0 go build -o /usr/local/bin/talman ./cmd/talman
 
       - name: Drive a real cluster
         run: ./hack/e2e.sh

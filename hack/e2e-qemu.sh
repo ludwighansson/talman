@@ -115,7 +115,7 @@ install_go() {
 	curl -fsSL "https://go.dev/dl/go${want}.linux-amd64.tar.gz" | tar -C /usr/local -xz
 
 	# So the first real run does not spend its time fetching modules.
-	(cd "$repo" && /usr/local/go/bin/go mod download) || true
+	(cd "$repo" && CGO_ENABLED=0 /usr/local/go/bin/go mod download) || true
 }
 
 # talman_binary finds talman, or builds it from the repository this script
@@ -139,14 +139,31 @@ talman_binary() {
 	repo=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
 	go=$(go_binary || true)
 
-	if [ -n "$go" ] && [ -f "$repo/go.mod" ]; then
-		mkdir -p "$workdir"
-		"$go" build -o "$workdir/talman" "$repo/cmd/talman" >&2 || return 1
-		printf '%s' "$workdir/talman"
-		return 0
+	if [ -z "$go" ]; then
+		printf 'no Go toolchain: run `sudo %s --install-deps`\n' "$0" >&2
+
+		return 1
 	fi
 
-	return 1
+	if [ ! -f "$repo/go.mod" ]; then
+		printf '%s is not the talman repository, so there is nothing to build\n' "$repo" >&2
+
+		return 1
+	fi
+
+	mkdir -p "$workdir"
+
+	# CGO_ENABLED=0 because talman needs no C and this machine has no C
+	# headers: gcc without libc6-dev turns a pure Go build into a wall of
+	# missing stdlib.h. It is also how the released binaries are built, so
+	# what this tests is what ships.
+	if ! CGO_ENABLED=0 "$go" build -o "$workdir/talman" "$repo/cmd/talman" >&2; then
+		printf 'building talman from %s failed; the compiler said why above\n' "$repo" >&2
+
+		return 1
+	fi
+
+	printf '%s' "$workdir/talman"
 }
 
 preflight() {
@@ -175,7 +192,7 @@ preflight() {
 		fail "the CNI plugins are not in /opt/cni/bin -- run \`sudo $0 --install-deps\` first"
 
 	talman=$(talman_binary) ||
-		fail "no talman, and no Go to build one with -- run \`sudo $0 --install-deps\`, which installs the toolchain this module needs, or set TALMAN to a talman you built elsewhere"
+		fail "no talman to test: the reason is above, and TALMAN=/path/to/talman skips this entirely"
 
 	note "talman:   $talman ($("$talman" version | head -1 | awk '{print $2}'))"
 	note "talosctl: $(command -v talosctl)"
