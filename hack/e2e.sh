@@ -24,24 +24,8 @@ subnet=${SUBNET:-10.5.0.0/24}
 controlplane=10.5.0.2
 worker=10.5.0.3
 
-step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
-fail() { printf '\033[31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
-
-expect_exit() {
-	local want=$1 label=$2
-	shift 2
-
-	local got=0
-	"$@" || got=$?
-
-	[ "$got" = "$want" ] || fail "$label: exit $got, want $want"
-	printf '  ok: %s (exit %s)\n' "$label" "$got"
-}
-
-contains() {
-	grep -q -- "$2" <<<"$1" || fail "$3"
-	printf '  ok: %s\n' "$3"
-}
+# shellcheck source=hack/lib.sh
+. "$(dirname "$0")/lib.sh"
 
 cleanup() {
 	if [ -n "$keep" ]; then
@@ -135,7 +119,7 @@ expect_exit 0 "kubeconfig" "$talman" kubeconfig
 if command -v kubectl >/dev/null; then
 	nodes=$(kubectl --kubeconfig clusterconfig/kubeconfig get nodes --no-headers | wc -l)
 	[ "$nodes" -eq 2 ] || fail "kubectl sees $nodes nodes, want 2"
-	printf '  ok: kubectl sees both nodes\n'
+	pass 'kubectl sees both nodes'
 fi
 
 step "health"
@@ -146,7 +130,7 @@ step "apply reports whether anything would change"
 dry=0
 "$talman" apply --dry-run --detailed-exit-code >/dev/null || dry=$?
 case $dry in
-0 | 2) printf '  ok: apply --dry-run --detailed-exit-code (exit %s)\n' "$dry" ;;
+0 | 2) pass "apply --dry-run --detailed-exit-code (exit $dry)" ;;
 *) fail "apply --dry-run failed with exit $dry" ;;
 esac
 
