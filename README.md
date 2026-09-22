@@ -891,10 +891,14 @@ $ sudo ./hack/e2e-qemu.sh --install-deps   # qemu, the CNI plugins, talosctl
 $ sudo -E ./hack/e2e-qemu.sh               # builds talman from this checkout
 ```
 
-`--install-deps` installs everything that is not this repository, into
-`/usr/local/bin` where sudo will find it — a talosctl in your own home
-directory is not on root's PATH, which is the first thing that goes wrong.
-talman itself is built from the checkout unless one is already installed or
+`--install-deps` installs everything that is not this repository: qemu, the CNI
+plugins, talosctl, and the Go toolchain `go.mod` asks for — Ubuntu's own Go is
+years older than that, and a build that fails on the version line is a worse
+first run than a download. Binaries go to `/usr/local` where sudo will find
+them, which is the first thing that goes wrong otherwise: a talosctl in your
+home directory is not on root's PATH.
+
+talman is then built from the checkout, unless one is installed already or
 `TALMAN` points at one. No sops: the bundle this generates is plaintext, and
 talman only reaches for sops when a bundle is encrypted.
 
