@@ -634,6 +634,25 @@ attribute to a machine.
 $ talman apply --dry-run --detailed-exit-code || [ $? -eq 2 ] && echo "drift"
 ```
 
+`--diff` prints that answer instead of reducing it to a code — each node is
+asked what would change, it is printed under the node's heading, and then the
+config is sent:
+
+```console
+$ talman apply --diff
+== [1/2] talos-c01 (10.164.0.27)
+     Config diff: No changes.
+     Applied configuration without a reboot
+== [2/2] talos-w01 (10.164.0.32)
+     Config diff:
+     -  hostname: old
+     +  hostname: new
+     Applied configuration without a reboot
+```
+
+`--dry-run` stops after the asking, so it prints the diff by itself. However
+many of these flags are passed, the node is asked once.
+
 For `apply` the answer comes from Talos itself: each node computes the diff and
 reports `Config diff: No changes.` when there is none. A real apply asks for
 that diff before sending the config, so the exit code means the same thing

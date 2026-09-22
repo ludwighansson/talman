@@ -30,6 +30,7 @@ func newApplyCmd() *cobra.Command {
 		onlyNew    bool
 		parallel   int
 		detailed   bool
+		diff       bool
 		dryRun     bool
 		wait       bool
 		health     bool
@@ -58,9 +59,15 @@ what the rendered config would change without changing it. Nothing is enacted,
 so nothing is staggered: every node is asked at once and the waiting and
 health checking are skipped.
 
+--diff prints that same answer instead of reducing it to an exit code: each
+node is asked what would change, the answer is printed under its heading, and
+then the config is sent. --dry-run stops after the asking, so it prints the
+diff by itself.
+
 --detailed-exit-code reports the answer as an exit code: 2 when a node changed
 or would change, 0 when none did, 1 on error. It is the same question either
-way, because an apply asks each node for its diff before sending the config.`,
+way, because an apply asks each node for its diff before sending the config --
+once, however many of these flags are passed.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
@@ -261,18 +268,27 @@ way, because an apply asks each node for its diff before sending the config.`,
 					position, len(targets), n.Hostname, n.IPAddress, note)
 
 				// A real apply says nothing about whether the config it sent
-				// differed from the one already there, so when the answer is
-				// being reported as an exit code it is asked for first. The
-				// dry run is one call and the apply behind it is not.
-				if detailed && !dryRun {
+				// differed from the one already there, and Talos will only
+				// say so if asked in advance. Both --diff and
+				// --detailed-exit-code want that answer, so it is asked for
+				// once and used for both: the dry run is one call, and the
+				// apply behind it is not.
+				block := header
+
+				if askFirst(dryRun, detailed, diff) {
 					probe := append(slices.Clone(args), "--dry-run")
 
 					out, err := tal.Combined(probe...)
-					if err != nil || dryRunChanged(out) {
+
+					if detailed && (err != nil || dryRunChanged(out)) {
 						// A dry run talman could not read is a change: for a
 						// gate that decides whether something happened,
 						// "cannot tell" has to mean "assume it did".
 						markChanged()
+					}
+
+					if diff {
+						block += indent(detail, out)
 					}
 				}
 
@@ -282,12 +298,12 @@ way, because an apply asks each node for its diff before sending the config.`,
 				// returns in a breath anyway.
 				out, err := tal.Combined(args...)
 				if err != nil {
-					say(header + indent(detail, out) + detail + "error: " + err.Error() + "\n")
+					say(block + indent(detail, out) + detail + "error: " + err.Error() + "\n")
 
 					return err
 				}
 
-				say(header + indent(detail, out))
+				say(block + indent(detail, out))
 
 				if detailed && dryRun && dryRunChanged(out) {
 					markChanged()
@@ -472,6 +488,8 @@ way, because an apply asks each node for its diff before sending the config.`,
 		"how many nodes to work on at once; control planes go one at a time unless nothing is enacted")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"ask each node what the config would change, and change nothing")
+	cmd.Flags().BoolVar(&diff, "diff", false,
+		"print what each node would change before changing it (implied by --dry-run)")
 	addDetailedExitCode(cmd, &detailed)
 
 	// Rolling straight on to the next node is how a bad config takes out a
@@ -602,6 +620,16 @@ func indent(prefix string, out []byte) string {
 	}
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// askFirst reports whether a node should be asked what would change before it
+// is told to change.
+//
+// One call answers both questions. A dry run is already that question, so it
+// asks nothing extra; an apply asks when something wants the answer, and the
+// answer then serves whichever of them asked.
+func askFirst(dryRun, detailed, diff bool) bool {
+	return !dryRun && (detailed || diff)
 }
 
 // dryRunChanged reads talosctl's dry run for whether the node would change.
