@@ -887,9 +887,16 @@ the worker back to maintenance mode, and adopts it into the cluster it just
 left. On a fresh Ubuntu 24.04 machine:
 
 ```console
-$ sudo ./hack/e2e-qemu.sh --install-deps   # qemu, the CNI plugins, once
-$ sudo -E ./hack/e2e-qemu.sh
+$ sudo ./hack/e2e-qemu.sh --install-deps   # qemu, the CNI plugins, talosctl
+$ sudo -E ./hack/e2e-qemu.sh               # builds talman from this checkout
 ```
+
+`--install-deps` installs everything that is not this repository, into
+`/usr/local/bin` where sudo will find it — a talosctl in your own home
+directory is not on root's PATH, which is the first thing that goes wrong.
+talman itself is built from the checkout unless one is already installed or
+`TALMAN` points at one. No sops: the bundle this generates is plaintext, and
+talman only reaches for sops when a bundle is encrypted.
 
 Root because the provisioner creates bridges and tap devices. CI runs it
 nightly on a self-hosted runner labelled `kvm`, and never as a gate on a pull

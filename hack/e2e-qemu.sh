@@ -22,11 +22,11 @@
 set -euo pipefail
 
 # shellcheck source=hack/lib.sh
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]:-$0}")/lib.sh"
 
 cluster=${CLUSTER_NAME:-talman-e2e-qemu}
 workdir=${WORKDIR:-$(mktemp -d)}
-talman=${TALMAN:-talman}
+talman=
 keep=${KEEP_CLUSTER:-}
 
 # The cluster is built one patch release behind what talman will be told to
@@ -35,18 +35,19 @@ from_version=${FROM_VERSION:-v1.14.0}
 to_version=${TO_VERSION:-v1.14.1}
 
 cni_version=${CNI_VERSION:-v1.9.1}
+talosctl_version=${TALOSCTL_VERSION:-v1.14.1}
 state_dir="$workdir/state"
 
 controlplane=10.5.0.2
 worker=10.5.0.3
 
 install_deps() {
-	step "installing what the qemu provisioner needs"
+	step "installing everything this needs on a fresh Ubuntu machine"
 
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
 	apt-get install -y --no-install-recommends \
-		qemu-system-x86 qemu-utils bridge-utils iproute2 iptables dnsmasq-base curl ca-certificates
+		qemu-system-x86 qemu-utils bridge-utils iproute2 iptables dnsmasq-base curl ca-certificates tar
 
 	# The provisioner wires the cluster network with CNI plugins and expects
 	# them where CNI puts them.
@@ -54,8 +55,53 @@ install_deps() {
 	curl -fsSL "https://github.com/containernetworking/plugins/releases/download/${cni_version}/cni-plugins-linux-amd64-${cni_version}.tgz" |
 		tar -xz -C /opt/cni/bin
 
-	pass "qemu, the CNI plugins and their friends are installed"
-	note "run again without --install-deps to drive the test"
+	# talosctl builds the cluster and talman drives it. Installed where sudo
+	# will find it, which is the whole reason this step exists: a talosctl in
+	# somebody's home directory is not on root's PATH.
+	curl -fsSL -o /usr/local/bin/talosctl \
+		"https://github.com/siderolabs/talos/releases/download/${talosctl_version}/talosctl-linux-amd64"
+	chmod +x /usr/local/bin/talosctl
+
+	# sops is deliberately absent: the bundle this script generates is
+	# plaintext, and talman only reaches for sops when a bundle is encrypted.
+
+	pass "qemu $(qemu-system-x86_64 --version | head -1 | awk '{print $4}')"
+	pass "cni plugins $cni_version in /opt/cni/bin"
+	pass "talosctl $(talosctl version --client --short 2>/dev/null || talosctl version --client | awk '/Tag/ {print $2; exit}')"
+	note "talman itself is built from this repository; run the script again without --install-deps"
+}
+
+# talman_binary finds talman, or builds it from the repository this script
+# lives in.
+#
+# Under sudo the invoking user's PATH is gone, so a talman built into a home
+# directory is not there any more; building it into the work directory is
+# cheaper than explaining that.
+talman_binary() {
+	if [ -n "${TALMAN:-}" ]; then
+		printf '%s' "$TALMAN"
+		return 0
+	fi
+
+	if command -v talman >/dev/null; then
+		command -v talman
+		return 0
+	fi
+
+	local repo go
+	repo=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
+
+	go=$(command -v go || true)
+	[ -z "$go" ] && [ -x /usr/local/go/bin/go ] && go=/usr/local/go/bin/go
+
+	if [ -n "$go" ] && [ -f "$repo/go.mod" ]; then
+		mkdir -p "$workdir"
+		"$go" build -o "$workdir/talman" "$repo/cmd/talman" >&2 || return 1
+		printf '%s' "$workdir/talman"
+		return 0
+	fi
+
+	return 1
 }
 
 preflight() {
@@ -75,11 +121,19 @@ preflight() {
 	[ -w /dev/kvm ] || fail "/dev/kvm is missing or not writable: this host cannot nest virtual machines"
 	[ "$(id -u)" = 0 ] || fail "run as root: the provisioner creates bridges and tap devices"
 
-	for tool in qemu-system-x86_64 talosctl "$talman"; do
-		command -v "$tool" >/dev/null || fail "$tool is not on PATH (--install-deps installs the qemu side)"
+	for tool in qemu-system-x86_64 talosctl; do
+		command -v "$tool" >/dev/null ||
+			fail "$tool is not on PATH -- run \`sudo $0 --install-deps\` first (note that sudo has its own PATH)"
 	done
 
-	[ -x /opt/cni/bin/bridge ] || fail "the CNI plugins are not in /opt/cni/bin (--install-deps fetches them)"
+	[ -x /opt/cni/bin/bridge ] ||
+		fail "the CNI plugins are not in /opt/cni/bin -- run \`sudo $0 --install-deps\` first"
+
+	talman=$(talman_binary) ||
+		fail "no talman: build one with \`go build -o /usr/local/bin/talman ./cmd/talman\`, or set TALMAN to its path"
+
+	note "talman:   $talman ($("$talman" version | head -1 | awk '{print $2}'))"
+	note "talosctl: $(command -v talosctl)"
 
 	pass "kvm, qemu, the CNI plugins, talosctl and talman are all here"
 }
@@ -216,8 +270,13 @@ main() {
 	printf '\n\033[32mall end-to-end checks passed against real machines\033[0m\n'
 }
 
-case "${1:-}" in
---install-deps) install_deps ;;
-"") main ;;
-*) fail "usage: $0 [--install-deps]" ;;
-esac
+# Sourced rather than run when something wants one of these functions on its
+# own -- checking that talman can be found, say, without building a cluster to
+# find out.
+if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
+	case "${1:-}" in
+	--install-deps) install_deps ;;
+	"") main ;;
+	*) fail "usage: $0 [--install-deps]" ;;
+	esac
+fi
