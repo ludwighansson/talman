@@ -24,6 +24,7 @@ func TestStatusColumns(t *testing.T) {
 		{
 			name: "a node on everything the config asks for",
 			report: nodeReport{
+				asked:          true,
 				State:          talosctl.NodeState{TalosVersion: "v1.14.0", SchematicID: schematicA},
 				K8s:            "v1.37.0",
 				wantTalos:      "v1.14.0",
@@ -37,6 +38,7 @@ func TestStatusColumns(t *testing.T) {
 		{
 			name: "drift in all three",
 			report: nodeReport{
+				asked:          true,
 				State:          talosctl.NodeState{TalosVersion: "v1.13.5", SchematicID: schematicB},
 				K8s:            "v1.36.2",
 				wantTalos:      "v1.14.0",
@@ -50,6 +52,7 @@ func TestStatusColumns(t *testing.T) {
 		{
 			name: "a node that answered nothing",
 			report: nodeReport{
+				asked:          true,
 				wantTalos:      "v1.14.0",
 				wantSchematic:  schematicA,
 				wantKubernetes: "v1.37.0",
@@ -63,6 +66,7 @@ func TestStatusColumns(t *testing.T) {
 			// the kubelet image tag is v-prefixed. That is not drift.
 			name: "an unprefixed kubernetesVersion is the same version",
 			report: nodeReport{
+				asked:          true,
 				K8s:            "v1.37.0",
 				wantKubernetes: "1.37.0",
 			},
@@ -75,6 +79,7 @@ func TestStatusColumns(t *testing.T) {
 			// unknown, not drift against every ID there is.
 			name: "no schematic reported",
 			report: nodeReport{
+				asked:         true,
 				State:         talosctl.NodeState{TalosVersion: "v1.14.0"},
 				wantTalos:     "v1.14.0",
 				wantSchematic: schematicA,
@@ -104,6 +109,7 @@ func TestStatusColumns(t *testing.T) {
 
 func TestSummarise(t *testing.T) {
 	current := nodeReport{
+		asked:          true,
 		Mode:           talosctl.ModeRunning,
 		State:          talosctl.NodeState{TalosVersion: "v1.14.0", SchematicID: schematicA},
 		K8s:            "v1.37.0",
@@ -144,8 +150,8 @@ func TestSummarise(t *testing.T) {
 			name: "a cluster mid-adoption",
 			reports: []nodeReport{
 				current,
-				{Mode: talosctl.ModeMaintenance},
-				{Mode: talosctl.ModeUnreachable},
+				{asked: true, Mode: talosctl.ModeMaintenance},
+				{asked: true, Mode: talosctl.ModeUnreachable},
 			},
 			want: "3 node(s): 1 running, 1 in maintenance mode, 1 unreachable",
 		},
@@ -153,16 +159,81 @@ func TestSummarise(t *testing.T) {
 			// Modes other than running are not measured against the config:
 			// a node with no version cannot be "behind" one.
 			name:    "nothing answering",
-			reports: []nodeReport{{Mode: talosctl.ModeUnreachable}},
+			reports: []nodeReport{{asked: true, Mode: talosctl.ModeUnreachable}},
 			want:    "1 node(s): 1 unreachable",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := summarise(tt.reports); got != tt.want {
+			if got := summarise(tt.reports, false); got != tt.want {
 				t.Errorf("summarise() =\n  %q\nwant\n  %q", got, tt.want)
 			}
 		})
 	}
+}
+
+// The table keeps its shape whether or not the cluster was asked: the columns
+// do not move, only what can honestly be put in them. A dash is what talman
+// could not establish; a node that was never contacted is not a node that
+// answered nothing.
+func TestOfflineKeepsTheShape(t *testing.T) {
+	asked := nodeReport{
+		asked:          true,
+		Mode:           talosctl.ModeRunning,
+		State:          talosctl.NodeState{TalosVersion: "v1.13.5", SchematicID: schematicB},
+		K8s:            "v1.36.2",
+		wantTalos:      "v1.14.1",
+		wantSchematic:  schematicA,
+		wantKubernetes: "v1.37.0",
+	}
+
+	notAsked := asked
+	notAsked.asked = false
+	notAsked.Mode = talosctl.ModeUnreachable // whatever is in the field is not an answer
+	notAsked.State = talosctl.NodeState{}
+	notAsked.K8s = ""
+
+	t.Run("asked: what is running, against what is wanted", func(t *testing.T) {
+		if got := asked.status(); got != "running" {
+			t.Errorf("status() = %q, want running", got)
+		}
+
+		if got := asked.talos(); got != "v1.13.5 → v1.14.1" {
+			t.Errorf("talos() = %q, want the drift", got)
+		}
+
+		if got := asked.kubernetes(); got != "v1.36.2 → v1.37.0" {
+			t.Errorf("kubernetes() = %q, want the drift", got)
+		}
+	})
+
+	t.Run("not asked: a dash where only a node could have answered", func(t *testing.T) {
+		if got := notAsked.status(); got != "-" {
+			t.Errorf("status() = %q, want a dash: nothing was asked", got)
+		}
+
+		// The config's own answers stay, because they are knowable without a
+		// cluster and dropping them would make --offline useless for reading
+		// a config.
+		if got := notAsked.talos(); got != "v1.14.1" {
+			t.Errorf("talos() = %q, want what the config asks for", got)
+		}
+
+		if got := notAsked.kubernetes(); got != "v1.37.0" {
+			t.Errorf("kubernetes() = %q, want what the config asks for", got)
+		}
+
+		if got := notAsked.schematic(); got != short(schematicA) {
+			t.Errorf("schematic() = %q, want the configured one", got)
+		}
+	})
+
+	t.Run("the offline summary counts, and claims nothing else", func(t *testing.T) {
+		got := summarise([]nodeReport{notAsked, notAsked}, true)
+
+		if got != "2 node(s)" {
+			t.Errorf("summarise(offline) = %q, want a bare count", got)
+		}
+	})
 }

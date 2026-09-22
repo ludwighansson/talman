@@ -16,15 +16,23 @@ func newStatusCmd() *cobra.Command {
 	var (
 		nodes    []string
 		parallel int
+		offline  bool
+		wide     bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Report what each node is running, against what the config asks for",
-		Long: `Status asks every node what it is: whether it answers at all, the Talos version
-and schematic it is running, and the Kubernetes version its kubelet runs. Each
-is shown against what the config resolves to, with an arrow marking the drift
-that "talman upgrade" or "talman upgrade-k8s" would close.
+		Short: "List the nodes, and what each one is running",
+		Long: `Status lists every node the config names, and asks each one what it is:
+whether it answers at all, the Talos version and schematic it is running, and
+the Kubernetes version its kubelet runs. Each is shown against what the config
+resolves to, with an arrow marking the drift that "talman upgrade" or "talman
+upgrade-k8s" would close.
+
+--offline asks nothing. The table keeps its shape -- the same columns, in the
+same order -- with a dash wherever the answer could only have come from a node.
+It needs no cluster, no secrets bundle and no talosconfig, which is what makes
+it the way to read a config while writing one.
 
 A node that has not been adopted answers on the maintenance service and is
 reported as such rather than as a failure; one that answers nothing is
@@ -49,15 +57,25 @@ be forwarded to.`,
 				return err
 			}
 
-			tc, err := ensureTalosconfig(cfg)
-			if err != nil {
-				return err
-			}
+			var (
+				tc  string
+				tal *talosctl.Runner
+			)
 
-			// One runner for the whole command: it remembers which route
-			// answered for each node, and a second would pay that discovery
-			// again on the path that only runs when something is already down.
-			tal := runner(cfg)
+			// Nothing is resolved for an offline pass: generating a
+			// talosconfig needs the secrets bundle, and a command whose point
+			// is that it asks nothing should not ask for that either.
+			if !offline {
+				if tc, err = ensureTalosconfig(cfg); err != nil {
+					return err
+				}
+
+				// One runner for the whole command: it remembers which route
+				// answered for each node, and a second would pay that
+				// discovery again on the path that only runs when something
+				// is already down.
+				tal = runner(cfg)
+			}
 
 			reports, err := statusReports(cfg, tal, tc, targets, parallel)
 			if err != nil {
@@ -66,26 +84,36 @@ be forwarded to.`,
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
 
-			fmt.Fprintln(w, "HOSTNAME\tADDRESS\tROLE\tSTATUS\tTALOS\tKUBERNETES\tSCHEMATIC")
+			header := "HOSTNAME\tADDRESS\tROLE\tSTATUS\tTALOS\tKUBERNETES"
+			if wide {
+				header += "\tSCHEMATIC"
+			}
+
+			fmt.Fprintln(w, header+"\tGROUPS\tPATCHES")
 
 			for _, r := range reports {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					r.Node.Hostname, r.Node.IPAddress, r.Node.Role, r.Mode,
-					r.talos(), r.kubernetes(), r.schematic())
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t",
+					r.Node.Hostname, r.Node.IPAddress, r.Node.Role, r.status(), r.talos(), r.kubernetes())
+
+				if wide {
+					fmt.Fprintf(w, "%s\t", r.schematic())
+				}
+
+				fmt.Fprintf(w, "%s\t%d\n", groups(r.Node), len(cfg.PatchChain(r.Node)))
 			}
 
 			if err := w.Flush(); err != nil {
 				return err
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), summarise(reports))
+			fmt.Fprintln(cmd.OutOrStdout(), summarise(reports, offline))
 
 			// A node with a config but no cluster to join never starts
 			// serving the Talos API, which looks exactly like a machine that
 			// is gone. Only asked when something is quiet, and only said when
 			// the control planes answered that there is no etcd -- not when
 			// they said nothing at all.
-			if quiet(reports) && askCluster(cfg, tal, tc) == clusterAbsent {
+			if !offline && quiet(reports) && askCluster(cfg, tal, tc) == clusterAbsent {
 				fmt.Fprintln(cmd.OutOrStdout(), "cluster: not bootstrapped — a node with a config but no "+
 					"cluster to join stays quiet; run `talman bootstrap`")
 			}
@@ -95,6 +123,9 @@ be forwarded to.`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().BoolVar(&offline, "offline", false,
+		"ask nothing: report what the config says, with a dash for what only a node could tell")
+	cmd.Flags().BoolVar(&wide, "wide", false, "add the schematic column")
 	addParallelFlag(cmd, &parallel, defaultParallel, "how many nodes to ask at once")
 
 	return cmd
@@ -107,16 +138,41 @@ type nodeReport struct {
 	State talosctl.NodeState
 	K8s   string
 
+	// asked is whether the node was contacted at all. Without it an offline
+	// pass would be indistinguishable from a node that answered nothing, and
+	// the table would report every machine as unreachable when talman simply
+	// never knocked.
+	asked bool
+
 	wantTalos      string
 	wantSchematic  string
 	wantKubernetes string
 }
 
+// status is the STATUS cell. Offline it is a dash rather than a guess: what a
+// node is doing is the one thing on this row that cannot be read off a config
+// file.
+func (r nodeReport) status() string {
+	if !r.asked {
+		return "-"
+	}
+
+	return r.Mode.String()
+}
+
 func (r nodeReport) talos() string {
+	if !r.asked {
+		return r.wantTalos
+	}
+
 	return drift(r.State.TalosVersion, r.wantTalos)
 }
 
 func (r nodeReport) kubernetes() string {
+	if !r.asked {
+		return withV(r.wantKubernetes)
+	}
+
 	if r.K8s != "" && k8sUpToDate(r.K8s, r.wantKubernetes) {
 		return r.K8s
 	}
@@ -130,7 +186,21 @@ func (r nodeReport) kubernetes() string {
 // schematic at all, which is unknown rather than wrong: there is nothing to
 // compare, so it shows as unread instead of as drift against every ID.
 func (r nodeReport) schematic() string {
+	if !r.asked {
+		return short(r.wantSchematic)
+	}
+
 	return drift(short(r.State.SchematicID), short(r.wantSchematic))
+}
+
+// groups is the GROUPS cell: a node's declared groups, or a dash when it
+// belongs to none beyond the two every node is in.
+func groups(n *config.Node) string {
+	if len(n.Groups) == 0 {
+		return "-"
+	}
+
+	return strings.Join(n.Groups, ",")
 }
 
 // drift renders what is running, and what the config wants when the two
@@ -157,7 +227,13 @@ func withV(version string) string {
 
 // summarise closes the table with the counts an operator would otherwise make
 // by eye.
-func summarise(reports []nodeReport) string {
+func summarise(reports []nodeReport, offline bool) string {
+	// Nothing about what was or was not asked: the dashes in the table say
+	// that already, and saying it twice reads as an apology.
+	if offline {
+		return fmt.Sprintf("%d node(s)", len(reports))
+	}
+
 	var running, maintenance, unreachable, stale int
 
 	for _, r := range reports {
@@ -241,6 +317,10 @@ func statusReports(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		}
 	}
 
+	if tal == nil {
+		return reports, nil
+	}
+
 	byAddress := make(map[string]*nodeReport, len(reports))
 	for i := range reports {
 		byAddress[reports[i].Node.IPAddress] = &reports[i]
@@ -251,7 +331,9 @@ func statusReports(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	_, _ = eachNode(targets, parallel, func(n *config.Node) (struct{}, error) {
 		rep := byAddress[n.IPAddress]
 
+		rep.asked = true
 		rep.Mode = tal.Mode(talosconfig, n.IPAddress)
+
 		if rep.Mode != talosctl.ModeRunning {
 			return struct{}{}, nil
 		}
