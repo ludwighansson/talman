@@ -22,6 +22,9 @@ concurrency:
 env:
   TALOSCTL_VERSION: v1.14.1
   SOPS_VERSION: v3.13.3
+  # Not under RUNNER_TEMP, which is emptied when a job starts: a cluster a
+  # killed run left behind has to be findable by the next one.
+  WORKDIR: /var/tmp/talman-e2e-qemu
 
 jobs:
   cluster:
@@ -53,19 +56,19 @@ jobs:
 
       - name: Drive real machines
         # Root because the provisioner makes bridges and taps; -E so the
-        # versions above and any proxy settings survive sudo.
+        # versions above and any proxy settings survive sudo. The script says
+        # what the machines were doing if it fails, while they still exist:
+        # its trap destroys them before any later step could ask.
         run: sudo -E ./hack/e2e-qemu.sh
         env:
           FROM_VERSION: v1.14.0
           TO_VERSION: v1.14.1
 
-      - name: What the machines were doing, if it went wrong
-        if: failure()
-        run: |
-          sudo talosctl --nodes 10.5.0.2 --endpoints 10.5.0.2 services || true
-          sudo talosctl --nodes 10.5.0.2 --endpoints 10.5.0.2 dmesg --tail || true
-          sudo talosctl cluster show --name talman-e2e-qemu || true
-
       - name: Leave no machines behind
+        # For a run killed before the script's trap could fire, such as by the
+        # timeout above. A fixed WORKDIR is what makes its state findable, here
+        # and by the next run.
         if: always()
-        run: sudo talosctl cluster destroy --name talman-e2e-qemu || true
+        run: |
+          sudo talosctl cluster destroy --name talman-e2e-qemu --state "$WORKDIR/state" || true
+          sudo rm -rf "$WORKDIR"
