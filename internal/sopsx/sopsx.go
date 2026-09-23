@@ -114,30 +114,24 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 	// plaintext is staged under a temporary name and --filename-override
 	// tells sops to match on the real destination instead. Passing the
 	// plaintext on /dev/stdin would be shorter but is not portable.
+	//
+	// Staged in a private 0700 directory of its own, not beside the
+	// destination: that is the operator's cluster repository, and a run
+	// interrupted before the deferred removal would leave the plaintext CA
+	// keys there for the next `git add .` to commit. The override is what
+	// makes the location irrelevant to sops.
 	dir := filepath.Dir(abs)
 
-	tmp, err := os.CreateTemp(dir, ".talman-secrets-*.yaml")
+	stage, err := os.MkdirTemp("", "talman-secrets-")
 	if err != nil {
 		return nil, err
 	}
 
-	tmpName := tmp.Name()
+	defer os.RemoveAll(stage) //nolint:errcheck // best effort cleanup; the error that matters is returned below
 
-	defer os.Remove(tmpName) //nolint:errcheck // best effort cleanup; the error that matters is returned below // best effort cleanup of a 0600 temp file
+	tmpName := filepath.Join(stage, "secrets.yaml")
 
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close() //nolint:errcheck // best effort cleanup; the error that matters is returned below
-
-		return nil, err
-	}
-
-	if _, err := tmp.Write(plaintext); err != nil {
-		tmp.Close() //nolint:errcheck // best effort cleanup; the error that matters is returned below
-
-		return nil, err
-	}
-
-	if err := tmp.Close(); err != nil {
+	if err := os.WriteFile(tmpName, plaintext, 0o600); err != nil {
 		return nil, err
 	}
 

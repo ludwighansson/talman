@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -218,5 +219,51 @@ func TestEncryptedFileWithoutSopsIsAnError(t *testing.T) {
 
 	if !errors.Is(err, ErrNotInstalled) {
 		t.Errorf("error should be ErrNotInstalled, got: %v", err)
+	}
+}
+
+// The plaintext is handed to sops from a private directory, never from the
+// destination's: that is the operator's repository, where a run interrupted
+// before its cleanup would leave the bundle in the clear for `git add .`.
+func TestEncryptStagesPlaintextOutsideTheRepository(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in sops is a shell script")
+	}
+
+	repo := t.TempDir()
+	record := filepath.Join(t.TempDir(), "staged")
+
+	if err := os.WriteFile(filepath.Join(repo, ".sops.yaml"), []byte("creation_rules: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Records the file sops was asked to encrypt, which is its last argument.
+	fake := filepath.Join(t.TempDir(), "sops")
+	script := "#!/bin/sh\nfor a; do last=$a; done\nprintf '%s' \"$last\" > " + record + "\nprintf 'encrypted: true\\n'\n"
+
+	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	old := Bin
+	Bin = fake
+
+	t.Cleanup(func() { Bin = old })
+
+	if _, err := EncryptTo([]byte("secret: value\n"), filepath.Join(repo, "secrets.sops.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	staged, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.HasPrefix(string(staged), repo) {
+		t.Errorf("the plaintext was staged inside the repository, at %s", staged)
+	}
+
+	if _, err := os.Stat(string(staged)); !os.IsNotExist(err) {
+		t.Errorf("the staged plaintext was left behind at %s", staged)
 	}
 }
