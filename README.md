@@ -455,11 +455,11 @@ error: talos-w02 (10.164.0.29) answers neither the Talos API nor the maintenance
   continue with: talman apply -n talos-w02 -n talos-w03
 ```
 
-The health gate stands down while any node in the config is still outside the
-cluster, said once for the run — `-v` names them:
+With `--health`, the gate stands down while any node in the config is still
+outside the cluster, said once for the run — `-v` names them:
 
 ```console
-   not gating on health: 2 node(s) not in the cluster yet (--health to check anyway)
+not gating on health: nodes not in the cluster yet
 ```
 
 The check covers the cluster the config describes, so during a build-out it
@@ -467,7 +467,7 @@ checks machines that have not joined yet — and an unadopted node answers with 
 self-signed maintenance certificate, which `talosctl` reports as `certificate
 signed by unknown authority`. That is a build-out step, not a broken cluster.
 Once every node has joined, the gate runs between nodes as it should, which is
-the roll-out it exists for. `--health` gates regardless.
+the roll-out it exists for.
 
 ### Seeing what is out there
 
@@ -735,18 +735,25 @@ that.
 
 `apply` treats one node at a time as the unit of risk. After each node it waits
 for that node to answer the API again and hold steady for `--stabilize` (30s),
-then runs a cluster health check, and stops the roll-out if either fails —
-leaving the remaining nodes untouched. That is the difference between a bad
-patch costing you one machine and costing you the control plane. Disable with
-`--wait=false` / `--health=false`; neither runs for `--dry-run` or
-`--mode=staged`, where nothing was enacted. The wait says what it is waiting
-for while it waits — a node installing Talos for the first time is away for
-minutes, and silence is indistinguishable from a hang — and the health gate is
-bounded by the same `--timeout`, because `talosctl` otherwise takes twenty
-minutes to report that a gate will not pass. The health gate additionally stands
-down while any configured node is still outside the cluster — see below — which
-is what covers a first bootstrap, where there is no cluster to be healthy yet.
-Pass `--health` explicitly to gate anyway.
+and stops the roll-out if it does not — leaving the remaining nodes untouched,
+rather than rebooting the next control plane while the last is still away.
+The wait asks only the node itself, so a cluster that is already in trouble
+does not hold it up. Disable it with `--wait=false`.
+
+`--health` adds a cluster health check between nodes, and stops the roll-out
+if the cluster is unhealthy. It is off by default: it asks the whole cluster,
+so on one that is unhealthy before the run starts it fails after the first
+node, and that includes the apply meant to fix it. It runs between nodes and
+not after the last, since by then there is nothing left for it to protect.
+
+Neither runs for `--dry-run` or `--mode=staged`, where nothing was enacted.
+The wait says what it is waiting for while it waits — a node installing Talos
+for the first time is away for minutes, and silence is indistinguishable from
+a hang — and the health gate is bounded by the same `--timeout`, because
+`talosctl` otherwise takes twenty minutes to report that a gate will not pass.
+The health gate also stands down while any configured node is still outside
+the cluster — see below — which covers a first bootstrap, where there is no
+cluster to be healthy yet.
 
 Both `apply`'s gate and `talman health` run the check from one control plane —
 the first in the config that answers the Talos API, or `--node` — and report on
