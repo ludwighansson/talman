@@ -467,7 +467,8 @@ once, however many of these flags are passed.`,
 					return struct{}{}, nil
 				}); err != nil {
 					return fmt.Errorf("%w\n%s", err,
-						resumeHint("apply", "applied", without(targets[done:], succeeded)))
+						resumeHint("apply", "applied", without(targets[done:], succeeded),
+							replayFlags(cmd, "node")...))
 				}
 
 				done += len(batch)
@@ -510,7 +511,7 @@ once, however many of these flags are passed.`,
 
 					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
 						return fmt.Errorf("cluster is unhealthy after applying to %s: %w\n%s",
-							names(batch), err, resumeHint("apply", "applied", targets[done:]))
+							names(batch), err, resumeHint("apply", "applied", targets[done:], replayFlags(cmd, "node")...))
 					}
 				}
 			}

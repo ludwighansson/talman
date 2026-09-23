@@ -203,3 +203,55 @@ func TestAllControlPlanes(t *testing.T) {
 		t.Error("a config with no control planes must not count as all of them")
 	}
 }
+
+// A resume hint has to run the command that stopped, not a different one: a
+// hint that drops --dry-run resumes as a real apply, and one that drops
+// --wipe-disk resets the rest differently from the first.
+func TestReplayFlags(t *testing.T) {
+	cmd := newApplyCmd()
+	cmd.PersistentFlags().String("config", "talman.yaml", "")
+
+	if err := cmd.ParseFlags([]string{
+		"-n", "w1", "--dry-run", "--mode", "staged", "--insecure=false",
+		"--extra-flags", "--timeout=1m", "--extra-flags", "--with docs", "--config", "clusters/prod.yaml",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.Join(replayFlags(cmd, "node"), " ")
+
+	for _, want := range []string{
+		"--dry-run",
+		"--mode=staged",
+		"--insecure=false",
+		"--extra-flags=--timeout=1m",
+		"--extra-flags='--with docs'",
+		"--config=clusters/prod.yaml",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("replayed flags lack %q: %s", want, got)
+		}
+	}
+
+	// The hint names the remaining nodes itself, and flags left at their
+	// defaults say nothing.
+	for _, unwanted := range []string{"--node", "-n ", "--wait", "--redact-secrets", "w1"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("replayed flags contain %q: %s", unwanted, got)
+		}
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain":     "plain",
+		"a b":       "'a b'",
+		"it's":      `'it'\''s'`,
+		"--x=1,2":   "--x=1,2",
+		"$(reboot)": "'$(reboot)'",
+	} {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
