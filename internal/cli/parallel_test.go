@@ -139,3 +139,36 @@ func TestBatchesForInertPassesIgnoreRoles(t *testing.T) {
 		t.Errorf("batchesFor(enacting) = %v, want control planes alone", enacting)
 	}
 }
+
+// A batch's nodes finish in whatever order the cluster answers, and their
+// output is printed in the order the batch lists them regardless. The node at
+// the head is printed as it speaks.
+func TestInOrder(t *testing.T) {
+	a, b, c := &config.Node{IPAddress: "a"}, &config.Node{IPAddress: "b"}, &config.Node{IPAddress: "c"}
+
+	var w strings.Builder
+
+	o := newInOrder(&w, []*config.Node{a, b, c})
+
+	o.say(c, "c1\n")
+	o.finish(c)
+	o.say(b, "b1\n")
+
+	if w.String() != "" {
+		t.Fatalf("printed out of turn:\n%s", w.String())
+	}
+
+	o.say(a, "a1\n")
+
+	if w.String() != "a1\n" {
+		t.Fatalf("the head was not printed as it spoke:\n%s", w.String())
+	}
+
+	o.finish(a)
+	o.say(b, "b2\n")
+	o.finish(b)
+
+	if got, want := w.String(), "a1\nb1\nb2\nc1\n"; got != want {
+		t.Errorf("printed\n%s\nwant\n%s", got, want)
+	}
+}

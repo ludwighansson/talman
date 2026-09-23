@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 
@@ -189,4 +190,71 @@ func controlPlanesAlone(nodes []*config.Node, parallel int) [][]*config.Node {
 	flush()
 
 	return out
+}
+
+// inOrder prints what the nodes of a batch say in the order the batch lists
+// them, however they finish.
+//
+// A batch runs its nodes at once, and each node's block used to be printed as
+// it finished -- so a dry run over seven nodes read [7/7], [4/7], [6/7], in
+// whatever order the cluster happened to answer. The node at the head of the
+// order is printed as it speaks, so a slow one still shows progress; the rest
+// are held until their turn.
+type inOrder struct {
+	mu    sync.Mutex
+	w     io.Writer
+	order []string
+	next  int
+	held  map[string]*strings.Builder
+	done  map[string]bool
+}
+
+func newInOrder(w io.Writer, nodes []*config.Node) *inOrder {
+	o := &inOrder{w: w, held: map[string]*strings.Builder{}, done: map[string]bool{}}
+
+	for _, n := range nodes {
+		o.order = append(o.order, n.IPAddress)
+		o.held[n.IPAddress] = &strings.Builder{}
+	}
+
+	return o
+}
+
+// say prints text for a node, or holds it until the nodes before it are done.
+func (o *inOrder) say(n *config.Node, text string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.next < len(o.order) && o.order[o.next] == n.IPAddress {
+		fmt.Fprint(o.w, text)
+
+		return
+	}
+
+	if b, ok := o.held[n.IPAddress]; ok {
+		b.WriteString(text)
+
+		return
+	}
+
+	// Not in this batch: nothing to keep it in order with.
+	fmt.Fprint(o.w, text)
+}
+
+// finish marks a node done, and prints whoever it was holding up.
+func (o *inOrder) finish(n *config.Node) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.done[n.IPAddress] = true
+
+	for o.next < len(o.order) && o.done[o.order[o.next]] {
+		o.next++
+
+		if o.next < len(o.order) {
+			head := o.held[o.order[o.next]]
+			fmt.Fprint(o.w, head.String())
+			head.Reset()
+		}
+	}
 }

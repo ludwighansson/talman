@@ -63,18 +63,10 @@ schematic, 1 on error.`,
 				skipped    int
 				upgraded   int
 				countMu    sync.Mutex
-				printMu    sync.Mutex
-				upgradeOne func(*config.Node, bool) error
+				upgradeOne func(*config.Node, bool, func(string)) error
 			)
 
-			say := func(block string) {
-				printMu.Lock()
-				defer printMu.Unlock()
-
-				fmt.Fprint(os.Stderr, block)
-			}
-
-			upgradeOne = func(n *config.Node, grouped bool) error {
+			upgradeOne = func(n *config.Node, grouped bool, say func(string)) error {
 				ctx, err := r.Context(n)
 				if err != nil {
 					return err
@@ -156,9 +148,12 @@ schematic, 1 on error.`,
 
 			for _, batch := range batches(targets, parallel) {
 				grouped := len(batch) > 1
+				out := newInOrder(os.Stderr, batch)
 
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					if err := upgradeOne(n, grouped); err != nil {
+					defer out.finish(n)
+
+					if err := upgradeOne(n, grouped, func(s string) { out.say(n, s) }); err != nil {
 						return struct{}{}, err
 					}
 
