@@ -15,7 +15,6 @@ import (
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/redact"
 	"github.com/ludwighansson/talman/internal/render"
-	"github.com/ludwighansson/talman/internal/sopsx"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -71,9 +70,12 @@ A diff is a diff of the machine configuration, so it carries what that carries:
 join tokens, the cluster secret, the machine CA. This cluster's own secrets are
 replaced with [redacted] before anything is printed, by value rather than by
 guessing which fields are sensitive -- talman decrypted them and rendered them
-into the config it is sending, so it knows exactly what to look for.
---redact-secrets=false prints them. Note that secrets talman has never seen,
-such as those of a cluster a node used to belong to, cannot be found this way.
+into the config it is sending, so it knows exactly what to look for: the
+secrets bundle, the values SOPS encrypted in any patch, and anything a patch
+read from the environment. --redact-secrets=false prints them. Secrets talman
+has never seen, such as those of a cluster a node used to belong to, cannot be
+found this way; and when talman cannot read the ones it should know, --diff is
+refused and --dry-run prints its answer without the diff.
 
 --detailed-exit-code reports the answer as an exit code: 2 when a node changed
 or would change, 0 when none did, 1 on error. It is the same question either
@@ -109,9 +111,44 @@ once, however many of these flags are passed.`,
 			// makes --dry-run compare live state against a stale artefact and
 			// report agreement. Rendering here is what makes the command mean
 			// what it says.
+			secrets := func() (*redact.Redactor, error) { return render.Secrets(cfg) }
+
 			if !noRender {
-				if err := renderForApply(cfg, targets, parallel); err != nil {
+				if secrets, err = renderForApply(cfg, targets, parallel); err != nil {
 					return err
+				}
+			}
+
+			// Talos' diff is a diff of the machine config, so it carries what
+			// the machine config carries: join tokens, the cluster secret,
+			// the machine CA. talman knows those values -- it decrypted them
+			// and rendered them into the config it is sending -- so it can
+			// take them back out of anything it prints.
+			//
+			// Settled before any node is touched, so the answer cannot change
+			// half way through a run, and so that a diff that cannot be
+			// hidden is refused before a config it was meant to preview is
+			// sent.
+			redactor, withheld, err := redaction(hideSecret, diff, dryRun, noRender, secrets)
+			if err != nil {
+				return err
+			}
+
+			// show is what may be printed of what talosctl said. When talman
+			// cannot hide the secrets in a dry run, the diff itself is kept
+			// back and only its answer printed: the exit code still means
+			// what it says, so a drift check without the SOPS key keeps
+			// working, and nothing it cannot vouch for reaches a log.
+			show := func(out []byte, failed bool) []byte {
+				switch {
+				case !withheld:
+					return redactor.Bytes(out)
+				case failed:
+					return []byte("(output withheld: it may carry secrets talman cannot hide)\n")
+				case dryRunChanged(out):
+					return []byte("(diff withheld: would change)\n")
+				default:
+					return []byte("(diff withheld: no changes)\n")
 				}
 			}
 
@@ -190,41 +227,6 @@ once, however many of these flags are passed.`,
 				changed = true
 			}
 
-			// Talos' diff is a diff of the machine config, so it carries what
-			// the machine config carries: join tokens, the cluster secret,
-			// the machine CA. talman knows those values -- it decrypted them
-			// and rendered them into the config it is sending -- so it can
-			// take them back out of anything it prints.
-			//
-			// Built once, and only when something will actually print a
-			// config: a plain apply prints none, and should not decrypt a
-			// bundle to prove it.
-			var (
-				redactOnce sync.Once
-				redactor   *redact.Redactor
-				redactErr  error
-			)
-
-			hide := func(out []byte) []byte {
-				if !hideSecret {
-					return out
-				}
-
-				redactOnce.Do(func() {
-					plaintext, err := sopsx.ReadFile(cfg.SecretPath())
-					if err != nil {
-						redactErr = fmt.Errorf("cannot hide this cluster's secrets in the diff: %w\n"+
-							"  pass --redact-secrets=false to print it with them in", err)
-
-						return
-					}
-
-					redactor, redactErr = redact.FromBundle(plaintext)
-				})
-
-				return redactor.Bytes(out)
-			}
-
 			var printMu sync.Mutex
 
 			say := func(block string) {
@@ -233,11 +235,6 @@ once, however many of these flags are passed.`,
 
 				fmt.Fprint(os.Stderr, block)
 			}
-
-			// The detail under a node's heading is talosctl's, indented to
-			// read as detail: the heading says which node, the lines below it
-			// say what that node's talosctl said.
-			const detail = "     "
 
 			applyOne := func(n *config.Node, position int) error {
 				file := cfg.MachineConfigPath(n)
@@ -334,13 +331,18 @@ once, however many of these flags are passed.`,
 					}
 
 					if diff {
-						out = hide(out)
+						// Asked to see the change before it is made, and
+						// talman could not see it: sending the config anyway
+						// is exactly what the flag was there to prevent.
+						if err != nil {
+							say(block + indent(show(out, true)) +
+								detail + "error: asking what would change: " + err.Error() + "\n")
 
-						if redactErr != nil {
-							return redactErr
+							return fmt.Errorf("%s (%s): could not show what would change, so changed nothing: %w",
+								n.Hostname, n.IPAddress, err)
 						}
 
-						block += indent(detail, out)
+						block += indent(show(out, false))
 					}
 				}
 
@@ -349,24 +351,18 @@ once, however many of these flags are passed.`,
 				// flight would otherwise interleave, and one node's apply
 				// returns in a breath anyway.
 				out, err := tal.Combined(args...)
-
-				if dryRun {
-					out = hide(out)
-
-					if redactErr != nil {
-						return redactErr
-					}
-				}
+				changes := dryRun && dryRunChanged(out)
+				out = show(out, err != nil)
 
 				if err != nil {
-					say(block + indent(detail, out) + detail + "error: " + err.Error() + "\n")
+					say(block + indent(out) + detail + "error: " + err.Error() + "\n")
 
 					return err
 				}
 
-				say(block + indent(detail, out))
+				say(block + indent(out))
 
-				if detailed && dryRun && dryRunChanged(out) {
+				if detailed && changes {
 					markChanged()
 				}
 
@@ -670,8 +666,13 @@ func gateSummary(adopted int64, ungated, gated int) string {
 	}
 }
 
-// indent puts a prefix on every line of a command's output.
-func indent(prefix string, out []byte) string {
+// detail is the indent of what is said under a node's heading. The detail is
+// talosctl's, indented to read as detail: the heading says which node, the
+// lines below it say what that node's talosctl said.
+const detail = "     "
+
+// indent puts detail's prefix on every line of a command's output.
+func indent(out []byte) string {
 	text := strings.TrimRight(string(out), "\n")
 	if text == "" {
 		return ""
@@ -679,7 +680,7 @@ func indent(prefix string, out []byte) string {
 
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		lines[i] = prefix + line
+		lines[i] = detail + line
 	}
 
 	return strings.Join(lines, "\n") + "\n"
@@ -729,10 +730,14 @@ func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 // The talosconfig is regenerated too: it is the credential the apply itself
 // uses, and leaving it behind while the machine configs move forward is how a
 // cluster ends up unreachable by its own tooling.
-func renderForApply(cfg *config.Config, targets []*config.Node, parallel int) error {
+//
+// It returns what the pass knows about the secrets it rendered in, for hiding
+// them in anything printed afterwards.
+func renderForApply(cfg *config.Config, targets []*config.Node, parallel int,
+) (func() (*redact.Redactor, error), error) {
 	r, err := newRenderer(cfg, false, os.Stderr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer r.Close()
 
@@ -752,8 +757,51 @@ func renderForApply(cfg *config.Config, targets []*config.Node, parallel int) er
 		return res, nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return r.WriteAll(results, true)
+	if err := r.WriteAll(results, true); err != nil {
+		return nil, err
+	}
+
+	redactor, secretsErr := r.Secrets()
+
+	return func() (*redact.Redactor, error) { return redactor, secretsErr }, nil
+}
+
+// redaction settles how an apply hides secrets in what it prints: the
+// redactor to use, or whether diffs are to be withheld altogether.
+//
+// Only a run that prints a config needs to know, and only one that did not
+// just render has anything to pay for the answer: a plain --no-render apply
+// is not made to decrypt a bundle for nothing. When the secrets cannot be
+// known, a --diff is refused outright -- it asked to see the change before
+// it is made -- while a dry run keeps its answer and loses only the diff.
+func redaction(hide, diff, dryRun, noRender bool, secrets func() (*redact.Redactor, error),
+) (*redact.Redactor, bool, error) {
+	prints := diff || dryRun
+
+	if !hide || (noRender && !prints) {
+		return nil, false, nil
+	}
+
+	redactor, err := secrets()
+	if err == nil {
+		return redactor, false, nil
+	}
+
+	if !prints {
+		return nil, false, nil
+	}
+
+	err = fmt.Errorf("cannot hide this cluster's secrets in the diff: %w\n"+
+		"  pass --redact-secrets=false to print it with them in", err)
+
+	if diff {
+		return nil, false, err
+	}
+
+	fmt.Fprintf(os.Stderr, "%v\n  printing no diffs: the exit code still says whether anything would change\n", err)
+
+	return nil, true, nil
 }

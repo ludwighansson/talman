@@ -100,3 +100,27 @@ func TestConditionalDocumentCanRenderEmpty(t *testing.T) {
 		t.Errorf("got %q, want empty", got)
 	}
 }
+
+// A value a patch reads from the environment is reported, so it can be hidden
+// again wherever the rendered config is printed.
+func TestRenderSeeingReportsTheEnvironment(t *testing.T) {
+	t.Setenv("TALMAN_TEST_TOKEN", "tskey-auth-0123456789")
+	t.Setenv("TALMAN_TEST_HOST", "registry.example.internal")
+
+	var seen []string
+
+	out, err := RenderSeeing("p.yaml",
+		[]byte(`token: {{ env "TALMAN_TEST_TOKEN" }}`+"\n"+`host: {{ expandenv "$TALMAN_TEST_HOST" }}`),
+		Context{}, func(v string) { seen = append(seen, v) })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(out), "tskey-auth-0123456789") {
+		t.Errorf("env did not render: %s", out)
+	}
+
+	if len(seen) != 2 || seen[0] != "tskey-auth-0123456789" || seen[1] != "registry.example.internal" {
+		t.Errorf("seen = %q", seen)
+	}
+}
