@@ -192,8 +192,16 @@ cluster to leave.`,
 
 					return struct{}{}, nil
 				}); err != nil {
-					var flags []string
-					if !graceful {
+					// --yes is left off: the resumed reset wipes a
+					// different set of machines, and should ask about them.
+					flags := replayFlags(cmd, "node", "yes")
+
+					// This run chose to skip leaving etcd because it was
+					// destroying the cluster. The rest of the control planes
+					// alone are no longer every control plane, so without
+					// saying so the resumed run would try to leave a cluster
+					// with too few members left to let it.
+					if destroying && !cmd.Flags().Changed("graceful") {
 						flags = append(flags, "--graceful=false")
 					}
 

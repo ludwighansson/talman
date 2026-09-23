@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/render"
@@ -187,6 +190,58 @@ func ensureTalosconfig(cfg *config.Config) (string, error) {
 	fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(written))
 
 	return written, nil
+}
+
+// replayFlags spells out the flags a command was run with, so that a resume
+// hint runs the same command over the rest of the nodes.
+//
+// Every flag that was set, not a list of the ones that seemed to matter: a
+// hint that drops --dry-run resumes as a real apply, and one that drops
+// --wipe-disk or --stage runs a different operation from the one that
+// stopped. except names flags the hint handles itself -- the node list -- or
+// that should be asked again, like --yes.
+func replayFlags(cmd *cobra.Command, except ...string) []string {
+	var out []string
+
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if slices.Contains(except, f.Name) {
+			return
+		}
+
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			items := sv.GetSlice()
+			if len(items) == 0 {
+				out = append(out, "--"+f.Name+"=")
+			}
+
+			for _, v := range items {
+				out = append(out, "--"+f.Name+"="+shellQuote(v))
+			}
+
+			return
+		}
+
+		if f.Value.Type() == "bool" && f.Value.String() == "true" {
+			out = append(out, "--"+f.Name)
+
+			return
+		}
+
+		out = append(out, "--"+f.Name+"="+shellQuote(f.Value.String()))
+	})
+
+	return out
+}
+
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_./:=,@+%-]+$`)
+
+// shellQuote makes a value safe to paste into a shell.
+func shellQuote(v string) string {
+	if shellSafe.MatchString(v) {
+		return v
+	}
+
+	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
 // resumeHint names the nodes a stopped pass did not get to, and spells out the
