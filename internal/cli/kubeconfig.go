@@ -67,7 +67,13 @@ overwritten, because it is a generated artefact of this cluster directory.`,
 				}
 			}
 
-			if err := tal.Stream(kubeconfigArgs(tc, target, dest, merge, force, extraFlags)...); err != nil {
+			// talosctl will not replace a file it is not merging into without
+			// --force, so talman's own copy -- written with --merge=false,
+			// and overwritten by design -- needs it on every run but the
+			// first. A path the operator names only gets it when asked.
+			overwrite := force || (own && !merge)
+
+			if err := tal.Stream(kubeconfigArgs(tc, target, dest, merge, overwrite, extraFlags)...); err != nil {
 				return err
 			}
 
