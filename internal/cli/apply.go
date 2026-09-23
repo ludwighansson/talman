@@ -229,16 +229,7 @@ once, however many of these flags are passed.`,
 				changed = true
 			}
 
-			var printMu sync.Mutex
-
-			say := func(block string) {
-				printMu.Lock()
-				defer printMu.Unlock()
-
-				fmt.Fprint(os.Stderr, block)
-			}
-
-			applyOne := func(n *config.Node, position int) error {
+			applyOne := func(n *config.Node, position int, say func(string)) error {
 				file := cfg.MachineConfigPath(n)
 
 				if _, err := os.Stat(file); err != nil {
@@ -457,8 +448,12 @@ once, however many of these flags are passed.`,
 			)
 
 			for _, batch := range batchesFor(targets, parallel, inert) {
+				out := newInOrder(os.Stderr, batch)
+
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					if err := applyOne(n, positions[n.IPAddress]); err != nil {
+					defer out.finish(n)
+
+					if err := applyOne(n, positions[n.IPAddress], func(s string) { out.say(n, s) }); err != nil {
 						return struct{}{}, err
 					}
 

@@ -114,16 +114,7 @@ cluster to leave.`,
 
 			tal := runner(cfg)
 
-			var printMu sync.Mutex
-
-			say := func(block string) {
-				printMu.Lock()
-				defer printMu.Unlock()
-
-				fmt.Fprint(os.Stderr, block)
-			}
-
-			resetOne := func(n *config.Node, grouped bool) error {
+			resetOne := func(n *config.Node, grouped bool, say func(string)) error {
 				args := []string{"--talosconfig", tc}
 
 				// Ahead of the subcommand: --endpoints is one of talosctl's
@@ -180,9 +171,12 @@ cluster to leave.`,
 
 			for _, batch := range batches(targets, parallel) {
 				grouped := len(batch) > 1
+				out := newInOrder(os.Stderr, batch)
 
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					if err := resetOne(n, grouped); err != nil {
+					defer out.finish(n)
+
+					if err := resetOne(n, grouped, func(s string) { out.say(n, s) }); err != nil {
 						return struct{}{}, err
 					}
 
