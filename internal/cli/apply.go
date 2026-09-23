@@ -144,11 +144,11 @@ once, however many of these flags are passed.`,
 				case !withheld:
 					return redactor.Bytes(out)
 				case failed:
-					return []byte("(output withheld: it may carry secrets talman cannot hide)\n")
+					return []byte("output not shown\n")
 				case dryRunChanged(out):
-					return []byte("(diff withheld: would change)\n")
+					return []byte("changes; diff not shown\n")
 				default:
-					return []byte("(diff withheld: no changes)\n")
+					return []byte("no changes\n")
 				}
 			}
 
@@ -802,7 +802,7 @@ func redaction(hide, diff, dryRun, noRender bool, secrets func() (*redact.Redact
 		return nil, false, err
 	}
 
-	fmt.Fprintf(os.Stderr, "%v\n  printing no diffs: the exit code still says whether anything would change\n", err)
+	fmt.Fprintf(os.Stderr, "%v\n  diffs are not shown\n", err)
 
 	return nil, true, nil
 }

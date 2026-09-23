@@ -674,10 +674,10 @@ they are.
 
 Two things follow from being exact. Secrets talman has never seen cannot be
 found this way — a node still holding a previous cluster's keys would show them
-— and when talman cannot read them, it prints nothing it cannot vouch for. A
-`--diff` is refused before any config is sent. A `--dry-run` still answers, and
-still sets the exit code, but prints `(diff withheld: would change)` in place
-of the diff, so a drift check with only a talosconfig keeps working.
+— and when talman cannot read them, it does not print the diff. `--diff` fails
+before any config is sent. `--dry-run` prints `changes; diff not shown` or `no
+changes` for each node and still sets the exit code, so a drift check with only
+a talosconfig keeps working.
 
 For `apply` the answer comes from Talos itself: each node computes the diff and
 reports `Config diff: No changes.` when there is none. A real apply asks for
