@@ -74,20 +74,27 @@ install_deps() {
 	note "talman itself is built from this repository; run the script again without --install-deps"
 }
 
-# go_binary is Go wherever this machine keeps it. Not on sudo's PATH when it
-# came from go.dev, which is where this script puts it.
+# go_binary is the newest Go this machine has. Not on sudo's PATH when it came
+# from go.dev, which is where this script puts it -- and when both are there,
+# the one on PATH may be the old one that made install_go fetch a newer one.
 go_binary() {
-	if command -v go >/dev/null; then
-		command -v go
-		return 0
-	fi
+	local candidate version best='' best_version=
 
-	if [ -x /usr/local/go/bin/go ]; then
-		printf '%s' /usr/local/go/bin/go
-		return 0
-	fi
+	for candidate in "$(command -v go 2>/dev/null || true)" /usr/local/go/bin/go; do
+		[ -n "$candidate" ] && [ -x "$candidate" ] || continue
 
-	return 1
+		version=$("$candidate" version 2>/dev/null | awk '{print $3}' | sed 's/^go//') || continue
+		[ -n "$version" ] || continue
+
+		if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best_version" "$version" | sort -V | tail -1)" = "$version" ]; then
+			best=$candidate
+			best_version=$version
+		fi
+	done
+
+	[ -n "$best" ] || return 1
+
+	printf '%s' "$best"
 }
 
 # install_go fetches the toolchain this module needs.
@@ -205,7 +212,40 @@ preflight() {
 	pass "kvm, qemu, the CNI plugins, talosctl and talman are all here"
 }
 
+# diagnose says what the machines were doing, while they still exist to ask.
+#
+# Here rather than in a workflow step, because by the time a later step runs
+# this script's trap has destroyed them.
+diagnose() {
+	step "what the machines were doing"
+
+	"$talman" status 2>&1 || true
+
+	local node
+	for node in "$controlplane" "$worker"; do
+		note "services on $node"
+		talosctl --nodes "$node" --endpoints "$node" services 2>&1 || true
+
+		note "the last of the kernel log on $node"
+		talosctl --nodes "$node" --endpoints "$node" dmesg 2>&1 | tail -n 100 || true
+	done
+
+	talosctl cluster show --name "$cluster" --state "$state_dir" --provisioner qemu 2>&1 || true
+}
+
+# destroy_cluster removes the virtual machines this script builds, leaving no
+# bridge, taps or qemu processes behind.
+destroy_cluster() {
+	talosctl cluster destroy --name "$cluster" --state "$state_dir" >/dev/null 2>&1 || true
+}
+
 cleanup() {
+	local status=$?
+
+	if [ "$status" -ne 0 ] && [ -n "$talman" ] && [ -d "$state_dir" ]; then
+		diagnose
+	fi
+
 	if [ -n "$keep" ]; then
 		note "keeping cluster $cluster (KEEP_CLUSTER set); destroy it with:"
 		note "  talosctl cluster destroy --name $cluster --state $state_dir --provisioner qemu"
@@ -213,7 +253,7 @@ cleanup() {
 	fi
 
 	step "destroying the cluster"
-	talosctl cluster destroy --name "$cluster" --state "$state_dir" >/dev/null 2>&1 || true
+	destroy_cluster
 }
 
 # One node's row, for the awaits below.
@@ -221,16 +261,20 @@ status_row() {
 	"$talman" status -n "$1" 2>/dev/null | grep -- "$1"
 }
 
-# settled <node> -- running, and agreeing with the config.
+# settled <node> -- running the version the config asks for, and agreeing with
+# the config.
 #
-# Not a match on the version string: while a node is still on the old one its
-# row reads "v1.14.0 → v1.14.1", which contains the version being waited for.
-# The absence of the arrow is what says the drift is gone.
+# Both halves are needed. While a node is still on the old version its row
+# reads "v1.14.0 → v1.14.1", which contains the version being waited for, so
+# the arrow has to be gone. And a node whose version could not be read in the
+# middle of a reboot reads "-" with no arrow at all, so the version has to be
+# there.
 settled() {
 	local row
 	row=$(status_row "$1") || return 1
 
 	grep -q "running" <<<"$row" || return 1
+	grep -qF -- "$to_version" <<<"$row" || return 1
 	! grep -q "→" <<<"$row"
 }
 
@@ -247,6 +291,19 @@ main() {
 	# otherwise be the checkout this script was started from.
 	mkdir -p "$workdir"
 	cd "$workdir"
+
+	# A run that was killed before its trap could fire -- a CI timeout, a lost
+	# runner -- leaves its machines up, holding the bridge and the addresses
+	# this one is about to ask for. With a fixed WORKDIR that is findable.
+	if [ -d "$state_dir/$cluster" ]; then
+		note "a previous run left cluster $cluster behind; destroying it first"
+		destroy_cluster
+	fi
+
+	# And what it generated, which belongs to that cluster: adopting a stale
+	# controlplane.yaml would hand talman the last cluster's secrets.
+	rm -rf controlplane.yaml worker.yaml talosconfig provisioner-talosconfig \
+		talman.yaml secrets.sops.yaml clusterconfig
 
 	step "creating a cluster of virtual machines running Talos $from_version"
 	talosctl cluster create qemu \
