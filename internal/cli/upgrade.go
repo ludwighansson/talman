@@ -40,7 +40,7 @@ and check the target first with "talman image url".
 node was, 0 when every selected node already ran its configured version and
 schematic, 1 on error.`,
 		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -169,7 +169,8 @@ schematic, 1 on error.`,
 					return struct{}{}, nil
 				}); err != nil {
 					return fmt.Errorf("%w\n%s", err,
-						resumeHint("upgrade", "upgraded", without(targets[done:], succeeded)))
+						resumeHint("upgrade", "upgraded", without(targets[done:], succeeded),
+							replayFlags(cmd, "node")...))
 				}
 
 				done += len(batch)
