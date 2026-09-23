@@ -207,7 +207,7 @@ func TestGateSummary(t *testing.T) {
 		{
 			name:    "gate stood down throughout, nothing adopted",
 			ungated: 2,
-			want:    "not gating on health: nodes not in the cluster yet (--health to check anyway)",
+			want:    "not gating on health: nodes not in the cluster yet",
 		},
 		{
 			// The regression: one ungated step out of four used to be

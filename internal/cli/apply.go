@@ -46,8 +46,10 @@ func newApplyCmd() *cobra.Command {
 		Use:   "apply",
 		Short: "Apply rendered machine configs to the cluster",
 		Long: `Apply renders each selected node's machine config and applies it, one node at a
-time, waiting for the node to come back and the cluster to stay healthy before
-moving to the next.
+time, waiting for the node to come back before moving to the next. --health
+also checks that the cluster is healthy between nodes; it is off by default,
+because on a cluster that is already unhealthy it stops the very apply meant
+to fix it.
 
 Each node is asked which API it answers before its config is sent: a node that
 has joined is addressed with cluster PKI, and one in maintenance mode -- never
@@ -477,6 +479,14 @@ once, however many of these flags are passed.`,
 					continue
 				}
 
+				// The gate protects the nodes still to come, and after the
+				// last batch there are none. Checking anyway would only turn
+				// an apply that landed into a failure, which on a cluster
+				// that was unhealthy before the run is every apply.
+				if done == len(targets) {
+					break
+				}
+
 				// The gate checks the cluster the config describes, so it
 				// only means something once that cluster exists. A node that
 				// has not been adopted yet answers with a self-signed
@@ -487,8 +497,8 @@ once, however many of these flags are passed.`,
 				// So while any node is outside the cluster, the gate stands
 				// down and says which nodes those are. Once they have all
 				// joined it gates every node, which is the roll-out case it
-				// exists for. An explicit --health always gates.
-				if health && !cmd.Flags().Changed("health") {
+				// exists for.
+				if health {
 					if outside := notInCluster(cfg, tal, tc, modes, parallel); len(outside) > 0 {
 						ungated++
 
@@ -552,13 +562,16 @@ once, however many of these flags are passed.`,
 		"replace this cluster's own secrets with [redacted] in printed diffs")
 	addDetailedExitCode(cmd, &detailed)
 
-	// Rolling straight on to the next node is how a bad config takes out a
-	// whole control plane instead of one machine, so both gates default on.
-	// Neither runs for a dry run, which enacts nothing to wait for.
+	// Rolling straight on to the next node while the last is still rebooting
+	// is how a control plane loses quorum, so the wait defaults on: it asks
+	// only the node itself, and a cluster in trouble does not stop it. The
+	// health gate asks the whole cluster, so an unhealthy one fails it after
+	// the first node -- including the apply meant to fix it -- and it is
+	// opt-in. Neither runs for a dry run, which enacts nothing to wait for.
 	cmd.Flags().BoolVar(&wait, "wait", true,
 		"wait for each node to come back before applying to the next")
-	cmd.Flags().BoolVar(&health, "health", true,
-		"run a cluster health check between nodes")
+	cmd.Flags().BoolVar(&health, "health", false,
+		"run a cluster health check between nodes, and stop if it fails")
 	cmd.Flags().DurationVar(&stabilize, "stabilize", 30*time.Second,
 		"how long a node must stay reachable before it counts as back")
 	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute,
@@ -658,7 +671,7 @@ func gateSummary(adopted int64, ungated, gated int) string {
 	case adopted > 0:
 		return "not waiting: nothing to join until `talman bootstrap` runs"
 	case ungated > 0 && gated == 0:
-		return "not gating on health: nodes not in the cluster yet (--health to check anyway)"
+		return "not gating on health: nodes not in the cluster yet"
 	case ungated > 0:
 		return fmt.Sprintf("health gate stood down for %d of %d step(s): nodes not in the cluster yet",
 			ungated, ungated+gated)

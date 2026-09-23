@@ -146,7 +146,7 @@ step "apply to the worker: probe, apply, wait"
 # rather than here where a rolled-back config would make it mean something
 # else.
 expect_exit 0 "apply --mode=try" \
-	"$talman" apply -n "$cluster-worker-1" --mode=try --health=false --stabilize=5s --timeout=3m
+	"$talman" apply -n "$cluster-worker-1" --mode=try --stabilize=5s --timeout=3m
 
 step "upgrade decides there is nothing to do"
 # Both nodes already run the configured version, and a docker node reports no
