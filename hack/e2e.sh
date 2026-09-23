@@ -115,6 +115,8 @@ grep -q "not bootstrapped" <<<"$status" && fail "status claims a bootstrapped cl
 step "kubeconfig, and a cluster that answers kubectl"
 expect_exit 0 "kubeconfig" "$talman" kubeconfig
 [ -s clusterconfig/kubeconfig ] || fail "no kubeconfig was written"
+# talman's own copy is overwritten, which talosctl only does with --force.
+expect_exit 0 "kubeconfig, again" "$talman" kubeconfig
 
 if command -v kubectl >/dev/null; then
 	nodes=$(kubectl --kubeconfig clusterconfig/kubeconfig get nodes --no-headers | wc -l)
