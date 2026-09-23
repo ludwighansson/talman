@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/redact"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -263,5 +265,64 @@ func TestAskFirst(t *testing.T) {
 					tt.dryRun, tt.detailed, tt.diff, got, tt.want)
 			}
 		})
+	}
+}
+
+// How an apply hides secrets is settled once, before any node is touched, and
+// a run that cannot hide them never prints them.
+func TestRedaction(t *testing.T) {
+	known, err := redact.FromBundle([]byte("cluster:\n  secret: rRzNVtMkva9wVop6Br4VVMDUGmKE=\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ok := func() (*redact.Redactor, error) { return known, nil }
+	broken := func() (*redact.Redactor, error) { return nil, errors.New("no SOPS key") }
+
+	var asked bool
+
+	counted := func() (*redact.Redactor, error) {
+		asked = true
+
+		return known, nil
+	}
+
+	cases := []struct {
+		name                         string
+		hide, diff, dryRun, noRender bool
+		secrets                      func() (*redact.Redactor, error)
+		wantRedactor, wantWithheld   bool
+		wantErr                      bool
+	}{
+		{name: "diff hides", hide: true, diff: true, secrets: ok, wantRedactor: true},
+		{name: "dry run hides", hide: true, dryRun: true, secrets: ok, wantRedactor: true},
+		{name: "off prints everything", diff: true, secrets: broken},
+		// It asked to see the change before it is made: refuse the run.
+		{name: "diff without secrets is refused", hide: true, diff: true, secrets: broken, wantErr: true},
+		// A drift check keeps its answer and loses only the diff.
+		{name: "dry run without secrets withholds", hide: true, dryRun: true, noRender: true,
+			secrets: broken, wantWithheld: true},
+		// Nothing printed, nothing to fail over.
+		{name: "plain apply ignores it", hide: true, secrets: broken},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, withheld, err := redaction(c.hide, c.diff, c.dryRun, c.noRender, c.secrets)
+
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err = %v, want error %v", err, c.wantErr)
+			}
+
+			if (r != nil) != c.wantRedactor || withheld != c.wantWithheld {
+				t.Errorf("redactor %v withheld %v, want %v %v", r != nil, withheld, c.wantRedactor, c.wantWithheld)
+			}
+		})
+	}
+
+	// A --no-render apply that prints nothing is not made to decrypt the
+	// bundle to hide nothing.
+	if _, _, err := redaction(true, false, false, true, counted); err != nil || asked {
+		t.Errorf("a plain --no-render apply asked for the secrets (err %v)", err)
 	}
 }

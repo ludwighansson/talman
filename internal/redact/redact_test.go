@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -28,9 +29,10 @@ func TestFromBundleHidesEveryValueItKnows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Seven values are long enough to be secrets; "v1alpha1" is not one.
-	if got := r.Count(); got != 7 {
-		t.Errorf("Count() = %d, want 7", got)
+	// Seven values are long enough to be secrets; "v1alpha1" is not one. The
+	// eighth is the body of the certificate, as it reads once decoded.
+	if got := r.Count(); got != 8 {
+		t.Errorf("Count() = %d, want 8", got)
 	}
 
 	// What a dry run actually prints, in the shape talosctl prints it.
@@ -109,5 +111,105 @@ func TestNilRedactorIsTransparent(t *testing.T) {
 
 	if r.Count() != 0 {
 		t.Error("nil redactor claims to know secrets")
+	}
+}
+
+// Talos writes some of the bundle's keys into a machine config decoded: the
+// Kubernetes CA and service-account keys are PEM blocks of their own. A diff
+// prints each line of such a block with its own prefix and indentation, so
+// every line of the body has to be found on its own.
+func TestDecodedKeysAreHiddenLineByLine(t *testing.T) {
+	pem := "-----BEGIN RSA PRIVATE KEY-----\n" +
+		"MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun\n" +
+		"VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK\n" +
+		"LxoS2tFczGkPLPgizskuemMghRniWaoLcyehkd3qqGElvW/VDL5AaWTg0nLVkjRo\n" +
+		"9z+4Ag==\n" +
+		"-----END RSA PRIVATE KEY-----\n"
+
+	r, err := FromBundle([]byte("certs:\n  k8sserviceaccount:\n    key: " +
+		base64.StdEncoding.EncodeToString([]byte(pem)) + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var diff strings.Builder
+
+	diff.WriteString("+    privateKey: |\n")
+
+	for _, line := range strings.Split(strings.TrimSpace(pem), "\n") {
+		diff.WriteString("+        " + line + "\n")
+	}
+
+	got := r.String(diff.String())
+
+	for _, line := range strings.Split(pem, "\n")[1:5] {
+		if strings.Contains(got, line) {
+			t.Errorf("a line of the key survived: %q\n%s", line, got)
+		}
+	}
+
+	// The armour is the same in every block and hides nothing.
+	if !strings.Contains(got, "-----BEGIN RSA PRIVATE KEY-----") {
+		t.Errorf("the PEM armour was redacted:\n%s", got)
+	}
+}
+
+// A patch the operator encrypted with SOPS says which of its values are
+// secrets: the ones SOPS encrypted, however short, and none of the others.
+func TestEncryptedValuesAreTheOnesSOPSEncrypted(t *testing.T) {
+	ciphertext := `machine:
+    registries:
+        config:
+            registry.example.internal:
+                auth:
+                    username: ENC[AES256_GCM,data:abc,iv:x,tag:y,type:str]
+                    password: ENC[AES256_GCM,data:def,iv:x,tag:y,type:str]
+                    endpoint: registry.example.internal
+sops:
+    version: 3.13.3
+    lastmodified: "2026-09-20T10:00:00Z"
+`
+	plaintext := `machine:
+    registries:
+        config:
+            registry.example.internal:
+                auth:
+                    username: ci-robot
+                    password: hunter2x
+                    endpoint: registry.example.internal
+`
+
+	s := NewSet()
+
+	if err := s.AddEncrypted([]byte(ciphertext), []byte(plaintext)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := s.Redactor().String(plaintext)
+
+	for _, secret := range []string{"ci-robot", "hunter2x"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("an encrypted value survived: %q\n%s", secret, got)
+		}
+	}
+
+	if !strings.Contains(got, "endpoint: registry.example.internal") {
+		t.Errorf("a value SOPS left in the clear was redacted:\n%s", got)
+	}
+}
+
+// Values a template read from the environment are added as they come.
+func TestAddedValuesAreHidden(t *testing.T) {
+	s := NewSet()
+	s.Add("tskey-auth-kQx7aBcDeFgHiJ", "short")
+
+	got := s.Redactor().String("authKey: tskey-auth-kQx7aBcDeFgHiJ\nmode: short")
+
+	if strings.Contains(got, "tskey") {
+		t.Errorf("an added value survived:\n%s", got)
+	}
+
+	if !strings.Contains(got, "mode: short") {
+		t.Errorf("a short word was treated as a secret:\n%s", got)
 	}
 }
