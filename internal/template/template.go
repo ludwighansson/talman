@@ -9,6 +9,7 @@ package template
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -62,8 +63,39 @@ func (n Node) HasGroup(name string) bool {
 // it a typo renders the string "<no value>" into a machine config and Talos
 // gets a subtly wrong value instead of an error.
 func Render(name string, content []byte, ctx Context) ([]byte, error) {
+	return RenderSeeing(name, content, ctx, nil)
+}
+
+// RenderSeeing is Render, telling seen about every value the template read from
+// the environment.
+//
+// The environment is where a CI job keeps what it would not commit, so a value
+// a patch pulled out of it is, for all talman can tell, a secret it has just
+// rendered into a machine config -- and one that nothing else would let talman
+// find again when it prints that config.
+func RenderSeeing(name string, content []byte, ctx Context, seen func(string)) ([]byte, error) {
+	funcs := sprig.TxtFuncMap()
+
+	if seen != nil {
+		funcs["env"] = func(key string) string {
+			v := os.Getenv(key)
+			seen(v)
+
+			return v
+		}
+
+		funcs["expandenv"] = func(s string) string {
+			return os.Expand(s, func(key string) string {
+				v := os.Getenv(key)
+				seen(v)
+
+				return v
+			})
+		}
+	}
+
 	tmpl, err := template.New(name).
-		Funcs(sprig.TxtFuncMap()).
+		Funcs(funcs).
 		Option("missingkey=error").
 		Parse(string(content))
 	if err != nil {

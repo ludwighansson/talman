@@ -58,15 +58,33 @@ func IsEncrypted(data []byte) bool {
 // ReadFile reads path, decrypting it if it is SOPS-encrypted and returning it
 // verbatim if it is not. Plaintext is never written to disk.
 func ReadFile(path string) ([]byte, error) {
+	plaintext, _, err := Read(path)
+
+	return plaintext, err
+}
+
+// Read is ReadFile, also returning the file as it is on disk when it was
+// encrypted -- nil when it was not -- so a caller can tell which of the values
+// were the encrypted ones.
+func Read(path string) (plaintext, ciphertext []byte, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if !IsEncrypted(data) {
-		return data, nil
+		return data, nil, nil
 	}
 
+	plaintext, err = decrypt(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return plaintext, data, nil
+}
+
+func decrypt(path string) ([]byte, error) {
 	if err := Ensure(); err != nil {
 		return nil, fmt.Errorf("%s is SOPS-encrypted but %w", path, err)
 	}

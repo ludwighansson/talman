@@ -15,6 +15,7 @@ import (
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/factory"
 	"github.com/ludwighansson/talman/internal/patch"
+	"github.com/ludwighansson/talman/internal/redact"
 	"github.com/ludwighansson/talman/internal/sopsx"
 	"github.com/ludwighansson/talman/internal/talosctl"
 	"github.com/ludwighansson/talman/internal/template"
@@ -37,6 +38,14 @@ type Renderer struct {
 	// the rendered patches for the duration of a pass.
 	workspace   string
 	secretsFile string
+
+	// secrets is every secret value the pass has rendered into a config: the
+	// bundle, the values SOPS decrypted out of patches, and whatever a
+	// template read from the environment. secretsErr is why that list may be
+	// incomplete, which a caller about to print a config has to know.
+	secrets    *redact.Set
+	secretsMu  sync.Mutex
+	secretsErr error
 
 	// schematicIDs caches resolved schematics for the pass, so a file shared
 	// by fifty nodes is read, templated and hashed once.
@@ -105,6 +114,12 @@ func (r *Renderer) Open() error {
 		return err
 	}
 
+	r.secrets = redact.NewSet()
+
+	if err := r.secrets.AddBundle(plaintext); err != nil {
+		r.noteSecretsErr(fmt.Errorf("%s: %w", r.Cfg.SecretFile, err))
+	}
+
 	r.secretsFile = filepath.Join(dir, "secrets.yaml")
 
 	if err := os.WriteFile(r.secretsFile, plaintext, 0o600); err != nil {
@@ -114,6 +129,37 @@ func (r *Renderer) Open() error {
 	}
 
 	return nil
+}
+
+// Secrets returns a redactor for every secret this pass has rendered so far,
+// or an error saying why talman cannot be sure it knows them all.
+//
+// Built from what the pass already decrypted: the bundle was read once, in
+// Open, and reading it again to hide what it holds would cost a second sops
+// run -- a second KMS call, or a second touch of a hardware key.
+func (r *Renderer) Secrets() (*redact.Redactor, error) {
+	r.secretsMu.Lock()
+	err := r.secretsErr
+	r.secretsMu.Unlock()
+
+	if err != nil {
+		return nil, err
+	}
+
+	if r.secrets == nil {
+		return nil, errors.New("renderer used before Open: this is a talman bug, please report it")
+	}
+
+	return r.secrets.Redactor(), nil
+}
+
+func (r *Renderer) noteSecretsErr(err error) {
+	r.secretsMu.Lock()
+	defer r.secretsMu.Unlock()
+
+	if r.secretsErr == nil {
+		r.secretsErr = err
+	}
 }
 
 // Close removes the workspace and the decrypted secrets inside it.
@@ -210,12 +256,20 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 func (r *Renderer) renderPatch(ref config.PatchRef, ctx template.Context) ([]byte, error) {
 	// Read through sops so an individual patch holding a registry credential
 	// or a SideroLink token can be encrypted too, not just the secrets bundle.
-	raw, err := sopsx.ReadFile(ref.Path)
+	raw, ciphertext, err := sopsx.Read(ref.Path)
 	if err != nil {
 		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
 	}
 
-	rendered, err := template.Render(ref.Rel, raw, ctx)
+	// What SOPS decrypted is what the operator marked secret, and it is about
+	// to be rendered into a machine config.
+	if ciphertext != nil {
+		if err := r.secrets.AddEncrypted(ciphertext, raw); err != nil {
+			r.noteSecretsErr(fmt.Errorf("%s: cannot tell which values are encrypted: %w", ref.Rel, err))
+		}
+	}
+
+	rendered, err := template.RenderSeeing(ref.Rel, raw, ctx, func(v string) { r.secrets.Add(v) })
 	if err != nil {
 		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
 	}
@@ -370,6 +424,43 @@ func (r *Renderer) loadSchematic(ref *config.SchematicRef, base template.Context
 	}
 
 	return schematic, nil
+}
+
+// Secrets returns a redactor for the secrets a config's machine configs may
+// hold, without rendering them: the bundle and the values SOPS encrypts in
+// its patches.
+//
+// For a caller printing configs that were rendered earlier, such as `apply
+// --no-render`. What a template read from the environment at that render is
+// beyond it, because nothing recorded it.
+func Secrets(cfg *config.Config) (*redact.Redactor, error) {
+	s := redact.NewSet()
+
+	plaintext, err := sopsx.ReadFile(cfg.SecretPath())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.AddBundle(plaintext); err != nil {
+		return nil, fmt.Errorf("%s: %w", cfg.SecretFile, err)
+	}
+
+	for _, ref := range cfg.AllPatchPaths() {
+		plaintext, ciphertext, err := sopsx.Read(ref.Path)
+		if err != nil {
+			return nil, err
+		}
+
+		if ciphertext == nil {
+			continue
+		}
+
+		if err := s.AddEncrypted(ciphertext, plaintext); err != nil {
+			return nil, fmt.Errorf("%s: cannot tell which values are encrypted: %w", ref.Rel, err)
+		}
+	}
+
+	return s.Redactor(), nil
 }
 
 var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)

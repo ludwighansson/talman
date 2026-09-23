@@ -666,13 +666,18 @@ replaced before anything is printed —
 
 — by value rather than by guessing which fields are sensitive. talman decrypted
 those values and rendered them into the config it is sending, so it knows
-exactly what to look for, wherever it appears. `--redact-secrets=false` prints
-them as they are.
+exactly what to look for, wherever it appears: the secrets bundle, in both the
+base64 form it stores and the PEM blocks some of it is written out as; the
+values SOPS encrypted in any patch; and anything a patch read from the
+environment with `env` or `expandenv`. `--redact-secrets=false` prints them as
+they are.
 
 Two things follow from being exact. Secrets talman has never seen cannot be
 found this way — a node still holding a previous cluster's keys would show them
-— and if the bundle cannot be read, the diff is refused rather than printed
-unredacted.
+— and when talman cannot read them, it prints nothing it cannot vouch for. A
+`--diff` is refused before any config is sent. A `--dry-run` still answers, and
+still sets the exit code, but prints `(diff withheld: would change)` in place
+of the diff, so a drift check with only a talosconfig keeps working.
 
 For `apply` the answer comes from Talos itself: each node computes the diff and
 reports `Config diff: No changes.` when there is none. A real apply asks for
