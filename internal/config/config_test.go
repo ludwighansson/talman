@@ -344,6 +344,18 @@ clusterName: other
 			wantErr: "more than one YAML document",
 		},
 		{
+			name: "a prerelease key",
+			body: validBase + `talosMode: metal
+imageFactory:
+  secureboot: true
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "renamed secureBoot",
+		},
+		{
 			name:    "empty file",
 			body:    "",
 			wantErr: "is empty",
