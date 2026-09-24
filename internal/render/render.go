@@ -357,6 +357,17 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 		return "", err
 	}
 
+	// Keyed by the schematic, and when submitting by the factory it goes to
+	// as well: the ID is the same everywhere, but a node that names its own
+	// factory pulls its installer from there, so that factory has to be told
+	// about the schematic too.
+	key := string(canonical)
+
+	if r.Submit {
+		f := r.Cfg.ImageFactoryFor(n)
+		key = f.Protocol + "://" + f.RegistryURL + f.SchematicEndpoint + "\x00" + key
+	}
+
 	// Context is reachable without Open (validate does exactly that), so the
 	// cache is created on demand rather than assumed.
 	//
@@ -370,7 +381,7 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 		r.schematicIDs = map[string]string{}
 	}
 
-	cached, ok := r.schematicIDs[string(canonical)]
+	cached, ok := r.schematicIDs[key]
 
 	r.schemaMu.Unlock()
 
@@ -398,7 +409,7 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 	}
 
 	r.schemaMu.Lock()
-	r.schematicIDs[string(canonical)] = id
+	r.schematicIDs[key] = id
 	r.schemaMu.Unlock()
 
 	return id, nil

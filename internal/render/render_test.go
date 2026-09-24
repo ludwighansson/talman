@@ -1,13 +1,17 @@
 package render
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/factory"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -544,5 +548,56 @@ func TestWriteTalosconfigCreatesTheOutputDirectory(t *testing.T) {
 
 	if !strings.Contains(string(ignore), "\n*\n") {
 		t.Errorf("ineffective .gitignore:\n%s", ignore)
+	}
+}
+
+// TestSubmitReachesEveryFactory: a node can name its own Image Factory, and
+// --submit has to register the schematic with each one its nodes pull from.
+// The ID is the same everywhere, so a cache keyed by the schematic alone sent
+// it to the first node's factory and none of the others.
+func TestSubmitReachesEveryFactory(t *testing.T) {
+	hits := map[string]int{}
+
+	var mu sync.Mutex
+
+	factoryServer := func(name string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			hits[name]++
+			mu.Unlock()
+
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"` + factory.VanillaID + `"}`))
+		}))
+	}
+
+	a, b := factoryServer("a"), factoryServer("b")
+	defer a.Close()
+	defer b.Close()
+
+	host := func(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
+
+	cfg := &config.Config{
+		ClusterName:  "t",
+		TalosVersion: "v1.14.1",
+		ImageFactory: factory.Config{RegistryURL: host(a), Protocol: "http"}.WithDefaults(),
+		Schematic:    &config.SchematicRef{Inline: &factory.Schematic{}},
+		Nodes: []config.Node{
+			{Hostname: "c1", Role: config.RoleControlPlane},
+			{Hostname: "c2", Role: config.RoleControlPlane},
+			{Hostname: "w1", Role: config.RoleWorker, ImageFactory: &factory.Config{RegistryURL: host(b)}},
+		},
+	}
+
+	r := &Renderer{Cfg: cfg, Submit: true}
+
+	for i := range cfg.Nodes {
+		if _, err := r.Context(&cfg.Nodes[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if hits["a"] != 1 || hits["b"] != 1 {
+		t.Errorf("submissions per factory = %v, want one each", hits)
 	}
 }
