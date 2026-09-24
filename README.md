@@ -175,7 +175,19 @@ development/
 Relative patch paths resolve against the directory holding `talman.yaml`, so
 `../base/patches/…` works and shared patches need no duplication.
 
-See [`example/`](example/) for a working tree.
+See [`example/`](example/) for a working tree, or start one:
+
+```console
+$ talman init prod --controlplane cp-01=10.0.0.11 --worker w-01=10.0.0.21 \
+    --endpoint https://10.0.0.10:6443 --age age1…
+wrote prod/talman.yaml
+wrote prod/.sops.yaml
+```
+
+The Talos and Kubernetes versions default to what the `talosctl` on `PATH`
+generates, and the endpoint to the first control plane's address — name a VIP
+or a load balancer with `--endpoint` for more than one. `init` writes no
+secrets, and never overwrites a file.
 
 ## Configuration
 
@@ -413,6 +425,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 
 | Command | |
 | --- | --- |
+| `talman init [dir]` | start a cluster directory: `talman.yaml`, and `.sops.yaml` with `--age` |
 | `talman validate` | check keys, paths and templates; needs no secrets, keys or network |
 | `talman patches` | the resolved patch chain per node, in application order |
 | `talman status` | the node table, with what each one is running (`--offline` asks nothing) |
