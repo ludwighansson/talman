@@ -1115,6 +1115,8 @@ Pull requests are welcome, and any help at all is appreciated — including bug
 reports, and telling me when an error message or a sentence in these docs sent
 you the wrong way. See [CONTRIBUTING.md](CONTRIBUTING.md), and the
 [Code of Conduct](CODE_OF_CONDUCT.md) that everyone taking part follows.
+Security issues go through [SECURITY.md](SECURITY.md) rather than the issue
+tracker.
 
 ## License
 
