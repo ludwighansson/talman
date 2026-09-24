@@ -273,7 +273,7 @@ func partialRotation(cfg *config.Config, tc, rotated string) string {
 func finishByHand(cfg *config.Config, talosconfig string) string {
 	return fmt.Sprintf("  finish by hand before the next apply:\n"+
 		"    talosctl --talosconfig %s --nodes <control plane> read /system/state/config.yaml > cp.yaml\n"+
-		"    talman secrets generate --force --from-controlplane-config cp.yaml\n"+
+		"    talman secrets generate --force --from-controlplane-config cp.yaml    # rewrites %s\n"+
 		"    rm cp.yaml    # it holds every key in the bundle",
-		render.Rel(talosconfig))
+		render.Rel(talosconfig), cfg.SecretFile)
 }
