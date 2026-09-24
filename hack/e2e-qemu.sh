@@ -395,6 +395,14 @@ main() {
 	await 900 "the control plane is running $to_version" settled "$cluster-controlplane-1"
 	expect_exit 0 "health after the control plane upgrade" "$talman" health
 
+	step "a staged apply, and the rolling reboot that lands it"
+	# A reboot is the other thing docker cannot do. Staged changes nothing
+	# until one, so the pair is the roll-out `talman reboot` exists for.
+	expect_exit 0 "apply --mode=staged" "$talman" apply --mode=staged
+	expect_exit 0 "reboot --health" "$talman" reboot --health --timeout=10m
+	await 600 "every node is back" settled "$cluster-worker-1"
+	expect_exit 0 "health after the reboot" "$talman" health
+
 	step "reset returns the worker to maintenance mode"
 	# EPHEMERAL and STATE, and a reboot: the node keeps Talos and loses its
 	# config, which is what "maintenance mode" means and what the old default
