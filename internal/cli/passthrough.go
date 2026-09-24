@@ -81,7 +81,7 @@ talosctl's exit status is talman's.`,
 			c := interrupt.Command(cfg.Talosctl, argv...)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 
-			if err := c.Run(); err != nil {
+			if err := interrupt.Run(c); err != nil {
 				var exitErr *exec.ExitError
 				if errors.As(err, &exitErr) {
 					return exitCodeError{exitErr.ExitCode()}

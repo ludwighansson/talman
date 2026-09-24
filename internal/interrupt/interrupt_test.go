@@ -9,6 +9,59 @@ import (
 	"time"
 )
 
+// TestForcedExitKillsChildren is the second signal's half: a child still
+// running is killed rather than left behind. It runs before the cancelling
+// test below, which leaves Context done for everything after it.
+func TestForcedExitKillsChildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX sleep")
+	}
+
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("no sleep binary")
+	}
+
+	done := make(chan error, 1)
+
+	go func() { done <- Run(Command("sleep", "30")) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for {
+		mu.Lock()
+		n := len(running)
+		mu.Unlock()
+
+		if n > 0 {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatal("the child was never recorded as running")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	killRunning()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a killed child reported success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the child survived killRunning")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(running) != 0 {
+		t.Errorf("%d process(es) still recorded after exiting", len(running))
+	}
+}
+
 // One test, because cancelling is one-way: once Context is done it stays
 // done for the rest of the package's run.
 func TestCancelStopsChildrenAndWaits(t *testing.T) {
