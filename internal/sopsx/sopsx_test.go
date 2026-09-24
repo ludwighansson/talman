@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -191,8 +192,46 @@ func TestDecryptFailsWithoutTheKey(t *testing.T) {
 	t.Setenv("SOPS_AGE_KEY", "")
 	t.Setenv("SOPS_AGE_KEY_FILE", filepath.Join(dir, "nonexistent"))
 
-	if _, err := ReadFile(dest); err == nil {
+	_, err = ReadFile(dest)
+	if err == nil {
 		t.Fatal("ReadFile succeeded without the age identity")
+	}
+
+	if !errors.Is(err, ErrNoKey) {
+		t.Errorf("ReadFile() = %v, want it to be ErrNoKey", err)
+	}
+}
+
+// A file the key opens but that has been damaged is a different failure from
+// having no key, and must not be mistaken for one: validate forgives the
+// second and has to report the first.
+func TestDamagedFileIsNotMissingKey(t *testing.T) {
+	requireSops(t)
+
+	dir := newKeyedDir(t, `\.sops\.yaml$`)
+	dest := filepath.Join(dir, "secrets.sops.yaml")
+
+	encrypted, err := EncryptTo([]byte(secretBundle), dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The value's ciphertext, replaced: sops reads the file, finds the key,
+	// and fails to authenticate what it decrypts.
+	damaged := regexp.MustCompile(`id: ENC\[AES256_GCM,data:[^,]*`).
+		ReplaceAll(encrypted, []byte("id: ENC[AES256_GCM,data:AAAA"))
+
+	if err := os.WriteFile(dest, damaged, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ReadFile(dest)
+	if err == nil {
+		t.Fatal("ReadFile succeeded on a damaged file")
+	}
+
+	if errors.Is(err, ErrNoKey) {
+		t.Errorf("a damaged file was reported as a missing key: %v", err)
 	}
 }
 
