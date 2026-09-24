@@ -149,11 +149,19 @@ func (c *Config) KubeconfigPath() string {
 	return filepath.Join(c.OutputPath(), "kubeconfig")
 }
 
+// EnvConfig names the config file when -c does not, so a CI job can set it
+// once for every step.
+const EnvConfig = "TALMAN_CONFIG"
+
 // FindConfig locates a config file: the explicit path if given, else
-// talman.yaml in the working directory.
+// $TALMAN_CONFIG, else talman.yaml in the working directory.
 func FindConfig(explicit string) string {
 	if explicit != "" {
 		return explicit
+	}
+
+	if env := os.Getenv(EnvConfig); env != "" {
+		return env
 	}
 
 	return DefaultFileName

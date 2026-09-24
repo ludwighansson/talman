@@ -49,7 +49,15 @@ var opts globals
 func Execute() int {
 	defer interrupt.Watch()()
 
-	err := newRootCmd().ExecuteContext(interrupt.Context())
+	return run(os.Args[1:])
+}
+
+// run executes one command line and maps its outcome to an exit code.
+func run(args []string) int {
+	root := newRootCmd()
+	root.SetArgs(args)
+
+	err := root.ExecuteContext(interrupt.Context())
 
 	if interrupt.Interrupted() {
 		if err != nil && !errors.Is(err, errChanged) {
@@ -96,7 +104,7 @@ release.`,
 	}
 
 	cmd.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "",
-		"path to the talman config (default "+config.DefaultFileName+")")
+		"path to the talman config (default $"+config.EnvConfig+", else "+config.DefaultFileName+")")
 	cmd.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false,
 		"echo each talosctl invocation")
 	addMetricsFlags(cmd)
@@ -223,7 +231,7 @@ func ensureTalosconfig(cfg *config.Config) (string, error) {
 //
 // Every flag that was set, not a list of the ones that seemed to matter: a
 // hint that drops --dry-run resumes as a real apply, and one that drops
-// --wipe-disk or --stage runs a different operation from the one that
+// --wipe-disk or --mode=staged runs a different operation from the one that
 // stopped. except names flags the hint handles itself -- the node list -- or
 // that should be asked again, like --yes.
 func replayFlags(cmd *cobra.Command, except ...string) []string {
@@ -306,8 +314,10 @@ type renderContext struct {
 	InstallerImage string
 }
 
-func printPerNode(cmd *cobra.Command, nodes []string, submit bool,
-	emit func(*tabwriter.Writer, string, renderContext),
+// printPerNode prints one value per node: a two-column table, or with
+// -o json a list of {"hostname": ..., field: value}.
+func printPerNode(cmd *cobra.Command, nodes []string, submit bool, output outputFormat,
+	field string, value func(renderContext) string,
 ) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -323,6 +333,7 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool,
 	r := &render.Renderer{Cfg: cfg, Submit: submit}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	rows := []map[string]string{}
 
 	for _, n := range targets {
 		ctx, err := r.Context(n)
@@ -330,10 +341,22 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool,
 			return err
 		}
 
-		emit(w, n.Hostname, renderContext{
+		v := value(renderContext{
 			SchematicID:    ctx.Node.SchematicID,
 			InstallerImage: ctx.Node.InstallerImage,
 		})
+
+		if output.json() {
+			rows = append(rows, map[string]string{"hostname": n.Hostname, field: v})
+
+			continue
+		}
+
+		fmt.Fprintf(w, "%s\t%s\n", n.Hostname, v)
+	}
+
+	if output.json() {
+		return writeJSON(cmd.OutOrStdout(), map[string]any{"nodes": rows})
 	}
 
 	return w.Flush()

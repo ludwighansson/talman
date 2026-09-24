@@ -1,9 +1,6 @@
 package cli
 
 import (
-	"fmt"
-	"text/tabwriter"
-
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +19,7 @@ func newImageURLCmd() *cobra.Command {
 	var (
 		nodes  []string
 		submit bool
+		output outputFormat
 	)
 
 	cmd := &cobra.Command{
@@ -33,13 +31,12 @@ rendered from imageFactory.installerURLTmpl.
 This is the same value patches see as .Node.InstallerImage.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return printPerNode(cmd, nodes, submit, func(w *tabwriter.Writer, hostname string, ctx renderContext) {
-				fmt.Fprintf(w, "%s\t%s\n", hostname, ctx.InstallerImage)
-			})
+			return printPerNode(cmd, nodes, submit, output, "installerImage", func(ctx renderContext) string { return ctx.InstallerImage })
 		},
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	addOutputFlag(cmd, &output)
 	cmd.Flags().BoolVar(&submit, "submit", false, "register the schematic with the Image Factory first")
 
 	return cmd

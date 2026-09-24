@@ -18,6 +18,7 @@ func newStatusCmd() *cobra.Command {
 		parallel int
 		offline  bool
 		wide     bool
+		output   outputFormat
 	)
 
 	cmd := &cobra.Command{
@@ -38,6 +39,9 @@ A node that has not been adopted answers on the maintenance service and is
 reported as such rather than as a failure; one that answers nothing is
 unreachable. Anything talman could not read is shown as "-", never as the
 configured value, because this command exists to say what is actually there.
+
+-o json prints the same report for a script: every node, with what it is
+running and what the config wants side by side, and full schematic IDs.
 
 It reports and always succeeds. "talman health" is the one that passes or
 fails.
@@ -80,6 +84,20 @@ be forwarded to.`,
 			reports, err := statusReports(cfg, tal, tc, targets, parallel)
 			if err != nil {
 				return err
+			}
+
+			if output.json() {
+				report := statusJSON{Nodes: make([]nodeJSON, 0, len(reports))}
+
+				for _, r := range reports {
+					report.Nodes = append(report.Nodes, r.json(cfg))
+				}
+
+				if !offline && quiet(reports) && askCluster(cfg, tal, tc) == clusterAbsent {
+					report.Bootstrapped = new(false)
+				}
+
+				return writeJSON(cmd.OutOrStdout(), report)
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
@@ -126,6 +144,7 @@ be forwarded to.`,
 	cmd.Flags().BoolVar(&offline, "offline", false,
 		"ask nothing: report what the config says, with a dash for what only a node could tell")
 	cmd.Flags().BoolVar(&wide, "wide", false, "add the schematic column")
+	addOutputFlag(cmd, &output)
 	addParallelFlag(cmd, &parallel, defaultParallel, "how many nodes to ask at once")
 
 	return cmd
@@ -147,6 +166,68 @@ type nodeReport struct {
 	wantTalos      string
 	wantSchematic  string
 	wantKubernetes string
+}
+
+// statusJSON is `status -o json`.
+type statusJSON struct {
+	Nodes []nodeJSON `json:"nodes"`
+	// Bootstrapped is false when the control planes answered that no etcd is
+	// running, and absent when that was not asked or not known.
+	Bootstrapped *bool `json:"bootstrapped,omitempty"`
+}
+
+type nodeJSON struct {
+	Hostname  string   `json:"hostname"`
+	IPAddress string   `json:"ipAddress"`
+	Role      string   `json:"role"`
+	Groups    []string `json:"groups"`
+	Patches   int      `json:"patches"`
+	// Status is running, maintenance or unreachable; absent offline.
+	Status     string    `json:"status,omitempty"`
+	Talos      versionAt `json:"talos"`
+	Kubernetes versionAt `json:"kubernetes"`
+	Schematic  versionAt `json:"schematic"`
+}
+
+// versionAt pairs what a node runs with what the config resolves to. Running
+// is absent when talman could not read it, or did not ask.
+type versionAt struct {
+	Running    string `json:"running,omitempty"`
+	Configured string `json:"configured"`
+}
+
+func (r nodeReport) json(cfg *config.Config) nodeJSON {
+	out := nodeJSON{
+		Hostname:   r.Node.Hostname,
+		IPAddress:  r.Node.IPAddress,
+		Role:       string(r.Node.Role),
+		Groups:     r.Node.Groups,
+		Patches:    len(cfg.PatchChain(r.Node)),
+		Talos:      versionAt{Configured: r.wantTalos},
+		Kubernetes: versionAt{Configured: withV(r.wantKubernetes)},
+		Schematic:  versionAt{Configured: r.wantSchematic},
+	}
+
+	if out.Groups == nil {
+		out.Groups = []string{}
+	}
+
+	if r.asked {
+		out.Status = map[talosctl.Mode]string{
+			talosctl.ModeRunning:     "running",
+			talosctl.ModeMaintenance: "maintenance",
+		}[r.Mode]
+
+		if out.Status == "" {
+			out.Status = "unreachable"
+		}
+
+		out.Talos.Running = r.State.TalosVersion
+		out.Kubernetes.Running = withV(r.K8s)
+		out.Schematic.Running = r.State.SchematicID
+	}
+
+	return out
 }
 
 // status is the STATUS cell. Offline it is a dash rather than a guess: what a

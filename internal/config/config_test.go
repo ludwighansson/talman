@@ -718,3 +718,21 @@ nodes:
 		t.Errorf("validation mode for a metal node = %q, want metal", got)
 	}
 }
+
+func TestFindConfig(t *testing.T) {
+	t.Setenv(EnvConfig, "")
+
+	if got := FindConfig(""); got != DefaultFileName {
+		t.Errorf("FindConfig(\"\") = %q, want %q", got, DefaultFileName)
+	}
+
+	t.Setenv(EnvConfig, "clusters/prod/talman.yaml")
+
+	if got := FindConfig(""); got != "clusters/prod/talman.yaml" {
+		t.Errorf("FindConfig(\"\") = %q, want $%s", got, EnvConfig)
+	}
+
+	if got := FindConfig("explicit.yaml"); got != "explicit.yaml" {
+		t.Errorf("FindConfig(explicit) = %q; -c must win over the environment", got)
+	}
+}

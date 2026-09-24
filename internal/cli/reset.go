@@ -229,7 +229,7 @@ cluster to leave.`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().BoolVar(&graceful, "graceful", true, "leave etcd cleanly before resetting")
 	cmd.Flags().BoolVar(&direct, "direct", true,
 		"reach each node at its own address instead of proxying through the talosconfig endpoints")

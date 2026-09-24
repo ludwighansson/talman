@@ -16,6 +16,7 @@ func newHealthCmd() *cobra.Command {
 	var (
 		node       string
 		serverSide bool
+		timeout    time.Duration
 		extraFlags []string
 	)
 
@@ -44,10 +45,10 @@ The check runs from one control plane node -- the first in the config unless
 				}
 			}
 
-			// No bound here: `talman health` was asked for on purpose, and
+			// Unbounded unless asked: `talman health` was run on purpose, and
 			// talosctl's own patience is the right default for a command
 			// whose whole job is to wait for a cluster.
-			args := append(healthArgs(cfg, tc, target, serverSide, 0), extraFlags...)
+			args := append(healthArgs(cfg, tc, target, serverSide, timeout), extraFlags...)
 
 			return tal.Stream(args...)
 		},
@@ -55,6 +56,8 @@ The check runs from one control plane node -- the first in the config unless
 
 	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to run the check from (default: the first one)")
 	cmd.Flags().BoolVar(&serverSide, "server", true, "run the health check on the node rather than the client")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0,
+		"how long to wait for the cluster to become healthy (0: talosctl's own default)")
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
