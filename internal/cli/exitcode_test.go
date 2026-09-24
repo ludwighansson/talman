@@ -55,7 +55,12 @@ case " $* " in
 *" rotate-ca "*) echo "would rotate" ;;
 *" read /system/state/config.yaml"*) echo "machine: {ca: new}" ;;
 *" gen secrets "*) echo "bundle: rotated" ;;
-*" etcd snapshot "*) eval "out=\${$#}"; umask 022; echo "snapshot" > "$out" ;;
+*" etcd snapshot "*)
+	eval "out=\${$#}"
+	# What another user on the host would see while the stream runs.
+	ls -ld "$(dirname "$out")" | cut -c1-10 >> "$STUB_LOG.dirmode"
+	umask 022
+	echo "snapshot" > "$out" ;;
 *" version "*)
 	running=v1.14.1
 	case " $* " in *" $STUB_STALE "*) running=v1.13.0 ;; esac
@@ -289,6 +294,15 @@ func TestEtcdSnapshot(t *testing.T) {
 
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("snapshot is %o, want 600", perm)
+	}
+
+	// While talosctl wrote it, it was in a directory no one else can enter.
+	if modes, _ := os.ReadFile(log + ".dirmode"); !strings.HasPrefix(string(modes), "drwx------") {
+		t.Errorf("talosctl streamed the snapshot into a directory with mode %q", modes)
+	}
+
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, "clusterconfig", ".talman-snapshot-*")); len(leftovers) > 0 {
+		t.Errorf("staging directories left behind: %v", leftovers)
 	}
 
 	named := filepath.Join(dir, "before.db")
