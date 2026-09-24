@@ -50,6 +50,7 @@ cannot, so validate runs without decryption keys too.`,
 			// Encrypted patches sops could not open, by path, reported once
 			// each rather than once per node that uses them.
 			undecryptable := map[string]error{}
+			patches := patchReader{undecryptable: undecryptable}
 
 			for i := range cfg.Nodes {
 				n := &cfg.Nodes[i]
@@ -62,7 +63,7 @@ cannot, so validate runs without decryption keys too.`,
 				}
 
 				for _, ref := range cfg.PatchChain(n) {
-					raw, err := readPatch(ref, undecryptable)
+					raw, err := patches.read(ref)
 					if err != nil {
 						problems = append(problems, fmt.Errorf("node %s: %w", n.Hostname, err))
 
@@ -106,38 +107,48 @@ cannot, so validate runs without decryption keys too.`,
 	return cmd
 }
 
-// readPatch reads a patch, decrypting it if it is encrypted. An encrypted
-// patch this machine has no means to decrypt -- no key for it, or no sops at
-// all -- is recorded in undecryptable and returned as nil: validate promises
-// to need no secrets, so lacking them is a limit on what it checks, not a
-// problem in the config. Any other failure is one: a file the key opens but
-// sops cannot, from a bad merge or a hand edit, is broken for everyone.
-func readPatch(ref config.PatchRef, undecryptable map[string]error) ([]byte, error) {
-	if _, seen := undecryptable[ref.Rel]; seen {
-		return nil, nil
+// patchReader reads each patch once however many nodes use it: a patch in
+// `all` on a fifty-node cluster is one file, and decrypting it fifty times
+// would be fifty KMS calls, or fifty touches of a hardware key.
+type patchReader struct {
+	read1 map[string]patchRead
+	// undecryptable is every encrypted patch this machine has no means to
+	// decrypt, by the path the config wrote -- for the note at the end.
+	undecryptable map[string]error
+}
+
+type patchRead struct {
+	data []byte
+	err  error
+}
+
+// read reads a patch, decrypting it if it is encrypted. An encrypted patch
+// this machine has no means to decrypt -- no key for it, or no sops at all --
+// is recorded in undecryptable and returned as nil: validate promises to need
+// no secrets, so lacking them is a limit on what it checks, not a problem in
+// the config. Any other failure is one: a file the key opens but sops cannot,
+// from a bad merge or a hand edit, is broken for everyone.
+func (p *patchReader) read(ref config.PatchRef) ([]byte, error) {
+	if p.read1 == nil {
+		p.read1 = map[string]patchRead{}
 	}
 
-	data, err := os.ReadFile(ref.Path)
-	if err != nil {
-		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+	got, ok := p.read1[ref.Path]
+	if !ok {
+		got.data, got.err = sopsx.ReadFile(ref.Path)
+		p.read1[ref.Path] = got
 	}
 
-	if !sopsx.IsEncrypted(data) {
-		return data, nil
-	}
-
-	plaintext, err := sopsx.ReadFile(ref.Path)
-
-	switch {
+	switch err := got.err; {
 	case errors.Is(err, sopsx.ErrNoKey), errors.Is(err, sopsx.ErrNotInstalled):
-		undecryptable[ref.Rel] = err
+		p.undecryptable[ref.Rel] = err
 
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
 	}
 
-	return plaintext, nil
+	return got.data, nil
 }
 
 func checkPatch(ref config.PatchRef, raw []byte, ctx template.Context) error {

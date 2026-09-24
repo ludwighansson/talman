@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -42,6 +43,12 @@ nodes:
   - hostname: c1
     ipAddress: 10.0.0.1
     role: controlplane
+  - hostname: c2
+    ipAddress: 10.0.0.2
+    role: controlplane
+  - hostname: w1
+    ipAddress: 10.0.0.3
+    role: worker
 `,
 	}
 
@@ -73,8 +80,32 @@ nodes:
 
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 
+	// Counted through a wrapper: one decryption per file, however many
+	// nodes the patch reaches.
+	counter := filepath.Join(dir, "sops-calls")
+	wrapper := filepath.Join(dir, "sops-counting")
+
+	real, err := exec.LookPath(sopsx.Bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	script := "#!/bin/sh\necho x >> " + counter + "\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	saved := sopsx.Bin
+	sopsx.Bin = wrapper
+
+	t.Cleanup(func() { sopsx.Bin = saved })
+
 	if got := run([]string{"validate"}); got != 0 {
 		t.Errorf("with the key: exit %d", got)
+	}
+
+	if calls, _ := os.ReadFile(counter); strings.Count(string(calls), "x") != 1 {
+		t.Errorf("sops ran %d times for one patch on three nodes, want 1", strings.Count(string(calls), "x"))
 	}
 
 	t.Setenv("SOPS_AGE_KEY", "")
