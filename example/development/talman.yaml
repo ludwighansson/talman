@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ludwighansson/talman/main/schema/talman.v1.json
 ---
 apiVersion: talman.dev/v1       # the schema this file is written against
 clusterName: development

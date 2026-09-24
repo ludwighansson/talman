@@ -243,6 +243,17 @@ Unknown keys are an error. In a config whose job is to route patch files, a
 mistyped key that got ignored would mean a machine config quietly missing a
 patch.
 
+For completion and checking as you type, point your editor at the published
+[JSON schema](schema/talman.v1.json). With the YAML language server — VS Code's
+YAML extension, Neovim, Helix, Zed — that is one line at the top of the file:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ludwighansson/talman/main/schema/talman.v1.json
+```
+
+The schema is generated from the types talman decodes into, and a test fails
+when the two disagree.
+
 ### The Image Factory
 
 `imageFactory` says where installer images come from and how their references

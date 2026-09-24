@@ -1,0 +1,325 @@
+{
+  "$defs": {
+    "customization": {
+      "additionalProperties": false,
+      "properties": {
+        "bootloader": {
+          "enum": [
+            "none",
+            "dual-boot",
+            "sd-boot",
+            "grub"
+          ]
+        },
+        "diskImage": {
+          "$ref": "#/$defs/diskImage"
+        },
+        "embeddedMachineConfiguration": {
+          "type": "string"
+        },
+        "extraKernelArgs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "meta": {
+          "items": {
+            "$ref": "#/$defs/metaValue"
+          },
+          "type": "array"
+        },
+        "secureboot": {
+          "$ref": "#/$defs/schematicSecureBoot"
+        },
+        "systemExtensions": {
+          "$ref": "#/$defs/systemExtensions"
+        }
+      },
+      "type": "object"
+    },
+    "diskImage": {
+      "additionalProperties": false,
+      "properties": {
+        "sectorSize": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "imageFactory": {
+      "additionalProperties": false,
+      "properties": {
+        "installerURLTmpl": {
+          "description": "The installer image reference, as a Go template over .RegistryURL, .ID, .Version, .Platform and .SecureBoot.",
+          "type": "string"
+        },
+        "platform": {
+          "description": "The installer's platform: metal, openstack, aws, …. Default: metal.",
+          "type": "string"
+        },
+        "protocol": {
+          "description": "The protocol schematics are submitted over. Default: https.",
+          "type": "string"
+        },
+        "registryURL": {
+          "description": "The Image Factory host. Default: factory.talos.dev.",
+          "type": "string"
+        },
+        "schematicEndpoint": {
+          "description": "The path schematics are submitted to. Default: /schematics.",
+          "type": "string"
+        },
+        "secureBoot": {
+          "description": "Use the secure boot installer. Default: false.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "metaValue": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
+    "node": {
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "description": "Groups whose patches this node receives, applied in this order after its role's.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "hostname": {
+          "description": "An RFC 1123 host name: the Kubernetes node name, and the rendered file's name.",
+          "type": "string"
+        },
+        "imageFactory": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/imageFactory"
+            }
+          ],
+          "description": "Overrides the cluster's imageFactory key by key for this node."
+        },
+        "ipAddress": {
+          "description": "The address talman reaches the node at.",
+          "type": "string"
+        },
+        "patches": {
+          "description": "This node's own patches, applied last.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "role": {
+          "description": "controlplane or worker.",
+          "enum": [
+            "controlplane",
+            "worker"
+          ]
+        },
+        "schematic": {
+          "description": "Overrides the cluster's schematic for this node.",
+          "oneOf": [
+            {
+              "description": "A path to a schematic file.",
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/schematic"
+            }
+          ]
+        },
+        "schematicID": {
+          "description": "Overrides the cluster's schematic with an ID for this node.",
+          "type": "string"
+        },
+        "talosVersion": {
+          "description": "Overrides the cluster's talosVersion for this node.",
+          "type": "string"
+        },
+        "values": {
+          "description": "Free-form data, available to this node's patch templates as .Node.Values.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "hostname",
+        "ipAddress",
+        "role"
+      ],
+      "type": "object"
+    },
+    "overlay": {
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "options": {
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "schematic": {
+      "additionalProperties": false,
+      "properties": {
+        "customization": {
+          "$ref": "#/$defs/customization"
+        },
+        "overlay": {
+          "$ref": "#/$defs/overlay"
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "schematicSecureBoot": {
+      "additionalProperties": false,
+      "properties": {
+        "enrollKeys": {
+          "type": "string"
+        },
+        "includeWellKnownCertificates": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "systemExtensions": {
+      "additionalProperties": false,
+      "properties": {
+        "officialExtensions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/ludwighansson/talman/main/schema/talman.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A talman cluster config, schema talman.dev/v1.",
+  "properties": {
+    "apiVersion": {
+      "const": "talman.dev/v1",
+      "description": "The schema this file is written against."
+    },
+    "clusterName": {
+      "description": "The cluster's name, as talosctl gen config takes it.",
+      "type": "string"
+    },
+    "endpoint": {
+      "description": "The Kubernetes API URL: https, with a port.",
+      "type": "string"
+    },
+    "imageFactory": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/imageFactory"
+        }
+      ],
+      "description": "Where installer images come from and how their references are spelled."
+    },
+    "kubernetesVersion": {
+      "description": "The Kubernetes version configs are rendered for, and upgrade-k8s upgrades to.",
+      "type": "string"
+    },
+    "nodes": {
+      "description": "Every machine in the cluster.",
+      "items": {
+        "$ref": "#/$defs/node"
+      },
+      "type": "array"
+    },
+    "outputDir": {
+      "description": "Where rendered configs, the talosconfig and the kubeconfig are written. Default: clusterconfig.",
+      "type": "string"
+    },
+    "patches": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "description": "Patch files by group: all, controlplane, worker, or a group some node declares. Applied in that order.",
+      "type": "object"
+    },
+    "schematic": {
+      "description": "The Image Factory schematic: inline, or a path to a (templated) file.",
+      "oneOf": [
+        {
+          "description": "A path to a schematic file.",
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/schematic"
+        }
+      ]
+    },
+    "schematicID": {
+      "description": "A schematic ID to use as is, instead of a schematic.",
+      "type": "string"
+    },
+    "secretFile": {
+      "description": "The (usually SOPS-encrypted) Talos secrets bundle. Default: secrets.sops.yaml.",
+      "type": "string"
+    },
+    "talosVersion": {
+      "description": "The Talos version contract configs are rendered for. Pinning it makes renders reproducible.",
+      "type": "string"
+    },
+    "talosctl": {
+      "description": "The talosctl binary talman drives. Default: talosctl on PATH.",
+      "type": "string"
+    },
+    "validationMode": {
+      "description": "The talosctl validate --mode. Default: metal for the metal platform, cloud otherwise.",
+      "type": "string"
+    },
+    "values": {
+      "description": "Free-form data, available to every patch template as .Values.",
+      "type": "object"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "clusterName",
+    "endpoint",
+    "talosVersion",
+    "kubernetesVersion",
+    "nodes"
+  ],
+  "title": "talman.yaml",
+  "type": "object"
+}
