@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -78,8 +80,12 @@ cannot, so validate runs without decryption keys too.`,
 			}
 
 			for _, rel := range slices.Sorted(maps.Keys(undecryptable)) {
-				fmt.Fprintf(os.Stderr, "note: %s is encrypted and could not be decrypted, so its template "+
-					"was not checked: %v\n", rel, undecryptable[rel])
+				// The first line: sops follows it with every key it tried,
+				// which is a lot to repeat for a note.
+				why, _, _ := strings.Cut(undecryptable[rel].Error(), "\n")
+
+				fmt.Fprintf(os.Stderr, "note: %s is encrypted and cannot be decrypted here, "+
+					"so its template was not checked (%s)\n", rel, why)
 			}
 
 			if len(problems) > 0 {
@@ -101,10 +107,11 @@ cannot, so validate runs without decryption keys too.`,
 }
 
 // readPatch reads a patch, decrypting it if it is encrypted. An encrypted
-// patch sops cannot decrypt -- no key here, no sops at all -- is recorded in
-// undecryptable and returned as nil: validate promises to need no secrets, so
-// being unable to read one is a limit on what it checks, not a problem in the
-// config.
+// patch this machine has no means to decrypt -- no key for it, or no sops at
+// all -- is recorded in undecryptable and returned as nil: validate promises
+// to need no secrets, so lacking them is a limit on what it checks, not a
+// problem in the config. Any other failure is one: a file the key opens but
+// sops cannot, from a bad merge or a hand edit, is broken for everyone.
 func readPatch(ref config.PatchRef, undecryptable map[string]error) ([]byte, error) {
 	if _, seen := undecryptable[ref.Rel]; seen {
 		return nil, nil
@@ -120,10 +127,14 @@ func readPatch(ref config.PatchRef, undecryptable map[string]error) ([]byte, err
 	}
 
 	plaintext, err := sopsx.ReadFile(ref.Path)
-	if err != nil {
+
+	switch {
+	case errors.Is(err, sopsx.ErrNoKey), errors.Is(err, sopsx.ErrNotInstalled):
 		undecryptable[ref.Rel] = err
 
-		return nil, nil //nolint:nilerr // recorded above; an unreadable secret limits the check, it does not fail it
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
 	}
 
 	return plaintext, nil

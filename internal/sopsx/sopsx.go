@@ -29,6 +29,15 @@ var Bin = "sops"
 // ErrNotInstalled is returned when the sops binary cannot be found.
 var ErrNotInstalled = errors.New("sops not found on PATH")
 
+// ErrNoKey is returned when sops finds none of the keys a file is encrypted
+// to: no identity for it here, which is a fact about this machine rather than
+// about the file.
+var ErrNoKey = errors.New("no key available to decrypt it")
+
+// exitNoKey is sops' exit status for "failed to get the data key required to
+// decrypt the SOPS file" (codes.CouldNotRetrieveKey).
+const exitNoKey = 128
+
 // Ensure reports whether the sops binary is usable, with a message that says
 // what to do about it.
 func Ensure() error {
@@ -93,6 +102,11 @@ func decrypt(path string) ([]byte, error) {
 
 	plaintext, stderr, err := run("decrypt", "--input-type", "yaml", "--output-type", "yaml", path)
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == exitNoKey {
+			return nil, fmt.Errorf("decrypting %s: %w: %s", path, ErrNoKey, describe(stderr, err))
+		}
+
 		return nil, fmt.Errorf("decrypting %s: %s", path, describe(stderr, err))
 	}
 
