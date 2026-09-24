@@ -97,6 +97,19 @@ go_binary() {
 	printf '%s' "$best"
 }
 
+# as_root_go runs Go with root's own module and build caches.
+#
+# `sudo -E`, which is how this script is meant to be run, keeps the invoking
+# user's HOME, and Go puts its caches under HOME: so a build here used to fill
+# that user's ~/go with root-owned files, and the next thing to run Go as that
+# user -- a CI runner's setup-go, say -- failed on permission denied.
+as_root_go() {
+	local home=/root
+
+	env HOME="$home" GOPATH="$home/go" GOCACHE="$home/.cache/go-build" \
+		GOMODCACHE="$home/go/pkg/mod" CGO_ENABLED=0 "$@"
+}
+
 # install_go fetches the toolchain this module needs.
 #
 # Not from apt: Ubuntu 24.04 ships a Go far older than go.mod asks for, and a
@@ -122,7 +135,7 @@ install_go() {
 	curl -fsSL "https://go.dev/dl/go${want}.linux-amd64.tar.gz" | tar -C /usr/local -xz
 
 	# So the first real run does not spend its time fetching modules.
-	(cd "$repo" && CGO_ENABLED=0 /usr/local/go/bin/go mod download) || true
+	(cd "$repo" && as_root_go /usr/local/go/bin/go mod download) || true
 }
 
 # talman_binary finds talman, or builds it from the repository this script
@@ -160,11 +173,11 @@ talman_binary() {
 
 	mkdir -p "$workdir"
 
-	# CGO_ENABLED=0 because talman needs no C and this machine has no C
+	# as_root_go builds with CGO_ENABLED=0, because talman needs no C and this machine has no C
 	# headers: gcc without libc6-dev turns a pure Go build into a wall of
 	# missing stdlib.h. It is also how the released binaries are built, so
 	# what this tests is what ships.
-	if ! CGO_ENABLED=0 "$go" build -o "$workdir/talman" "$repo/cmd/talman" >&2; then
+	if ! as_root_go "$go" build -o "$workdir/talman" "$repo/cmd/talman" >&2; then
 		printf 'building talman from %s failed; the compiler said why above\n' "$repo" >&2
 
 		return 1
