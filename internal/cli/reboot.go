@@ -2,10 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -74,7 +72,7 @@ the cluster is unhealthy. As with apply and upgrade, it is off by default.`,
 
 			tal := runner(cfg)
 
-			rebootOne := func(n *config.Node, grouped bool, say func(string)) error {
+			rebootOne := func(n *config.Node, grouped bool, say func(string)) (bool, error) {
 				args := append([]string{
 					"--talosconfig", tc,
 					"reboot",
@@ -86,72 +84,22 @@ the cluster is unhealthy. As with apply and upgrade, it is off by default.`,
 
 				header := fmt.Sprintf("== rebooting %s (%s)\n", n.Hostname, n.IPAddress)
 
-				if grouped {
-					out, err := tal.Combined(args...)
-					if err != nil {
-						say(header + string(out) + "   error: " + err.Error() + "\n")
-
-						return err
-					}
-
-					say(header + string(out))
-
-					return nil
+				if err := runTalosctl(tal, grouped, header, say, args); err != nil {
+					return false, err
 				}
 
-				say(header)
+				rec.NodeChanged(n.Hostname, true)
 
-				return tal.Stream(args...)
+				return true, nil
 			}
 
-			var (
-				done      int
-				okMu      sync.Mutex
-				succeeded = map[string]bool{}
-			)
-
-			for _, batch := range batches(targets, parallel) {
-				out := newInOrder(os.Stderr, batch)
-				grouped := len(batch) > 1
-
-				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					defer out.finish(n)
-
-					rec.NodeStart(n.Hostname, string(n.Role))
-
-					err := rebootOne(n, grouped, func(s string) { out.say(n, s) })
-					rec.NodeDone(n.Hostname, err)
-
-					if err != nil {
-						return struct{}{}, err
-					}
-
-					rec.NodeChanged(n.Hostname, true)
-
-					okMu.Lock()
-					succeeded[n.IPAddress] = true
-					okMu.Unlock()
-
-					return struct{}{}, nil
-				}); err != nil {
-					return fmt.Errorf("%w\n%s", err,
-						resumeHint("reboot", "rebooted", without(targets[done:], succeeded),
-							replayFlags(cmd, "node")...))
-				}
-
-				done += len(batch)
-
-				// Between batches, never after the last: by then there is
-				// nothing left for the gate to protect.
-				if health && done < len(targets) {
-					fmt.Fprintf(os.Stderr, "   checking cluster health before continuing\n")
-
-					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
-						return fmt.Errorf("cluster is unhealthy after rebooting %s: %w\n%s",
-							names(batch), err, resumeHint("reboot", "rebooted", targets[done:],
-								replayFlags(cmd, "node")...))
-					}
-				}
+			if err := (rollOut{
+				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
+				verb: "reboot", done: "rebooted",
+				targets: targets, parallel: parallel,
+				health: health, timeout: timeout,
+			}).run(rebootOne); err != nil {
+				return err
 			}
 
 			rec.SetChanged(len(targets) > 0)

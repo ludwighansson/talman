@@ -85,16 +85,21 @@ schematic, 1 on error.`,
 			r := &render.Renderer{Cfg: cfg, Submit: submit}
 
 			var (
-				skipped    int
-				upgraded   int
-				countMu    sync.Mutex
-				upgradeOne func(*config.Node, bool, func(string)) error
+				skipped  int
+				upgraded int
+				countMu  sync.Mutex
+
+				// The snapshot waits for the first node that is actually
+				// going to be upgraded: a run that finds nothing to do has
+				// no reason to stream every Secret in the cluster to disk.
+				snapOnce sync.Once
+				snapErr  error
 			)
 
-			upgradeOne = func(n *config.Node, grouped bool, say func(string)) error {
+			upgradeOne := func(n *config.Node, grouped bool, say func(string)) (bool, error) {
 				ctx, err := r.Context(n)
 				if err != nil {
-					return err
+					return false, err
 				}
 
 				want := ctx.Node.TalosVersion
@@ -105,7 +110,7 @@ schematic, 1 on error.`,
 				if !force {
 					current, err := tal.State(tc, n.IPAddress)
 					if err != nil {
-						return fmt.Errorf("reading current state of %s: %w "+
+						return false, fmt.Errorf("reading current state of %s: %w "+
 							"(pass --force to upgrade without checking)", n.Hostname, err)
 					}
 
@@ -120,27 +125,19 @@ schematic, 1 on error.`,
 						skipped++
 						countMu.Unlock()
 
-						return nil
+						return false, nil
 					}
 
 					header = fmt.Sprintf("== %s (%s): %s -> %s\n",
 						n.Hostname, n.IPAddress, describeState(current), want)
 				}
 
-				args := append([]string{
-					"--talosconfig", tc,
-					"upgrade",
-					"--nodes", n.IPAddress,
-					"--image", ctx.Node.InstallerImage,
-					fmt.Sprintf("--wait=%t", wait),
-					"--timeout", timeout.String(),
-				}, extraFlags...)
-
 				header += fmt.Sprintf("   image %s\n", ctx.Node.InstallerImage)
 
 				// Counted once it has happened, not when it is attempted: a
 				// node whose upgrade failed did not change as far as anyone
-				// can tell, and the metrics must not say it did.
+				// can tell. A dry run counts what would change, as apply's
+				// does, and its metrics carry dry_run="true" to say so.
 				counted := func() {
 					countMu.Lock()
 					upgraded++
@@ -153,96 +150,45 @@ schematic, 1 on error.`,
 					say(header + "   would upgrade (dry run)\n")
 					counted()
 
-					return nil
+					return false, nil
 				}
 
-				if grouped {
-					out, err := tal.Combined(args...)
-					if err != nil {
-						say(header + string(out) + "   error: " + err.Error() + "\n")
+				if snapshot {
+					snapOnce.Do(func() { snapErr = etcdSnapshot(cfg, tal, tc, nil, "") })
 
-						return err
+					if snapErr != nil {
+						return false, fmt.Errorf("taking the etcd snapshot --snapshot asked for: %w", snapErr)
 					}
-
-					say(header + string(out))
-					counted()
-
-					return nil
 				}
 
-				say(header)
+				args := append([]string{
+					"--talosconfig", tc,
+					"upgrade",
+					"--nodes", n.IPAddress,
+					"--image", ctx.Node.InstallerImage,
+					fmt.Sprintf("--wait=%t", wait),
+					"--timeout", timeout.String(),
+				}, extraFlags...)
 
-				if err := tal.Stream(args...); err != nil {
-					return err
+				if err := runTalosctl(tal, grouped, header, say, args); err != nil {
+					return false, err
 				}
 
 				counted()
 
-				return nil
+				return true, nil
 			}
 
 			// Control planes one at a time whatever --parallel says: an
 			// upgrade reboots the machine, and two control planes rebooting
 			// together is how a three-node cluster loses quorum.
-			done := 0
-
-			var (
-				okMu      sync.Mutex
-				succeeded = map[string]bool{}
-			)
-
-			if snapshot && !dryRun {
-				if err := etcdSnapshot(cfg, tal, tc, nil, ""); err != nil {
-					return fmt.Errorf("taking the etcd snapshot --snapshot asked for: %w", err)
-				}
-			}
-
-			// A dry run reboots nothing, so there is nothing to keep apart.
-			inert := dryRun
-			if inert && !cmd.Flags().Changed("parallel") {
-				parallel = len(targets)
-			}
-
-			for _, batch := range batchesFor(targets, parallel, inert) {
-				grouped := len(batch) > 1
-				out := newInOrder(os.Stderr, batch)
-
-				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					defer out.finish(n)
-
-					rec.NodeStart(n.Hostname, string(n.Role))
-
-					err := upgradeOne(n, grouped, func(s string) { out.say(n, s) })
-					rec.NodeDone(n.Hostname, err)
-
-					if err != nil {
-						return struct{}{}, err
-					}
-
-					okMu.Lock()
-					succeeded[n.IPAddress] = true
-					okMu.Unlock()
-
-					return struct{}{}, nil
-				}); err != nil {
-					return fmt.Errorf("%w\n%s", err,
-						resumeHint("upgrade", "upgraded", without(targets[done:], succeeded),
-							replayFlags(cmd, "node")...))
-				}
-
-				done += len(batch)
-
-				// Between batches, never after the last: by then there is
-				// nothing left for the gate to protect.
-				if health && !dryRun && done < len(targets) {
-					fmt.Fprintf(os.Stderr, "   checking cluster health before continuing\n")
-
-					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
-						return fmt.Errorf("cluster is unhealthy after upgrading %s: %w\n%s",
-							names(batch), err, resumeHint("upgrade", "upgraded", targets[done:],
-								replayFlags(cmd, "node")...))
-					}
-				}
+			if err := (rollOut{
+				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
+				verb: "upgrade", done: "upgraded",
+				targets: targets, parallel: parallel, inert: dryRun,
+				health: health, timeout: timeout,
+			}).run(upgradeOne); err != nil {
+				return err
 			}
 
 			if skipped == len(targets) {
