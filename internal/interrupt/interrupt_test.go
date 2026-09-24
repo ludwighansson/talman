@@ -5,14 +5,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 )
 
 // TestForcedExitKillsChildren is the second signal's half: a child still
-// running is killed rather than left behind. It runs before the cancelling
-// test below, which leaves Context done for everything after it.
+// running is killed rather than left behind.
 func TestForcedExitKillsChildren(t *testing.T) {
+	fresh(t)
+
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX sleep")
 	}
@@ -62,9 +64,9 @@ func TestForcedExitKillsChildren(t *testing.T) {
 	}
 }
 
-// One test, because cancelling is one-way: once Context is done it stays
-// done for the rest of the package's run.
 func TestCancelStopsChildrenAndWaits(t *testing.T) {
+	fresh(t)
+
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX sleep")
 	}
@@ -122,4 +124,18 @@ func TestCancelStopsChildrenAndWaits(t *testing.T) {
 	}
 
 	unregister() // after RunCleanups: must be harmless
+}
+
+func TestExitCodeFollowsTheSignal(t *testing.T) {
+	fresh(t)
+
+	if got := ExitCode(); got != 130 {
+		t.Errorf("before any signal: %d, want 130", got)
+	}
+
+	interruptedBy = syscall.SIGTERM
+
+	if got := ExitCode(); got != 143 {
+		t.Errorf("after SIGTERM: %d, want 143", got)
+	}
 }
