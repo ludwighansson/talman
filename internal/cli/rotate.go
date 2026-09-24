@@ -200,8 +200,13 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		return err
 	}
 
-	defer os.RemoveAll(stage) //nolint:errcheck // best effort cleanup; the error that matters is returned below
-	defer interrupt.RemoveAllOnExit(stage)()
+	// Removed, then unregistered, in that order: a forced exit between the
+	// two must still find the directory on the list.
+	unregister := interrupt.RemoveAllOnExit(stage)
+	defer func() {
+		_ = os.RemoveAll(stage)
+		unregister()
+	}()
 
 	staged := filepath.Join(stage, "controlplane.yaml")
 	if err := os.WriteFile(staged, machineConfig, 0o600); err != nil {
