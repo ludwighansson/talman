@@ -11,7 +11,8 @@ import (
 // stubTalosctl is a talosctl that answers the calls apply and upgrade make,
 // logs every invocation to $STUB_LOG, and takes its answers from the
 // environment: STUB_DIFF is what a dry run reports, STUB_FAIL names a
-// subcommand that fails, with STUB_CODE (default 1).
+// subcommand that fails, with STUB_CODE (default 1), and STUB_STALE an address
+// whose node runs an older Talos than the config wants.
 const stubTalosctl = `#!/bin/sh
 echo "$*" >> "$STUB_LOG"
 
@@ -39,13 +40,23 @@ case " $* " in
 *" read /system/state/config.yaml"*) echo "machine: {ca: new}" ;;
 *" gen secrets "*) echo "bundle: rotated" ;;
 *" etcd snapshot "*) eval "out=\${$#}"; umask 022; echo "snapshot" > "$out" ;;
-*" version "*) echo "Server: Tag: v1.14.1" ;;
+*" version "*)
+	running=v1.14.1
+	case " $* " in *" $STUB_STALE "*) running=v1.13.0 ;; esac
+	printf 'Client:\n\tTag: v1.14.1\nServer:\n\tTag: %s\n' "$running" ;;
 esac
 `
 
 // exitFixture is a one-node cluster directory with a rendered config and a
 // talosconfig already in place, driven by the stub.
 func exitFixture(t *testing.T) (dir, log string) {
+	t.Helper()
+
+	return exitFixtureWith(t, "")
+}
+
+// exitFixtureWith is exitFixture with more nodes after the control plane.
+func exitFixtureWith(t *testing.T, moreNodes string) (dir, log string) {
 	t.Helper()
 
 	if runtime.GOOS == "windows" {
@@ -67,7 +78,7 @@ nodes:
   - hostname: c1
     ipAddress: 10.0.0.1
     role: controlplane
-`,
+` + moreNodes,
 		"clusterconfig/c1.yaml":     "version: v1alpha1\n",
 		"clusterconfig/talosconfig": "context: stub\n",
 		"talosctl":                  stubTalosctl,
@@ -91,6 +102,7 @@ nodes:
 	t.Setenv("STUB_DIFF", "No changes.")
 	t.Setenv("STUB_FAIL", "")
 	t.Setenv("STUB_CODE", "")
+	t.Setenv("STUB_STALE", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -333,5 +345,52 @@ func TestRotateCA(t *testing.T) {
 
 	if got := run([]string{"rotate-ca", "--talos=false", "--kubernetes=false"}); got != 1 {
 		t.Errorf("rotating nothing gave exit %d, want 1", got)
+	}
+}
+
+// TestUpgradeDoesOnlyWhatItMust: an upgrade that finds nothing to do takes no
+// etcd snapshot, and the health gate runs only after a batch that upgraded
+// something -- not after batches of nodes it skipped.
+func TestUpgradeDoesOnlyWhatItMust(t *testing.T) {
+	workers := `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+  - hostname: w2
+    ipAddress: 10.0.0.3
+    role: worker
+`
+
+	_, log := exitFixtureWith(t, workers)
+
+	if got := run([]string{"upgrade", "--snapshot", "--detailed-exit-code"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("an up-to-date cluster gave exit %d\n%s", got, calls)
+	}
+
+	calls, _ := os.ReadFile(log)
+	if strings.Contains(string(calls), "etcd snapshot") {
+		t.Error("upgrade --snapshot took a snapshot with nothing to upgrade")
+	}
+
+	_ = os.WriteFile(log, nil, 0o644)
+
+	t.Setenv("STUB_STALE", "10.0.0.3")
+
+	if got := run([]string{"upgrade", "--health", "--snapshot", "--detailed-exit-code"}); got != 2 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d, want 2\n%s", got, calls)
+	}
+
+	calls, _ = os.ReadFile(log)
+
+	if n := strings.Count(string(calls), " health "); n != 0 {
+		t.Errorf("the health gate ran %d time(s) after batches that upgraded nothing:\n%s", n, calls)
+	}
+
+	snap := strings.Index(string(calls), "etcd snapshot")
+	upgrade := strings.Index(string(calls), " upgrade --nodes 10.0.0.3")
+
+	if snap < 0 || upgrade < 0 || snap > upgrade {
+		t.Errorf("no snapshot before the one upgrade that ran:\n%s", calls)
 	}
 }
