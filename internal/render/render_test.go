@@ -67,7 +67,8 @@ kind: SysctlConfig
 params:
   x: "1"
 {{ end }}`,
-		"cluster/talman.yaml": `clusterName: testcluster
+		"cluster/talman.yaml": `apiVersion: talman.dev/v1
+clusterName: testcluster
 endpoint: https://10.0.0.1:6443
 talosVersion: v1.14.0
 kubernetesVersion: v1.37.0
@@ -169,7 +170,7 @@ func TestRenderProducesTargetedConfigs(t *testing.T) {
 		}
 
 		// Everything talman emits must survive Talos' own validation.
-		if err := r.Validate(res, cfg.TalosMode); err != nil {
+		if err := r.Validate(res, cfg.ValidationModeFor(res.Node)); err != nil {
 			t.Errorf("rendered config for %s is invalid: %v", cfg.Nodes[i].Hostname, err)
 		}
 

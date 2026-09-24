@@ -63,7 +63,7 @@ output directory or the repository.`,
 				}
 
 				if !noValidate {
-					if err := r.Validate(res, cfg.TalosMode); err != nil {
+					if err := r.Validate(res, cfg.ValidationModeFor(res.Node)); err != nil {
 						return nil, err
 					}
 				}

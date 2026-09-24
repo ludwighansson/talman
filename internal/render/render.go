@@ -313,7 +313,7 @@ func (r *Renderer) Context(n *config.Node) (template.Context, error) {
 		return base, fmt.Errorf("node %s: %w", n.Hostname, err)
 	}
 
-	installer, err := r.Cfg.ImageFactory.InstallerURL(id, n.EffectiveTalosVersion(r.Cfg))
+	installer, err := r.Cfg.ImageFactoryFor(n).InstallerURL(id, n.EffectiveTalosVersion(r.Cfg))
 	if err != nil {
 		return base, fmt.Errorf("node %s: %w", n.Hostname, err)
 	}
@@ -381,7 +381,7 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 	var id string
 
 	if r.Submit {
-		if id, err = r.Cfg.ImageFactory.Submit(schematic); err != nil {
+		if id, err = r.Cfg.ImageFactoryFor(n).Submit(schematic); err != nil {
 			return "", err
 		}
 

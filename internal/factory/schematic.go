@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
@@ -58,9 +59,44 @@ type Customization struct {
 	ExtraKernelArgs              []string         `yaml:"extraKernelArgs,omitempty"`
 	Meta                         []MetaValue      `yaml:"meta,omitempty"`
 	SystemExtensions             SystemExtensions `yaml:"systemExtensions,omitempty"`
-	Bootloader                   string           `yaml:"bootloader,omitempty"`
+	Bootloader                   Bootloader       `yaml:"bootloader,omitempty"`
 	SecureBoot                   SecureBoot       `yaml:"secureboot,omitempty"`
 	DiskImage                    DiskImage        `yaml:"diskImage,omitempty"`
+}
+
+// Bootloader is the image's bootloader.
+//
+// Upstream this is an integer enum that marshals as its name, and its zero
+// value is "none" -- so `bootloader: none` is omitted from the canonical form
+// altogether, names are matched case-insensitively and written lower case, and
+// anything else is rejected. A plain string got all three wrong, and each one
+// is a different schematic ID from the one the factory computes.
+type Bootloader string
+
+// The bootloaders the Image Factory accepts; none is the zero value.
+var bootloaders = []Bootloader{"none", "dual-boot", "sd-boot", "grub"}
+
+// UnmarshalYAML normalises and checks the name.
+func (b *Bootloader) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+
+	name := Bootloader(strings.ToLower(s))
+
+	if !slices.Contains(bootloaders, name) {
+		return fmt.Errorf("line %d: bootloader %q is not one of none, dual-boot, sd-boot, grub", value.Line, s)
+	}
+
+	if name == "none" {
+		name = ""
+	}
+
+	*b = name
+
+	return nil
 }
 
 // MetaValue provides initial META contents for the image.
@@ -131,8 +167,37 @@ type Config struct {
 	SchematicEndpoint string `yaml:"schematicEndpoint,omitempty"`
 	InstallerURLTmpl  string `yaml:"installerURLTmpl,omitempty"`
 	Platform          string `yaml:"platform,omitempty"`
-	SecureBoot        bool   `yaml:"secureboot,omitempty"`
+	// SecureBoot is a pointer so a node's override can turn it off again.
+	SecureBoot *bool `yaml:"secureBoot,omitempty"`
 }
+
+// Override returns c with every field o sets replacing c's.
+func (c Config) Override(o *Config) Config {
+	if o == nil {
+		return c
+	}
+
+	for _, f := range []struct{ dst, src *string }{
+		{&c.RegistryURL, &o.RegistryURL},
+		{&c.Protocol, &o.Protocol},
+		{&c.SchematicEndpoint, &o.SchematicEndpoint},
+		{&c.InstallerURLTmpl, &o.InstallerURLTmpl},
+		{&c.Platform, &o.Platform},
+	} {
+		if *f.src != "" {
+			*f.dst = *f.src
+		}
+	}
+
+	if o.SecureBoot != nil {
+		c.SecureBoot = o.SecureBoot
+	}
+
+	return c
+}
+
+// SecureBootEnabled reports whether installer images are the secure boot ones.
+func (c Config) SecureBootEnabled() bool { return c.SecureBoot != nil && *c.SecureBoot }
 
 // WithDefaults returns a copy with every unset field filled in.
 func (c Config) WithDefaults() Config {
@@ -190,8 +255,8 @@ func (c Config) InstallerURL(schematicID, talosVersion string) (string, error) {
 		Version:     talosVersion,
 		Platform:    c.Platform,
 		Mode:        c.Platform,
-		SecureBoot:  c.SecureBoot,
-		Secureboot:  c.SecureBoot,
+		SecureBoot:  c.SecureBootEnabled(),
+		Secureboot:  c.SecureBootEnabled(),
 	}
 
 	var buf bytes.Buffer

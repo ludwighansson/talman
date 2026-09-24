@@ -788,7 +788,7 @@ func renderForApply(cfg *config.Config, targets []*config.Node, parallel int,
 			return nil, err
 		}
 
-		if err := r.Validate(res, cfg.TalosMode); err != nil {
+		if err := r.Validate(res, cfg.ValidationModeFor(res.Node)); err != nil {
 			return nil, err
 		}
 
