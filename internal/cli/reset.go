@@ -47,6 +47,8 @@ the path to every node still waiting -- and a graceful reset needs a live
 cluster to leave.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			rec := currentRun
+
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -73,6 +75,10 @@ cluster to leave.`,
 
 			// Before the confirmation, so the order shown is the order run.
 			targets = resetOrder(targets)
+
+			for _, n := range targets {
+				rec.Plan(n.Hostname, string(n.Role))
+			}
 
 			// A graceful reset asks etcd to remove the node from its member
 			// list, and etcd will only agree while enough members are left to
@@ -176,7 +182,16 @@ cluster to leave.`,
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
 					defer out.finish(n)
 
-					if err := resetOne(n, grouped, func(s string) { out.say(n, s) }); err != nil {
+					rec.NodeStart(n.Hostname, string(n.Role))
+
+					err := resetOne(n, grouped, func(s string) { out.say(n, s) })
+					if err == nil {
+						rec.NodeChanged(n.Hostname, true)
+					}
+
+					rec.NodeDone(n.Hostname, err)
+
+					if err != nil {
 						return struct{}{}, err
 					}
 

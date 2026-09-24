@@ -41,6 +41,8 @@ node was, 0 when every selected node already ran its configured version and
 schematic, 1 on error.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			rec := currentRun
+
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -49,6 +51,10 @@ schematic, 1 on error.`,
 			targets, err := render.Nodes(cfg, nodes)
 			if err != nil {
 				return err
+			}
+
+			for _, n := range targets {
+				rec.Plan(n.Hostname, string(n.Role))
 			}
 
 			tc, err := ensureTalosconfig(cfg)
@@ -75,6 +81,8 @@ schematic, 1 on error.`,
 				want := ctx.Node.TalosVersion
 				header := fmt.Sprintf("== %s (%s)\n", n.Hostname, n.IPAddress)
 
+				rec.NodeInfo(n.Hostname, "to_version", want)
+
 				if !force {
 					current, err := tal.State(tc, n.IPAddress)
 					if err != nil {
@@ -82,7 +90,10 @@ schematic, 1 on error.`,
 							"(pass --force to upgrade without checking)", n.Hostname, err)
 					}
 
+					rec.NodeInfo(n.Hostname, "from_version", current.TalosVersion)
+
 					if upToDate(current, want, ctx.Node.SchematicID) {
+						rec.NodeChanged(n.Hostname, false)
 						say(fmt.Sprintf("== %s (%s) already runs %s with schematic %s; skipping\n",
 							n.Hostname, n.IPAddress, current.TalosVersion, short(current.SchematicID)))
 
@@ -120,6 +131,8 @@ schematic, 1 on error.`,
 				upgraded++
 				countMu.Unlock()
 
+				rec.NodeChanged(n.Hostname, true)
+
 				if grouped {
 					out, err := tal.Combined(args...)
 					if err != nil {
@@ -153,7 +166,12 @@ schematic, 1 on error.`,
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
 					defer out.finish(n)
 
-					if err := upgradeOne(n, grouped, func(s string) { out.say(n, s) }); err != nil {
+					rec.NodeStart(n.Hostname, string(n.Role))
+
+					err := upgradeOne(n, grouped, func(s string) { out.say(n, s) })
+					rec.NodeDone(n.Hostname, err)
+
+					if err != nil {
 						return struct{}{}, err
 					}
 
@@ -225,6 +243,12 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 0 when every node was already on the target, 1 on error.`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			rec := currentRun
+
+			if dryRun {
+				rec.SetLabel("dry_run", "true")
+			}
+
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
 			if err != nil {
 				return err
@@ -248,6 +272,7 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 				if current {
 					fmt.Fprintf(os.Stderr, "nothing to upgrade: every node already runs Kubernetes v%s "+
 						"(use --force to upgrade anyway)\n", version)
+					rec.SetChanged(false)
 
 					return nil
 				}
@@ -269,6 +294,8 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 			if err := tal.Stream(args...); err != nil {
 				return err
 			}
+
+			rec.SetChanged(true)
 
 			if detailed {
 				return errChanged
