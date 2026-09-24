@@ -118,6 +118,7 @@ release.`,
 	addMetricsFlags(cmd)
 
 	for _, sub := range []*cobra.Command{
+		newInitCmd(),
 		newRenderCmd(),
 		newValidateCmd(),
 		newPatchesCmd(),
