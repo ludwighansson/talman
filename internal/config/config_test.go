@@ -35,7 +35,8 @@ func write(t *testing.T, body string, patchFiles ...string) string {
 	return path
 }
 
-const validBase = `clusterName: test
+const validBase = `apiVersion: talman.dev/v1
+clusterName: test
 endpoint: https://10.0.0.1:6443
 talosVersion: v1.14.0
 kubernetesVersion: v1.37.0
@@ -275,6 +276,89 @@ nodes:
 			wantErr: "duplicate ipAddress",
 		},
 		{
+			name: "endpoint without a port",
+			body: `apiVersion: talman.dev/v1
+clusterName: t
+endpoint: https://10.0.0.1
+talosVersion: v1.14.0
+kubernetesVersion: v1.37.0
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "including the port",
+		},
+		{
+			// The hostname is the rendered file's name: a path in it would
+			// write a config full of secrets outside the output directory.
+			name: "hostname that is a path",
+			body: validBase + `
+nodes:
+  - hostname: ../../escaped
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "not a valid RFC 1123 host name",
+		},
+		{
+			name: "upper-case hostname",
+			body: validBase + `
+nodes:
+  - hostname: Control-01
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "not a valid RFC 1123 host name",
+		},
+		{
+			name: "group listed twice",
+			body: validBase + `
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    groups: [db, db]
+`,
+			wantErr: "listed twice",
+		},
+		{
+			name: "unknown validation mode",
+			body: validBase + `validationMode: bare
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "validationMode",
+		},
+		{
+			name: "two documents",
+			body: validBase + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+---
+clusterName: other
+`,
+			wantErr: "more than one YAML document",
+		},
+		{
+			name:    "empty file",
+			body:    "",
+			wantErr: "is empty",
+		},
+		{
+			// A later schema will have keys this one lacks; the refusal
+			// has to name the schema, not the first unknown key.
+			name: "a later schema with keys this one lacks",
+			body: `apiVersion: talman.dev/v2
+cluster:
+  name: t
+`,
+			wantErr: "not one this talman understands",
+		},
+		{
 			name: "unknown top level field",
 			body: validBase + `
 patchez:
@@ -288,7 +372,8 @@ nodes:
 		},
 		{
 			name: "missing talosVersion",
-			body: `clusterName: t
+			body: `apiVersion: talman.dev/v1
+clusterName: t
 endpoint: https://10.0.0.1:6443
 kubernetesVersion: v1.37.0
 nodes:
@@ -300,7 +385,8 @@ nodes:
 		},
 		{
 			name: "endpoint without a scheme",
-			body: `clusterName: t
+			body: `apiVersion: talman.dev/v1
+clusterName: t
 endpoint: 10.0.0.1:6443
 talosVersion: v1.14.0
 kubernetesVersion: v1.37.0
@@ -309,7 +395,7 @@ nodes:
     ipAddress: 10.0.0.10
     role: controlplane
 `,
-			wantErr: "must be a full URL",
+			wantErr: "must be a full https URL",
 		},
 		{
 			name: "schematic and schematicID together",
@@ -361,7 +447,8 @@ nodes:
 }
 
 func TestTalosVersionNormalised(t *testing.T) {
-	cfg, err := Load(write(t, `clusterName: t
+	cfg, err := Load(write(t, `apiVersion: talman.dev/v1
+clusterName: t
 endpoint: https://10.0.0.1:6443
 talosVersion: "1.14.0"
 kubernetesVersion: v1.37.0
@@ -518,8 +605,12 @@ nodes:
 		wantErr string
 	}{
 		{
-			name:   "absent: read as this schema",
-			header: "",
+			// Required from v1 on: a config that does not say which schema
+			// it was written against is exactly the one a later talman
+			// would have to guess about.
+			name:    "absent",
+			header:  "",
+			wantErr: "apiVersion is required",
 		},
 		{
 			name:   "the schema talman speaks",
@@ -561,5 +652,69 @@ nodes:
 				t.Errorf("error does not say which schema is wrong: %v", err)
 			}
 		})
+	}
+}
+
+func TestHostnames(t *testing.T) {
+	for h, want := range map[string]bool{
+		"c1":                            true,
+		"talos-w01":                     true,
+		"w01.dc1.example.net":           true,
+		"":                              false,
+		"-w01":                          false,
+		"w01-":                          false,
+		"W01":                           false,
+		"w_01":                          false,
+		"a/b":                           false,
+		"..":                            false,
+		"a..b":                          false,
+		strings.Repeat("a", 64):         false,
+		strings.Repeat("a.", 127) + "a": false,
+	} {
+		if got := validHostname(h); got != want {
+			t.Errorf("validHostname(%q) = %t, want %t", h, got, want)
+		}
+	}
+}
+
+func TestPerNodeImageFactory(t *testing.T) {
+	cfg, err := Load(write(t, validBase+`imageFactory:
+  platform: openstack
+  secureBoot: true
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+  - hostname: w1
+    ipAddress: 10.0.0.11
+    role: worker
+    imageFactory:
+      platform: metal
+      secureBoot: false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c1, w1 := &cfg.Nodes[0], &cfg.Nodes[1]
+
+	if got := cfg.ImageFactoryFor(c1); got.Platform != "openstack" || !got.SecureBootEnabled() {
+		t.Errorf("c1 inherits %+v, want the cluster's openstack with secure boot", got)
+	}
+
+	if got := cfg.ImageFactoryFor(w1); got.Platform != "metal" || got.SecureBootEnabled() {
+		t.Errorf("w1 gets %+v, want its own metal without secure boot", got)
+	}
+
+	if got := cfg.ImageFactoryFor(w1).RegistryURL; got != "factory.talos.dev" {
+		t.Errorf("w1 registry = %q, want the default carried through", got)
+	}
+
+	if got := cfg.ValidationModeFor(c1); got != "cloud" {
+		t.Errorf("validation mode for an openstack node = %q, want cloud", got)
+	}
+
+	if got := cfg.ValidationModeFor(w1); got != "metal" {
+		t.Errorf("validation mode for a metal node = %q, want metal", got)
 	}
 }

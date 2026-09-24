@@ -180,9 +180,10 @@ See [`example/`](example/) for a working tree.
 
 ## Configuration
 
-`apiVersion` names the schema the file is written against. It is what lets a
-later, incompatible schema be told apart from this one instead of misread — a
-config that omits it is read as this one, with a note.
+`apiVersion` names the schema the file is written against, and is required. It
+is what lets a later, incompatible schema be told apart from this one instead
+of misread: a talman that meets a schema it does not speak says so, rather than
+reporting whichever key it did not recognise first.
 
 ```yaml
 apiVersion: talman.dev/v1       # the schema this file is written against
@@ -224,12 +225,58 @@ nodes:
 ```
 
 Optional top-level keys: `talosctl` (binary path), `outputDir`
-(`clusterconfig`), `secretFile` (`secrets.sops.yaml`), `talosMode` (`metal`),
-`schematicID`. Per-node: `talosVersion`, `schematic`, `schematicID`.
+(`clusterconfig`), `secretFile` (`secrets.sops.yaml`), `validationMode`,
+`schematicID`. Per-node: `talosVersion`, `schematic`, `schematicID`,
+`imageFactory`.
+
+`schematic` and `schematicID` are two ways of saying the same thing, so set at
+most one of them at each level. A node's own setting wins over the cluster's.
+
+A `hostname` is an RFC 1123 host name, lower case: it is what Kubernetes will
+call the node, and the name of the file its config is rendered to. `endpoint`
+is an `https://` URL with a port.
+
+`validationMode` is the `--mode` rendered configs are checked against with
+`talosctl validate`. It follows the node's image platform by default, `metal`
+for `metal` and `cloud` for everything else, so it only needs setting to
+`container` for a cluster of containers.
 
 Unknown keys are an error. In a config whose job is to route patch files, a
 mistyped key that got ignored would mean a machine config quietly missing a
 patch.
+
+### The Image Factory
+
+`imageFactory` says where installer images come from and how their references
+are spelled. Every key is optional:
+
+| key | default | |
+| --- | --- | --- |
+| `registryURL` | `factory.talos.dev` | the factory host, and the registry the installer is pulled from |
+| `protocol` | `https` | for submitting schematics with `--submit` |
+| `schematicEndpoint` | `/schematics` | ditto |
+| `platform` | `metal` | the installer's platform: `metal`, `openstack`, `aws`, … |
+| `secureBoot` | `false` | use the secure boot installer |
+| `installerURLTmpl` | `{{.RegistryURL}}/{{.Platform}}-installer{{if .SecureBoot}}-secureboot{{end}}/{{.ID}}:{{.Version}}` | the installer reference, as a Go template |
+
+A node can set any of them under its own `imageFactory`, which overrides the
+cluster's key by key. That is how one cluster mixes machines that boot
+different platforms' images:
+
+```yaml
+imageFactory:
+  platform: openstack
+nodes:
+  - hostname: gpu-01
+    # ipAddress, role, …
+    imageFactory:
+      platform: metal
+```
+
+Schematic IDs are computed offline, as the sha256 of the schematic's canonical
+form. That is the factory's own algorithm, and a test holds talman's output to
+IDs the factory's code computed. `talman schematic id --submit` registers the
+schematic instead, and warns if the factory's answer ever differs.
 
 ### The node schema is deliberately tiny
 

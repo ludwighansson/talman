@@ -5,13 +5,34 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
 )
 
-// validTalosModes are the modes `talosctl validate --mode` accepts.
-var validTalosModes = []string{"metal", "cloud", "container"}
+// validValidationModes are the modes `talosctl validate --mode` accepts.
+var validValidationModes = []string{"metal", "cloud", "container"}
+
+// hostnameLabel is one RFC 1123 label, lower case: what Kubernetes accepts as
+// a node name, and safe as the file name the rendered config is written to.
+var hostnameLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// validHostname reports whether h is an RFC 1123 host name: dot-separated
+// labels, 253 characters at most.
+func validHostname(h string) bool {
+	if len(h) > 253 {
+		return false
+	}
+
+	for label := range strings.SplitSeq(h, ".") {
+		if !hostnameLabel.MatchString(label) {
+			return false
+		}
+	}
+
+	return true
+}
 
 // Validate checks the whole config and reports every problem at once.
 //
@@ -42,7 +63,11 @@ func (c *Config) Validate() error {
 	// read hopefully: the fields it does recognise may mean something else
 	// there, and guessing at a machine configuration is how a cluster gets a
 	// setting nobody wrote.
-	if c.APIVersion != "" && c.APIVersion != APIVersion {
+	switch c.APIVersion {
+	case APIVersion:
+	case "":
+		add("apiVersion is required: add `apiVersion: %s` as the first line", APIVersion)
+	default:
 		add("apiVersion %q is not one this talman understands: it speaks %q", c.APIVersion, APIVersion)
 	}
 
@@ -50,8 +75,9 @@ func (c *Config) Validate() error {
 		add("kubernetesVersion is required")
 	}
 
-	if !slices.Contains(validTalosModes, c.TalosMode) {
-		add("talosMode %q is invalid: must be one of %s", c.TalosMode, strings.Join(validTalosModes, ", "))
+	if c.ValidationMode != "" && !slices.Contains(validValidationModes, c.ValidationMode) {
+		add("validationMode %q is invalid: must be one of %s",
+			c.ValidationMode, strings.Join(validValidationModes, ", "))
 	}
 
 	if c.Schematic != nil && c.SchematicID != "" {
@@ -92,8 +118,8 @@ func (c *Config) validateEndpoint(add func(string, ...any)) {
 	// URL cannot contain colon", which tells the operator nothing. Both the
 	// parse failure and a scheme-less parse mean the same fix.
 	u, err := url.Parse(c.Endpoint)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		add("endpoint %q must be a full URL including scheme and port, e.g. https://10.0.0.1:6443", c.Endpoint)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.Port() == "" {
+		add("endpoint %q must be a full https URL including the port, e.g. https://10.0.0.1:6443", c.Endpoint)
 	}
 }
 
@@ -119,6 +145,14 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 		case "":
 			add("%s: hostname is required", where)
 		default:
+			// The hostname names the file the node's config is written to,
+			// so anything with a slash or a ".." in it would put a file full
+			// of secrets outside the gitignored output directory.
+			if !validHostname(n.Hostname) {
+				add("%s: hostname %q is not a valid RFC 1123 host name: lower-case letters, "+
+					"digits and '-', in dot-separated labels of at most 63", where, n.Hostname)
+			}
+
 			if prev, dup := seenHost[n.Hostname]; dup {
 				add("%s: duplicate hostname %q (also nodes[%d])", where, n.Hostname, prev)
 			}
@@ -139,7 +173,15 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 			add("%s: role is required: %s or %s", where, RoleControlPlane, RoleWorker)
 		}
 
+		seenGroup := map[string]bool{}
+
 		for _, g := range n.Groups {
+			if seenGroup[g] {
+				add("%s: group %q is listed twice; its patches would be applied twice", where, g)
+			}
+
+			seenGroup[g] = true
+
 			if isReserved(g) {
 				add("%s: group %q is reserved: %s, %s and %s are assigned automatically from role",
 					where, g, GroupAll, GroupControlPlane, GroupWorker)

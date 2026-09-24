@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,14 +25,6 @@ func Load(path string) (*Config, error) {
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
-	}
-
-	// Said once, to the operator, not to a log nobody reads: a config without
-	// the field works exactly as before, and naming it is what lets a future
-	// schema change be a message rather than a misreading.
-	if cfg.APIVersion == "" {
-		fmt.Fprintf(os.Stderr, "note: %s has no apiVersion; add `apiVersion: %s` so a later schema "+
-			"can be told apart from this one\n", Rel(cfg.Path), APIVersion)
 	}
 
 	return cfg, nil
@@ -64,13 +57,39 @@ func LoadNoValidate(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// The schema version is read on its own, and loosely, before anything is
+	// decoded strictly. A file written for a later schema is all but certain
+	// to carry a key this one does not have, and a strict decode would report
+	// that key -- "field x not found" -- rather than the reason, which is that
+	// the file is not one this talman can read at all.
+	var head struct {
+		APIVersion string `yaml:"apiVersion"`
+	}
+
+	if err := yaml.Unmarshal(data, &head); err == nil && head.APIVersion != "" && head.APIVersion != APIVersion {
+		return nil, fmt.Errorf("%s: apiVersion %q is not one this talman understands: it speaks %q "+
+			"(a newer schema needs a newer talman)", path, head.APIVersion, APIVersion)
+	}
+
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 
 	var cfg Config
 
 	if err := dec.Decode(&cfg); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("%s is empty", path)
+		}
+
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+
+	// A second document would be ignored, and whatever it says with it: two
+	// clusters pasted into one file, or a patch saved over the config.
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("parsing %s: it holds more than one YAML document; "+
+			"a talman config is exactly one", path)
 	}
 
 	abs, err := filepath.Abs(path)
@@ -96,10 +115,6 @@ func (c *Config) applyDefaults() {
 
 	if c.SecretFile == "" {
 		c.SecretFile = DefaultSecretFile
-	}
-
-	if c.TalosMode == "" {
-		c.TalosMode = "metal"
 	}
 
 	c.ImageFactory = c.ImageFactory.WithDefaults()

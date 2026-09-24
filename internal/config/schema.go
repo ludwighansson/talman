@@ -62,15 +62,14 @@ func (r *Role) UnmarshalYAML(value *yaml.Node) error {
 //
 // It exists so a later, incompatible schema can be told apart from this one
 // rather than misread: without it, the choice when the shape has to change is
-// between breaking every config silently and never changing it. A config that
-// does not name a version is read as this one, with a note -- there are
-// configs in the world written before the field existed.
+// between breaking every config silently and never changing it. It is
+// required, so that no config is left for a later talman to guess about.
 const APIVersion = "talman.dev/v1"
 
 // Config is the whole of talman.yaml.
 type Config struct {
-	// APIVersion names the schema. Empty means this one.
-	APIVersion string `yaml:"apiVersion,omitempty"`
+	// APIVersion names the schema. Required.
+	APIVersion string `yaml:"apiVersion"`
 
 	ClusterName       string `yaml:"clusterName"`
 	Endpoint          string `yaml:"endpoint"`
@@ -84,8 +83,11 @@ type Config struct {
 	OutputDir string `yaml:"outputDir,omitempty"`
 	// SecretFile is the (usually SOPS-encrypted) Talos secrets bundle.
 	SecretFile string `yaml:"secretFile,omitempty"`
-	// TalosMode is the validation mode passed to `talosctl validate`.
-	TalosMode string `yaml:"talosMode,omitempty"`
+	// ValidationMode is the --mode `talosctl validate` checks rendered
+	// configs against. Unset, it follows the node's image platform: metal for
+	// metal, cloud for everything else. Only a container cluster -- the
+	// docker provisioner's -- has to say so.
+	ValidationMode string `yaml:"validationMode,omitempty"`
 
 	// Values is cluster-wide free-form data, exposed to every patch template
 	// as .Values. Node.Values is the per-node counterpart.
@@ -125,6 +127,9 @@ type Node struct {
 	TalosVersion string        `yaml:"talosVersion,omitempty"`
 	Schematic    *SchematicRef `yaml:"schematic,omitempty"`
 	SchematicID  string        `yaml:"schematicID,omitempty"`
+	// ImageFactory overrides the cluster's imageFactory field by field, for a
+	// cluster whose machines do not all boot the same platform's image.
+	ImageFactory *factory.Config `yaml:"imageFactory,omitempty"`
 }
 
 // SchematicRef is either an inline schematic or a path to a schematic file.
@@ -188,6 +193,26 @@ func (n *Node) EffectiveTalosVersion(c *Config) string {
 	}
 
 	return c.TalosVersion
+}
+
+// ImageFactoryFor is the cluster's imageFactory with the node's overrides
+// applied.
+func (c *Config) ImageFactoryFor(n *Node) factory.Config {
+	return c.ImageFactory.Override(n.ImageFactory).WithDefaults()
+}
+
+// ValidationModeFor is the `talosctl validate --mode` a node's config is
+// checked against.
+func (c *Config) ValidationModeFor(n *Node) string {
+	if c.ValidationMode != "" {
+		return c.ValidationMode
+	}
+
+	if c.ImageFactoryFor(n).Platform == "metal" {
+		return "metal"
+	}
+
+	return "cloud"
 }
 
 // ControlPlanes returns the control plane nodes in declaration order.
