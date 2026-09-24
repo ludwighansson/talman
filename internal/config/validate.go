@@ -14,6 +14,10 @@ import (
 // validValidationModes are the modes `talosctl validate --mode` accepts.
 var validValidationModes = []string{"metal", "cloud", "container"}
 
+// clusterNamePattern is what a cluster name may be: something that is safe
+// inside a file name.
+var clusterNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
+
 // hostnameLabel is one RFC 1123 label, lower case: what Kubernetes accepts as
 // a node name, and safe as the file name the rendered config is written to.
 var hostnameLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -48,8 +52,14 @@ func (c *Config) Validate() error {
 
 	c.normalize()
 
-	if c.ClusterName == "" {
+	switch {
+	case c.ClusterName == "":
 		add("clusterName is required")
+	case !clusterNamePattern.MatchString(c.ClusterName) || strings.Contains(c.ClusterName, ".."):
+		// It names files -- an etcd snapshot, a kubeconfig context -- so a
+		// slash or a ".." would put one outside the output directory.
+		add("clusterName %q may hold only letters, digits, '.', '_' and '-', starting with a "+
+			"letter or digit", c.ClusterName)
 	}
 
 	c.validateEndpoint(add)

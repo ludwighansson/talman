@@ -12,6 +12,7 @@ import (
 	"text/template"
 
 	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/render"
@@ -20,12 +21,12 @@ import (
 
 // initTemplate is the talman.yaml `init` writes: the required keys filled in,
 // and the optional ones present as comments to uncomment.
-var initTemplate = template.Must(template.New("talman.yaml").Parse(`# yaml-language-server: $schema={{ .SchemaURL }}
+var initTemplate = template.Must(template.New("talman.yaml").Funcs(template.FuncMap{"yaml": yamlScalar}).Parse(`# yaml-language-server: $schema={{ .SchemaURL }}
 apiVersion: {{ .APIVersion }}
-clusterName: {{ .ClusterName }}
-endpoint: {{ .Endpoint }}
-talosVersion: {{ .TalosVersion }}
-kubernetesVersion: {{ .KubernetesVersion }}
+clusterName: {{ yaml .ClusterName }}
+endpoint: {{ yaml .Endpoint }}
+talosVersion: {{ yaml .TalosVersion }}
+kubernetesVersion: {{ yaml .KubernetesVersion }}
 
 # Free-form data for patch templates, as .Values.
 # values:
@@ -53,17 +54,17 @@ patches:
 
 nodes:
 {{- range .Nodes }}
-  - hostname: {{ .Hostname }}
-    ipAddress: {{ .IPAddress }}
-    role: {{ .Role }}
+  - hostname: {{ yaml .Hostname }}
+    ipAddress: {{ yaml .IPAddress }}
+    role: {{ yaml .Role }}
 {{- end }}
 `))
 
 // initSopsTemplate is the .sops.yaml `init --age` writes: one rule, matching
 // the secrets bundle and any encrypted patch.
-var initSopsTemplate = template.Must(template.New(".sops.yaml").Parse(`creation_rules:
+var initSopsTemplate = template.Must(template.New(".sops.yaml").Funcs(template.FuncMap{"yaml": yamlScalar}).Parse(`creation_rules:
   - path_regex: \.sops\.yaml$
-    age: {{ . }}
+    age: {{ yaml . }}
 `))
 
 func newInitCmd() *cobra.Command {
@@ -145,6 +146,10 @@ It refuses to overwrite a talman.yaml or a .sops.yaml that is already there.`,
 				if talosVersion, err = tal.ClientVersion(); err != nil {
 					return fmt.Errorf("finding the Talos version to target (or pass --talos-version): %w", err)
 				}
+			}
+
+			if !versionPattern.MatchString(talosVersion) {
+				return fmt.Errorf("%q is not a Talos version: pass --talos-version", talosVersion)
 			}
 
 			if k8sVersion == "" {
@@ -255,4 +260,18 @@ func defaultKubernetesVersion(tal *talosctl.Runner) (string, error) {
 	}
 
 	return string(m[1]), nil
+}
+
+var versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+
+// yamlScalar writes s as YAML does -- plain where that reads back the same,
+// quoted where it would not -- so a value with a '#' or a ': ' in it lands in
+// the file as it was given rather than cut short or unparseable.
+func yamlScalar(s string) (string, error) {
+	out, err := yaml.Marshal(s)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSuffix(string(out), "\n"), nil
 }
