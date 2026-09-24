@@ -12,15 +12,11 @@ Please report privately, through GitHub's
 rather than in a public issue. Include what you ran, what happened, and what
 you expected; a config that reproduces it helps most.
 
-You will get an acknowledgement within a week. A fix is released as a patch
-release of the latest minor version, and the advisory is published with it,
-crediting you unless you would rather not be named.
-
 ## Supported versions
 
-Security fixes go to the latest 1.x minor release. There is no backporting to
-older minors: within 1.x an upgrade does not break a working cluster directory
-(see [Compatibility](README.md#compatibility)), so the fix is to upgrade.
+Only the latest release is supported. Within 1.x an upgrade does not break a
+working cluster directory (see [Compatibility](README.md#compatibility)), so
+the way to pick up a fix is to upgrade.
 
 ## Scope
 
