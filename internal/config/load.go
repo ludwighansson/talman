@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -81,7 +82,7 @@ func LoadNoValidate(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s is empty", path)
 		}
 
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
+		return nil, fmt.Errorf("parsing %s: %w%s", path, err, renameHint(err))
 	}
 
 	// A second document would be ignored, and whatever it says with it: two
@@ -165,4 +166,26 @@ func FindConfig(explicit string) string {
 	}
 
 	return DefaultFileName
+}
+
+// renamed are keys a prerelease config may still spell the old way, by the
+// strict decoder's words for them.
+var renamed = []struct{ field, hint string }{
+	{"field talosMode not found in type config.Config",
+		"talosMode was renamed validationMode in 1.0, and can usually be dropped: it follows imageFactory.platform"},
+	{"field secureboot not found in type factory.Config",
+		"imageFactory.secureboot was renamed secureBoot in 1.0"},
+}
+
+// renameHint turns an unknown-key error for a renamed key into the fix.
+func renameHint(err error) string {
+	var hints []string
+
+	for _, r := range renamed {
+		if strings.Contains(err.Error(), r.field) {
+			hints = append(hints, "\n  "+r.hint)
+		}
+	}
+
+	return strings.Join(hints, "")
 }
