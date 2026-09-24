@@ -123,7 +123,7 @@ func readPatch(ref config.PatchRef, undecryptable map[string]error) ([]byte, err
 	if err != nil {
 		undecryptable[ref.Rel] = err
 
-		return nil, nil
+		return nil, nil //nolint:nilerr // recorded above; an unreadable secret limits the check, it does not fail it
 	}
 
 	return plaintext, nil
