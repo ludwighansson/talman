@@ -236,8 +236,26 @@ nodes:
 
 Optional top-level keys: `talosctl` (binary path), `outputDir`
 (`clusterconfig`), `secretFile` (`secrets.sops.yaml`), `validationMode`,
-`schematicID`. Per-node: `talosVersion`, `schematic`, `schematicID`,
-`imageFactory`.
+`schematicID`, `valuesFiles`. Per-node: `talosVersion`, `schematic`,
+`schematicID`, `imageFactory`, `valuesFiles`.
+
+`valuesFiles` lists YAML files merged into `values`, for values several
+clusters share:
+
+```yaml
+valuesFiles:
+  - ../base/values.yaml       # the defaults
+  - ./values-site.yaml        # this site's, over them
+values:
+  registry:
+    mirror: harbor.sto1.example.net   # and this cluster's, over both
+```
+
+Files merge in the order listed and the inline `values` go on top. Maps merge
+key by key, all the way down; anything else, a list included, is replaced
+whole. A node's own `valuesFiles` build its `.Node.Values` the same way. They
+are read as plain YAML: a secret belongs in an encrypted patch, which
+`validate` can check without the key.
 
 `schematic` and `schematicID` are two ways of saying the same thing, so set at
 most one of them at each level. A node's own setting wins over the cluster's.

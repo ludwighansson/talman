@@ -87,6 +87,7 @@ func (c *Config) Validate() error {
 	c.validateNodes(add)
 	c.validatePatchKeys(add)
 	c.validatePatchFiles(add)
+	c.validateValuesFiles(add)
 
 	return errors.Join(errs...)
 }
@@ -258,5 +259,32 @@ func isReserved(key string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// validateValuesFiles checks every valuesFiles entry names a readable file, as
+// validatePatchFiles does for patches.
+func (c *Config) validateValuesFiles(add func(string, ...any)) {
+	check := func(where, rel string) {
+		info, err := os.Stat(c.resolvePath(rel))
+
+		switch {
+		case os.IsNotExist(err):
+			add("%s: %q does not exist (resolved to %s)", where, rel, c.resolvePath(rel))
+		case err != nil:
+			add("%s: %q is not readable: %v", where, rel, err)
+		case !info.Mode().IsRegular():
+			add("%s: %q is not a regular file", where, rel)
+		}
+	}
+
+	for _, rel := range c.ValuesFiles {
+		check("valuesFiles", rel)
+	}
+
+	for i := range c.Nodes {
+		for _, rel := range c.Nodes[i].ValuesFiles {
+			check("node "+c.Nodes[i].Hostname+": valuesFiles", rel)
+		}
 	}
 }

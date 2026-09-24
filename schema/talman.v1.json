@@ -160,6 +160,13 @@
         "values": {
           "description": "Free-form data, available to this node's patch templates as .Node.Values.",
           "type": "object"
+        },
+        "valuesFiles": {
+          "description": "YAML files merged into this node's values, in order and beneath its inline map.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -310,6 +317,13 @@
     "values": {
       "description": "Free-form data, available to every patch template as .Values.",
       "type": "object"
+    },
+    "valuesFiles": {
+      "description": "YAML files merged into values, in order and beneath the inline map. Plaintext only.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
   "required": [
