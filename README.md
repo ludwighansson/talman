@@ -412,6 +412,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman reboot` | a rolling reboot, one node at a time |
 | `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` (a noop when every node is already there) |
 | `talman health` | cluster health |
+| `talman etcd snapshot [path]` | save an etcd snapshot, by default into the output directory |
 | `talman dashboard <node>` | the Talos text UI for one node |
 | `talman talosctl -n <node> …` | any other talosctl command, with the talosconfig and node addresses filled in |
 | `talman reset` | wipe nodes (requires typing the cluster name) |
@@ -1068,6 +1069,22 @@ error: talosctl reset exited with status 1
   2 node(s) were not reset: talos-w02, talos-w03
   continue with: talman reset -n talos-w02 -n talos-w03 --graceful=false
 ```
+
+### Backing up etcd
+
+```console
+$ talman etcd snapshot
+== snapshotting etcd on talos-c01 (10.164.0.27)
+wrote clusterconfig/etcd-sto1-com-20260924T101500Z.db
+```
+
+The snapshot comes from the first control plane that answers, or `--node`,
+and lands in the output directory unless you name a path: an etcd snapshot
+holds every Kubernetes Secret in the cluster, so it belongs beside the other
+credentials, gitignored and `0600`. talman never overwrites one.
+
+`upgrade --snapshot` and `upgrade-k8s --snapshot` take one before they change
+anything, which is the moment a snapshot is most worth having.
 
 ## Tests
 

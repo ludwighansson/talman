@@ -45,7 +45,9 @@ func recorded(cmd *cobra.Command) *cobra.Command {
 	inner := cmd.RunE
 
 	cmd.RunE = func(c *cobra.Command, args []string) error {
-		run, err := startRun(c.Name())
+		// The path below the root, so `etcd snapshot` is told apart from
+		// any other command's snapshot.
+		run, err := startRun(strings.TrimPrefix(c.CommandPath(), c.Root().Name()+" "))
 		if err != nil {
 			return err
 		}
