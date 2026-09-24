@@ -49,8 +49,17 @@ func (c *Config) readValues(files []string, inline map[string]any) (map[string]a
 
 		var values map[string]any
 
-		if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&values); err != nil && !errors.Is(err, io.EOF) {
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+
+		if err := dec.Decode(&values); err != nil && !errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("valuesFiles: %s: %w", rel, err)
+		}
+
+		if more, err := moreDocuments(dec); err != nil {
+			return nil, fmt.Errorf("valuesFiles: %s: %w", rel, err)
+		} else if more {
+			return nil, fmt.Errorf("valuesFiles: %s holds more than one YAML document; "+
+				"only the first would be read", rel)
 		}
 
 		// Plaintext only. A secret belongs in an encrypted patch, which
@@ -73,21 +82,56 @@ func (c *Config) readValues(files []string, inline map[string]any) (map[string]a
 // anything else replaced outright.
 func mergeInto(dst, src map[string]any) {
 	for k, v := range src {
-		sub, isMap := v.(map[string]any)
-		have, hadMap := dst[k].(map[string]any)
+		dst[k] = merge(dst[k], v)
+	}
+}
 
-		if isMap && hadMap {
-			mergeInto(have, sub)
+// merge returns src merged over dst. Both kinds of map YAML decodes into take
+// part -- map[string]any, and map[any]any for a mapping with a key that is not
+// a string -- and keep the keys they were decoded with, so a template indexes
+// them the way the YAML spelled them.
+func merge(dst, src any) any {
+	switch s := src.(type) {
+	case map[string]any:
+		switch d := dst.(type) {
+		case map[string]any:
+			for k, v := range s {
+				d[k] = merge(d[k], v)
+			}
 
-			continue
+			return d
+		case map[any]any:
+			for k, v := range s {
+				d[k] = merge(d[k], v)
+			}
+
+			return d
 		}
 
-		if isMap {
-			fresh := map[string]any{}
-			mergeInto(fresh, sub)
-			v = fresh
+		out := make(map[string]any, len(s))
+		for k, v := range s {
+			out[k] = merge(nil, v)
 		}
 
-		dst[k] = v
+		return out
+	case map[any]any:
+		out := map[any]any{}
+
+		switch d := dst.(type) {
+		case map[any]any:
+			out = d
+		case map[string]any:
+			for k, v := range d {
+				out[k] = v
+			}
+		}
+
+		for k, v := range s {
+			out[k] = merge(out[k], v)
+		}
+
+		return out
+	default:
+		return src
 	}
 }

@@ -833,3 +833,40 @@ func TestTrailingEmptyDocument(t *testing.T) {
 		})
 	}
 }
+
+// A mapping with a non-string key decodes as map[any]any, and has to merge
+// key by key like any other.
+func TestValuesFilesMergeNonStringKeys(t *testing.T) {
+	path := write(t, validBase+`valuesFiles: [shared.yaml]
+values:
+  ports: {8080: alt}
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`)
+
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "shared.yaml"),
+		[]byte("ports: {80: http, 443: https}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ports, ok := cfg.Values["ports"].(map[any]any)
+	if !ok || ports[80] != "http" || ports[443] != "https" || ports[8080] != "alt" {
+		t.Errorf("ports = %#v, want all three, keyed as YAML wrote them", cfg.Values["ports"])
+	}
+
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "shared.yaml"),
+		[]byte("a: 1\n---\nb: 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "more than one YAML document") {
+		t.Errorf("a values file with two documents gave %v", err)
+	}
+}
