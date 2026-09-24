@@ -974,7 +974,7 @@ talosctl waits for each to come back before the next, up to `--timeout`
 (30m). `--parallel`, `--health` and `--wait` mean what they mean for
 `upgrade`; `--mode powercycle` bypasses kexec.
 
-`upgrade-k8s` does the same for Kubernetes: it asks every node which version
+`upgrade-k8s` does for Kubernetes what `upgrade` does for Talos: it asks every node which version
 its kubelet runs, and does nothing when they are all already on
 `kubernetesVersion`.
 
