@@ -16,6 +16,15 @@ import (
 const stubTalosctl = `#!/bin/sh
 echo "$*" >> "$STUB_LOG"
 
+# STUB_DEAD_ENDPOINTS: the talosconfig's endpoints are down, so only a call
+# pinned to a node with --endpoints gets through.
+if [ -n "$STUB_DEAD_ENDPOINTS" ]; then
+	case " $* " in
+	*" --endpoints "*|*" version --client "*) ;;
+	*" etcd snapshot "*|*" read "*) echo "stub: endpoints unreachable" >&2; exit 1 ;;
+	esac
+fi
+
 for a in "$@"; do
 	case "$a" in
 	"$STUB_KILL") kill -TERM $$ ;;
@@ -105,6 +114,7 @@ nodes:
 	t.Setenv("STUB_CODE", "")
 	t.Setenv("STUB_STALE", "")
 	t.Setenv("STUB_KILL", "")
+	t.Setenv("STUB_DEAD_ENDPOINTS", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -330,7 +340,7 @@ func TestRotateCA(t *testing.T) {
 
 	for _, want := range []string{
 		"rotate-ca --control-plane-nodes 10.0.0.1 --talos=true --kubernetes=false --dry-run=false",
-		"--talosconfig " + tc + ".rotated --nodes 10.0.0.1 read /system/state/config.yaml",
+		"--talosconfig " + tc + ".rotated --endpoints 10.0.0.1 --nodes 10.0.0.1 read /system/state/config.yaml",
 		"gen secrets --output-file - --talos-version v1.14.1 --from-controlplane-config",
 	} {
 		if !strings.Contains(string(calls), want) {
@@ -402,5 +412,28 @@ func TestUpgradeDoesOnlyWhatItMust(t *testing.T) {
 
 	if snap < 0 || upgrade < 0 || snap > upgrade {
 		t.Errorf("no snapshot before the one upgrade that ran:\n%s", calls)
+	}
+}
+
+// TestSnapshotFollowsTheRouteThatAnswered: the control plane was found by
+// asking it directly, so the snapshot and rotate-ca's read of its config go
+// the same way rather than through talosconfig endpoints that may be down.
+func TestSnapshotFollowsTheRouteThatAnswered(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	t.Setenv("STUB_DEAD_ENDPOINTS", "1")
+
+	if got := run([]string{"etcd", "snapshot"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Errorf("etcd snapshot with dead endpoints: exit %d\n%s", got, calls)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "secrets.sops.yaml"), []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run([]string{"rotate-ca", "-y", "--kubernetes=false"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Errorf("rotate-ca with dead endpoints: exit %d\n%s", got, calls)
 	}
 }

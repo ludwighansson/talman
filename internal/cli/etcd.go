@@ -111,7 +111,9 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 
 	fmt.Fprintf(os.Stderr, "== snapshotting etcd on %s (%s)\n", from.Hostname, from.IPAddress)
 
-	if out, err := tal.Combined("--talosconfig", tc, "--nodes", from.IPAddress, "etcd", "snapshot", path); err != nil {
+	args := append(tal.NodeArgs(tc, from.IPAddress), "etcd", "snapshot", path)
+
+	if out, err := tal.Combined(args...); err != nil {
 		_ = os.Remove(path)
 
 		return fmt.Errorf("%w\n%s", err, indent(out))
