@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -45,7 +46,10 @@ case " $* " in
 *" apply-config "*) echo "Applied configuration without a reboot" ;;
 *" upgrade "*) echo "upgraded" ;;
 *" reboot "*) echo "rebooted" ;;
-*" rotate-ca "*"--dry-run=false"*) echo "context: rotated" > "$output" ;;
+*" rotate-ca "*"--dry-run=false"*)
+	echo "context: rotated" > "$output"
+	if [ -n "$STUB_ROTATE_PARTWAY" ]; then echo "stub: kubernetes rotation failed" >&2; exit 1; fi
+	;;
 *" rotate-ca "*) echo "would rotate" ;;
 *" read /system/state/config.yaml"*) echo "machine: {ca: new}" ;;
 *" gen secrets "*) echo "bundle: rotated" ;;
@@ -115,6 +119,7 @@ nodes:
 	t.Setenv("STUB_STALE", "")
 	t.Setenv("STUB_KILL", "")
 	t.Setenv("STUB_DEAD_ENDPOINTS", "")
+	t.Setenv("STUB_ROTATE_PARTWAY", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -436,4 +441,65 @@ func TestSnapshotFollowsTheRouteThatAnswered(t *testing.T) {
 		calls, _ := os.ReadFile(log)
 		t.Errorf("rotate-ca with dead endpoints: exit %d\n%s", got, calls)
 	}
+}
+
+// TestRotateCAPartway: a rotation talosctl abandoned after the Talos CA leaves
+// the bundle untouched and the talosconfig in place, and talman's error has to
+// say where the working talosconfig is and how to finish.
+func TestRotateCAPartway(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	secrets := filepath.Join(dir, "secrets.sops.yaml")
+	if err := os.WriteFile(secrets, []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_ROTATE_PARTWAY", "1")
+
+	stderr := captureStderr(t, func() {
+		if got := run([]string{"rotate-ca", "-y"}); got != 1 {
+			t.Errorf("exit %d, want 1", got)
+		}
+	})
+
+	for _, want := range []string{
+		"did not finish",
+		"talosconfig.rotated",
+		"secrets generate --force --from-controlplane-config",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the error does not mention %q:\n%s", want, stderr)
+		}
+	}
+
+	if b, _ := os.ReadFile(secrets); string(b) != "bundle: old\n" {
+		t.Errorf("an unfinished rotation replaced the bundle with %q", b)
+	}
+}
+
+// captureStderr runs fn with os.Stderr redirected, and returns what it wrote.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	saved := os.Stderr
+	os.Stderr = w
+
+	done := make(chan string)
+
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+
+	fn()
+
+	os.Stderr = saved
+	_ = w.Close()
+
+	return <-done
 }
