@@ -1079,6 +1079,21 @@ Root because the provisioner creates bridges and tap devices. CI runs it
 nightly on a self-hosted runner labelled `kvm`, and never as a gate on a pull
 request.
 
+## Upgrading from a 1.0.0 prerelease
+
+1.0.0 settled the schema and the command line, so a cluster directory written
+for an alpha or a beta may need these changes. Every one of them is refused
+with a message saying what to do, rather than read differently:
+
+| before | 1.0.0 |
+| --- | --- |
+| `apiVersion` optional | required: `apiVersion: talman.dev/v1` |
+| `talosMode:` | `validationMode:`, and usually not needed: it now follows `imageFactory.platform` |
+| `imageFactory.secureboot` | `imageFactory.secureBoot` |
+| any `hostname` | a lower-case RFC 1123 name, since it is also a file name |
+| `endpoint` without a port | `https://…:6443` |
+| `upgrade --stage`, `--skip-etcd-check` | removed: Talos 1.14's upgrade API ignores both; `--extra-flags` reaches them on a legacy node |
+
 ## Migrating from talhelper
 
 | talhelper | talman |
