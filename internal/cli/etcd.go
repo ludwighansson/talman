@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
@@ -111,17 +112,39 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 
 	fmt.Fprintf(os.Stderr, "== snapshotting etcd on %s (%s)\n", from.Hostname, from.IPAddress)
 
-	args := append(tal.NodeArgs(tc, from.IPAddress), "etcd", "snapshot", path)
+	// talosctl writes with the umask's permissions, usually 0644, and takes
+	// seconds to stream a file holding every Secret in the cluster. So it
+	// writes into a private directory beside the destination, and the file is
+	// moved into place only once it is 0600.
+	stage, err := os.MkdirTemp(filepath.Dir(path), ".talman-snapshot-")
+	if err != nil {
+		return err
+	}
+
+	unregister := interrupt.RemoveAllOnExit(stage)
+	defer func() {
+		_ = os.RemoveAll(stage)
+
+		unregister()
+	}()
+
+	staged := filepath.Join(stage, "snapshot.db")
+	args := append(tal.NodeArgs(tc, from.IPAddress), "etcd", "snapshot", staged)
 
 	if out, err := tal.Combined(args...); err != nil {
-		_ = os.Remove(path)
-
 		return fmt.Errorf("%w\n%s", err, indent(out))
 	}
 
-	// talosctl writes with the umask's permissions, and the file holds every
-	// Secret in the cluster.
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := os.Chmod(staged, 0o600); err != nil {
+		return err
+	}
+
+	if exists(path) {
+		return fmt.Errorf("%s appeared while the snapshot was taken; talman does not overwrite a snapshot",
+			render.Rel(path))
+	}
+
+	if err := os.Rename(staged, path); err != nil {
 		return err
 	}
 
