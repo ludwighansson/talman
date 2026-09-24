@@ -25,6 +25,7 @@ func newUpgradeCmd() *cobra.Command {
 		wait       bool
 		health     bool
 		timeout    time.Duration
+		snapshot   bool
 		parallel   int
 		detailed   bool
 		extraFlags []string
@@ -190,6 +191,12 @@ schematic, 1 on error.`,
 				succeeded = map[string]bool{}
 			)
 
+			if snapshot && !dryRun {
+				if _, err := etcdSnapshot(cfg, tal, tc, nil, ""); err != nil {
+					return fmt.Errorf("taking the etcd snapshot --snapshot asked for: %w", err)
+				}
+			}
+
 			// A dry run reboots nothing, so there is nothing to keep apart.
 			inert := dryRun
 			if inert && !cmd.Flags().Changed("parallel") {
@@ -263,6 +270,8 @@ schematic, 1 on error.`,
 		"run a cluster health check between nodes, and stop if it fails")
 	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Minute,
 		"how long to wait for each node's upgrade, and for the health check between nodes")
+	cmd.Flags().BoolVar(&snapshot, "snapshot", false,
+		"save an etcd snapshot to the output directory before upgrading anything")
 	addParallelFlag(cmd, &parallel, 1,
 		"how many workers to upgrade at once; control planes always go one at a time")
 	addDetailedExitCode(cmd, &detailed)
@@ -277,6 +286,7 @@ func newUpgradeK8sCmd() *cobra.Command {
 		to       string
 		dryRun   bool
 		force    bool
+		snapshot bool
 		detailed bool
 		extraK8s []string
 	)
@@ -345,6 +355,12 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 
 			args = append(args, extraK8s...)
 
+			if snapshot && !dryRun {
+				if _, err := etcdSnapshot(cfg, tal, tc, nil, ""); err != nil {
+					return fmt.Errorf("taking the etcd snapshot --snapshot asked for: %w", err)
+				}
+			}
+
 			if err := tal.Stream(args...); err != nil {
 				return err
 			}
@@ -364,6 +380,8 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the upgrade plan without running it")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"upgrade even when every node already runs the target version")
+	cmd.Flags().BoolVar(&snapshot, "snapshot", false,
+		"save an etcd snapshot to the output directory before upgrading")
 	addDetailedExitCode(cmd, &detailed)
 	addExtraFlags(cmd, &extraK8s)
 

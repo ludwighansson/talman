@@ -27,6 +27,7 @@ case " $* " in
 *" apply-config "*) echo "Applied configuration without a reboot" ;;
 *" upgrade "*) echo "upgraded" ;;
 *" reboot "*) echo "rebooted" ;;
+*" etcd snapshot "*) eval "out=\${$#}"; umask 022; echo "snapshot" > "$out" ;;
 *" version "*) echo "Server: Tag: v1.14.1" ;;
 esac
 `
@@ -209,5 +210,58 @@ func TestReboot(t *testing.T) {
 
 	if got := run([]string{"reboot"}); got != 1 {
 		t.Errorf("a failed reboot gave exit %d, want 1", got)
+	}
+}
+
+// TestEtcdSnapshot checks the snapshot lands in the output directory, 0600
+// whatever talosctl's umask made it, and that upgrade --snapshot takes one
+// before upgrading.
+func TestEtcdSnapshot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+
+	dir, log := exitFixture(t)
+
+	if got := run([]string{"etcd", "snapshot"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	snaps, _ := filepath.Glob(filepath.Join(dir, "clusterconfig", "etcd-stub-*.db"))
+	if len(snaps) != 1 {
+		t.Fatalf("snapshots in the output directory: %v", snaps)
+	}
+
+	info, err := os.Stat(snaps[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("snapshot is %o, want 600", perm)
+	}
+
+	named := filepath.Join(dir, "before.db")
+
+	if got := run([]string{"etcd", "snapshot", named}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	if got := run([]string{"etcd", "snapshot", named}); got != 1 {
+		t.Errorf("overwriting a snapshot gave exit %d, want 1", got)
+	}
+
+	_ = os.WriteFile(log, nil, 0o644)
+
+	if got := run([]string{"upgrade", "--force", "--snapshot"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	calls, _ := os.ReadFile(log)
+	snap := strings.Index(string(calls), "etcd snapshot")
+	upgrade := strings.Index(string(calls), " upgrade ")
+
+	if snap < 0 || upgrade < 0 || snap > upgrade {
+		t.Errorf("upgrade --snapshot did not snapshot before upgrading:\n%s", calls)
 	}
 }

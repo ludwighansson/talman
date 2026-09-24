@@ -133,6 +133,7 @@ release.`,
 		recorded(newHealthCmd()),
 		newDashboardCmd(),
 		newTalosctlCmd(),
+		newEtcdCmd(),
 		recorded(newResetCmd()),
 		newVersionCmd(),
 	} {
