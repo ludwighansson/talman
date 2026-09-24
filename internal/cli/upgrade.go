@@ -126,16 +126,14 @@ schematic, 1 on error.`,
 						n.Hostname, n.IPAddress, describeState(current), want)
 				}
 
-				args := []string{
+				args := append([]string{
 					"--talosconfig", tc,
 					"upgrade",
 					"--nodes", n.IPAddress,
 					"--image", ctx.Node.InstallerImage,
 					fmt.Sprintf("--wait=%t", wait),
 					"--timeout", timeout.String(),
-				}
-
-				args = append(args, extraFlags...)
+				}, extraFlags...)
 
 				header += fmt.Sprintf("   image %s\n", ctx.Node.InstallerImage)
 
