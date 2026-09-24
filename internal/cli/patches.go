@@ -11,7 +11,10 @@ import (
 )
 
 func newPatchesCmd() *cobra.Command {
-	var nodes []string
+	var (
+		nodes  []string
+		output outputFormat
+	)
 
 	cmd := &cobra.Command{
 		Use:   "patches",
@@ -35,6 +38,39 @@ value".`,
 			}
 
 			out := cmd.OutOrStdout()
+
+			if output.json() {
+				type patchJSON struct {
+					Group string `json:"group"`
+					Path  string `json:"path"`
+				}
+
+				type nodeJSON struct {
+					Hostname string      `json:"hostname"`
+					Role     string      `json:"role"`
+					Groups   []string    `json:"groups"`
+					Patches  []patchJSON `json:"patches"`
+				}
+
+				report := struct {
+					Nodes []nodeJSON `json:"nodes"`
+				}{Nodes: []nodeJSON{}}
+
+				for _, n := range targets {
+					node := nodeJSON{Hostname: n.Hostname, Role: string(n.Role), Groups: n.Groups, Patches: []patchJSON{}}
+					if node.Groups == nil {
+						node.Groups = []string{}
+					}
+
+					for _, ref := range cfg.PatchChain(n) {
+						node.Patches = append(node.Patches, patchJSON{Group: ref.Group, Path: ref.Rel})
+					}
+
+					report.Nodes = append(report.Nodes, node)
+				}
+
+				return writeJSON(out, report)
+			}
 
 			for i, n := range targets {
 				if i > 0 {
@@ -70,6 +106,7 @@ value".`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	addOutputFlag(cmd, &output)
 
 	return cmd
 }

@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -16,14 +18,16 @@ import (
 
 func newUpgradeCmd() *cobra.Command {
 	var (
-		nodes         []string
-		submit        bool
-		stage         bool
-		force         bool
-		skipEtcdCheck bool
-		parallel      int
-		detailed      bool
-		extraFlags    []string
+		nodes      []string
+		submit     bool
+		force      bool
+		dryRun     bool
+		wait       bool
+		health     bool
+		timeout    time.Duration
+		parallel   int
+		detailed   bool
+		extraFlags []string
 	)
 
 	cmd := &cobra.Command{
@@ -33,8 +37,13 @@ func newUpgradeCmd() *cobra.Command {
 node's schematic and talosVersion resolve to -- the same reference talman
 passes to gen config, so an upgrade cannot drift from what render produced.
 
-Nodes are upgraded one at a time in config order. Restrict the set with --node
-and check the target first with "talman image url".
+Nodes are upgraded one at a time in config order, and talosctl waits for each
+to come back on its new version before the next begins. Restrict the set with
+--node, and see what would happen first with --dry-run: it asks every node what
+it runs and names the ones an upgrade would reach, without upgrading any.
+
+--health adds a cluster health check between nodes, and stops the roll-out if
+the cluster is unhealthy. As with apply, it is off by default.
 
 --detailed-exit-code reports whether anything was upgraded: 2 when at least one
 node was, 0 when every selected node already ran its configured version and
@@ -42,6 +51,15 @@ schematic, 1 on error.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun
+
+			if dryRun {
+				rec.SetLabel("dry_run", "true")
+
+				if force {
+					return errors.New("--dry-run and --force cannot be combined: " +
+						"--force skips the question --dry-run answers")
+				}
+			}
 
 			cfg, err := loadConfig()
 			if err != nil {
@@ -113,40 +131,55 @@ schematic, 1 on error.`,
 					"upgrade",
 					"--nodes", n.IPAddress,
 					"--image", ctx.Node.InstallerImage,
-				}
-
-				if stage {
-					args = append(args, "--stage")
-				}
-
-				if skipEtcdCheck {
-					args = append(args, "--force")
+					fmt.Sprintf("--wait=%t", wait),
+					"--timeout", timeout.String(),
 				}
 
 				args = append(args, extraFlags...)
 
 				header += fmt.Sprintf("   image %s\n", ctx.Node.InstallerImage)
 
-				countMu.Lock()
-				upgraded++
-				countMu.Unlock()
+				// Counted once it has happened, not when it is attempted: a
+				// node whose upgrade failed did not change as far as anyone
+				// can tell, and the metrics must not say it did.
+				counted := func() {
+					countMu.Lock()
+					upgraded++
+					countMu.Unlock()
 
-				rec.NodeChanged(n.Hostname, true)
+					rec.NodeChanged(n.Hostname, true)
+				}
+
+				if dryRun {
+					say(header + "   would upgrade (dry run)\n")
+					counted()
+
+					return nil
+				}
 
 				if grouped {
 					out, err := tal.Combined(args...)
 					if err != nil {
 						say(header + string(out) + "   error: " + err.Error() + "\n")
-					} else {
-						say(header + string(out))
+
+						return err
 					}
 
-					return err
+					say(header + string(out))
+					counted()
+
+					return nil
 				}
 
 				say(header)
 
-				return tal.Stream(args...)
+				if err := tal.Stream(args...); err != nil {
+					return err
+				}
+
+				counted()
+
+				return nil
 			}
 
 			// Control planes one at a time whatever --parallel says: an
@@ -159,7 +192,13 @@ schematic, 1 on error.`,
 				succeeded = map[string]bool{}
 			)
 
-			for _, batch := range batches(targets, parallel) {
+			// A dry run reboots nothing, so there is nothing to keep apart.
+			inert := dryRun
+			if inert && !cmd.Flags().Changed("parallel") {
+				parallel = len(targets)
+			}
+
+			for _, batch := range batchesFor(targets, parallel, inert) {
 				grouped := len(batch) > 1
 				out := newInOrder(os.Stderr, batch)
 
@@ -187,6 +226,18 @@ schematic, 1 on error.`,
 				}
 
 				done += len(batch)
+
+				// Between batches, never after the last: by then there is
+				// nothing left for the gate to protect.
+				if health && !dryRun && done < len(targets) {
+					fmt.Fprintf(os.Stderr, "   checking cluster health before continuing\n")
+
+					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
+						return fmt.Errorf("cluster is unhealthy after upgrading %s: %w\n%s",
+							names(batch), err, resumeHint("upgrade", "upgraded", targets[done:],
+								replayFlags(cmd, "node")...))
+					}
+				}
 			}
 
 			if skipped == len(targets) {
@@ -204,11 +255,16 @@ schematic, 1 on error.`,
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "register schematics with the Image Factory first")
-	cmd.Flags().BoolVar(&stage, "stage", false, "stage the upgrade to apply on next reboot")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"upgrade even when the node already runs the configured version and schematic")
-	cmd.Flags().BoolVar(&skipEtcdCheck, "skip-etcd-check", false,
-		"pass --force to talosctl, skipping its etcd health checks")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
+		"say which nodes would be upgraded, without upgrading any")
+	cmd.Flags().BoolVar(&wait, "wait", true,
+		"wait for each node to come back on its new version before moving on")
+	cmd.Flags().BoolVar(&health, "health", false,
+		"run a cluster health check between nodes, and stop if it fails")
+	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Minute,
+		"how long to wait for each node's upgrade, and for the health check between nodes")
 	addParallelFlag(cmd, &parallel, 1,
 		"how many workers to upgrade at once; control planes always go one at a time")
 	addDetailedExitCode(cmd, &detailed)
