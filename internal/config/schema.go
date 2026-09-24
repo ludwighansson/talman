@@ -106,6 +106,10 @@ type Config struct {
 
 	Nodes []Node `yaml:"nodes"`
 
+	// Rollout orders the nodes a roll-out reaches -- upgrade, reboot, a
+	// real apply -- in waves of groups. Without it, config order.
+	Rollout *Rollout `yaml:"rollout,omitempty"`
+
 	// Dir is the directory holding the config file; every relative patch path
 	// resolves against it. Not settable from YAML.
 	Dir string `yaml:"-"`

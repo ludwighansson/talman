@@ -26,6 +26,7 @@ var applyModes = []string{"auto", "no-reboot", "staged", "try"}
 func newApplyCmd() *cobra.Command {
 	var (
 		nodes      []string
+		waves      waveFlags
 		mode       string
 		insecure   bool
 		onlyNew    bool
@@ -109,7 +110,7 @@ once, however many of these flags are passed.`,
 					mode, strings.Join(applyModes, ", "))
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
 			}
@@ -199,6 +200,12 @@ once, however many of these flags are passed.`,
 
 					return nil
 				}
+			}
+
+			// After --only-new, so the waves hold only the nodes it kept.
+			stages, targets, thenFrom, err := waves.plan(cfg, targets)
+			if err != nil {
+				return err
 			}
 
 			for _, n := range targets {
@@ -500,6 +507,7 @@ once, however many of these flags are passed.`,
 				// auto is the one mode that may reboot a node.
 				waits:     wait || mode != "auto",
 				standDown: standDown,
+				stages:    stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
 			}).run(func(n *config.Node, _ bool, say func(string)) (bool, error) {
 				return true, applyOne(n, positions[n.IPAddress], say)
 			}); err != nil {
@@ -530,6 +538,7 @@ once, however many of these flags are passed.`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	addWaveFlags(cmd, &waves)
 	cmd.Flags().StringVarP(&mode, "mode", "m", "auto",
 		"apply mode: "+strings.Join(applyModes, ", "))
 	cmd.Flags().BoolVarP(&insecure, "insecure", "i", false,

@@ -466,9 +466,12 @@ and drops a `.gitignore` that excludes the whole output directory.
 
 `-n/--node` restricts a command to named nodes, by hostname or IP. It is
 repeatable wherever a command works node by node — `apply`, `upgrade`,
-`reset`, `render`, `status`, `patches`, `schematic id`, `image url` — and names
-the one control plane to run from on `bootstrap`, `health`, `kubeconfig` and
-`upgrade-k8s`, which act on the cluster as a whole. `-v` echoes every
+`reboot`, `reset`, `render`, `status`, `patches`, `schematic id`, `image url`,
+`ctl` — and names the one control plane to run from on `bootstrap`, `health`,
+`kubeconfig` and `upgrade-k8s`, which act on the cluster as a whole. Wherever
+`-n` is repeatable, `-g/--group` selects by group or role as well:
+`talman reboot -g blue` is every node in `blue`, and `-n` and `-g` together
+select both. `-v` echoes every
 `talosctl` invocation. `-c` points at a config other than `./talman.yaml`, and
 so does `TALMAN_CONFIG` when `-c` is not given.
 
@@ -1119,6 +1122,55 @@ error: talosctl reset exited with status 1
   2 node(s) were not reset: talos-w02, talos-w03
   continue with: talman reset -n talos-w02 -n talos-w03 --graceful=false
 ```
+
+### Rolling out in waves
+
+By default a roll-out takes the nodes in config order. `rollout` in the config
+orders them by group instead, so a canary goes first and the rest follow it:
+
+```yaml
+rollout:
+  soak: 10m                          # wait after each wave, then gate on health
+  waves:
+    - controlplane                   # a role or a group
+    - blue                           # the canary
+    - [green, pink]                  # several groups make one wave
+    - {groups: [red], pause: true}   # stop after this wave
+```
+
+`upgrade`, `reboot` and `apply` go wave by wave, and inside a wave by the
+usual rules: control planes alone, workers up to `--parallel`. A node belongs
+to the first wave that names its role or one of its groups, and nodes no wave
+names form a last wave, `rest`, so a list that leaves someone out still
+reaches them — after everything it does name.
+
+Between waves talman soaks for `soak`, if one is set, and then runs the health
+gate if `--health` asked for it. A canary is only worth something if the gate
+looks after it has had time to go wrong. A wave marked `pause` stops the run
+there and says how to carry on:
+
+```console
+$ talman upgrade --health
+== wave 1/3: controlplane, 1 node(s)
+...
+== wave 2/3: blue, 3 node(s)
+...
+wave blue done; paused as rollout.waves[1] asks
+  continue with: talman upgrade --from green --health
+```
+
+From the command line, `--until <group>` stops after the wave holding it,
+`--from <group>` starts at it, and `--wave <group>` runs only that one. They
+select from the config's waves and never reorder them, so the order is the one
+that was reviewed:
+
+```console
+$ talman upgrade --until blue      # the canary, and everything before it
+$ talman upgrade --from green      # the rest, once blue has proved itself
+```
+
+Carrying on is safe to repeat: `upgrade` skips a node already on its target,
+and `apply` to a node that already has its config changes nothing.
 
 ### Backing up etcd
 

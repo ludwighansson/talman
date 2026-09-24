@@ -48,6 +48,13 @@ patches:
   db:
     - ./patches/db/hugepages.yaml
 
+# Roll-outs go wave by wave: the control plane, then the db workers as the
+# canary, then everything else. `talman upgrade --until db` stops after it.
+rollout:
+  waves:
+    - controlplane
+    - db
+
 nodes:
   - hostname: development-control-01
     ipAddress: 10.0.0.11

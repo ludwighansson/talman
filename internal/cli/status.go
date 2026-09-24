@@ -56,7 +56,7 @@ be forwarded to.`,
 				return err
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
 			}

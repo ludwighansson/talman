@@ -191,6 +191,59 @@
       },
       "type": "object"
     },
+    "rollout": {
+      "additionalProperties": false,
+      "properties": {
+        "soak": {
+          "description": "How long to wait after each wave before the next, e.g. 10m.",
+          "type": "string"
+        },
+        "waves": {
+          "description": "Waves in order. A node goes in the first that names its role or a group of its; the rest go last.",
+          "items": {
+            "oneOf": [
+              {
+                "description": "One group, or a role.",
+                "type": "string"
+              },
+              {
+                "description": "Several groups, rolled out together.",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "groups": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "pause": {
+                    "description": "Stop after this wave.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "groups"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "waves"
+      ],
+      "type": "object"
+    },
     "schematic": {
       "additionalProperties": false,
       "properties": {
@@ -280,6 +333,14 @@
       },
       "description": "Patch files by group: all, controlplane, worker, or a group some node declares. Applied in that order.",
       "type": "object"
+    },
+    "rollout": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/rollout"
+        }
+      ],
+      "description": "The order upgrade, reboot and apply take through the cluster, in waves of groups."
     },
     "schematic": {
       "description": "The Image Factory schematic: inline, or a path to a (templated) file.",

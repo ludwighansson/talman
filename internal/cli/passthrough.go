@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -34,7 +33,7 @@ It is for everything talman does not wrap: logs, dmesg, get, service, edit and
 the rest. Without -n, talosctl reaches the talosconfig's default nodes, which
 render sets to every node in the config.
 
-talman's own flags -- -n, -c and -v -- come first; everything from the first
+talman's own flags -- -n, -g, -c and -v -- come first; everything from the first
 argument that is not one of them belongs to talosctl, its flags included and
 "--" optional, so "talman ctl -e 10.0.0.2 version" reaches talosctl whole.
 talosctl's exit status is talman's.`,
@@ -65,7 +64,7 @@ talosctl's exit status is talman's.`,
 			var addrs []string
 
 			if len(nodes) > 0 {
-				targets, err := render.Nodes(cfg, nodes)
+				targets, err := selectNodes(cfg, nodes)
 				if err != nil {
 					return err
 				}
@@ -104,7 +103,8 @@ talosctl's exit status is talman's.`,
 }
 
 // passthroughArgs takes talman's own flags off the front of a `talman ctl`
-// command line -- -n/--node, -c/--config, -v/--verbose, -h/--help -- and
+// command line -- -n/--node, -g/--group, -c/--config, -v/--verbose,
+// -h/--help -- and
 // returns the rest for talosctl. It stops at "--", or at the first argument
 // that is not one of them.
 func passthroughArgs(raw []string) (nodes, rest []string, help bool, err error) {
@@ -143,6 +143,15 @@ func passthroughArgs(raw []string) (nodes, rest []string, help bool, err error) 
 			return nil, nil, false, err
 		} else if ok {
 			nodes = append(nodes, strings.Split(v, ",")...)
+			i = next
+
+			continue
+		}
+
+		if v, next, ok, err := value(i, a, "--group", "-g"); err != nil {
+			return nil, nil, false, err
+		} else if ok {
+			opts.groups = append(opts.groups, strings.Split(v, ",")...)
 			i = next
 
 			continue

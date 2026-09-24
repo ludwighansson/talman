@@ -26,6 +26,7 @@ func newUpgradeCmd() *cobra.Command {
 		health     bool
 		timeout    time.Duration
 		snapshot   bool
+		waves      waveFlags
 		parallel   int
 		detailed   bool
 		extraFlags []string
@@ -67,7 +68,12 @@ schematic, 1 on error.`,
 				return err
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
+			if err != nil {
+				return err
+			}
+
+			stages, targets, thenFrom, err := waves.plan(cfg, targets)
 			if err != nil {
 				return err
 			}
@@ -187,6 +193,7 @@ schematic, 1 on error.`,
 				verb: "upgrade", done: "upgraded",
 				targets: targets, parallel: parallel, inert: dryRun,
 				health: health, timeout: timeout, waits: wait,
+				stages: stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
 			}).run(upgradeOne); err != nil {
 				return err
 			}
@@ -218,6 +225,7 @@ schematic, 1 on error.`,
 		"how long to wait for each node's upgrade, and for the health check between nodes")
 	cmd.Flags().BoolVar(&snapshot, "snapshot", false,
 		"save an etcd snapshot to the output directory before upgrading anything")
+	addWaveFlags(cmd, &waves)
 	addParallelFlag(cmd, &parallel, 1,
 		"how many workers to upgrade at once; control planes always go one at a time")
 	addDetailedExitCode(cmd, &detailed)
