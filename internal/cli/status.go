@@ -93,8 +93,17 @@ be forwarded to.`,
 					report.Nodes = append(report.Nodes, r.json(cfg))
 				}
 
-				if !offline && quiet(reports) && askCluster(cfg, tal, tc) == clusterAbsent {
-					report.Bootstrapped = new(false)
+				// Asked whether anything is quiet or not: a script reading
+				// the field has to be able to tell a bootstrapped cluster
+				// from one talman did not ask about.
+				if !offline {
+					switch askCluster(cfg, tal, tc) {
+					case clusterUp:
+						report.Bootstrapped = new(true)
+					case clusterAbsent:
+						report.Bootstrapped = new(false)
+					case clusterUnknown:
+					}
 				}
 
 				return writeJSON(cmd.OutOrStdout(), report)
@@ -171,8 +180,8 @@ type nodeReport struct {
 // statusJSON is `status -o json`.
 type statusJSON struct {
 	Nodes []nodeJSON `json:"nodes"`
-	// Bootstrapped is false when the control planes answered that no etcd is
-	// running, and absent when that was not asked or not known.
+	// Bootstrapped is whether the control planes answered that etcd is
+	// running: absent offline, or when none of them answered.
 	Bootstrapped *bool `json:"bootstrapped,omitempty"`
 }
 
