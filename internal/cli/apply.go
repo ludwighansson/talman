@@ -85,6 +85,15 @@ way, because an apply asks each node for its diff before sending the config --
 once, however many of these flags are passed.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			rec := currentRun
+
+			// A drift check and a roll-out of the same cluster are
+			// different jobs, and neither's metrics should replace the
+			// other's.
+			if dryRun {
+				rec.SetLabel("dry_run", "true")
+			}
+
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -186,9 +195,14 @@ once, however many of these flags are passed.`,
 
 				if len(targets) == 0 {
 					fmt.Fprintf(os.Stderr, "nothing to adopt: no selected node is in maintenance mode\n")
+					rec.SetChanged(false)
 
 					return nil
 				}
+			}
+
+			for _, n := range targets {
+				rec.Plan(n.Hostname, string(n.Role))
 			}
 
 			// Everything the per-node pass touches is per node, except the
@@ -311,10 +325,15 @@ once, however many of these flags are passed.`,
 				// apply behind it is not.
 				block := header
 
-				if askFirst(dryRun, detailed, diff) {
+				// Metrics ask too: "changed" is what a CI alert most often
+				// wants to know, and without asking it is not known.
+				if askFirst(dryRun, detailed || rec != nil, diff) {
 					probe := append(slices.Clone(args), "--dry-run")
 
 					out, err := tal.Combined(probe...)
+					if err == nil {
+						rec.NodeChanged(n.Hostname, dryRunChanged(out))
+					}
 
 					if detailed && (err != nil || dryRunChanged(out)) {
 						// A dry run talman could not read is a change: for a
@@ -345,6 +364,11 @@ once, however many of these flags are passed.`,
 				// returns in a breath anyway.
 				out, err := tal.Combined(args...)
 				changes := dryRun && dryRunChanged(out)
+
+				if dryRun && err == nil {
+					rec.NodeChanged(n.Hostname, changes)
+				}
+
 				out = show(out, err != nil)
 
 				if err != nil {
@@ -453,7 +477,12 @@ once, however many of these flags are passed.`,
 				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
 					defer out.finish(n)
 
-					if err := applyOne(n, positions[n.IPAddress], func(s string) { out.say(n, s) }); err != nil {
+					rec.NodeStart(n.Hostname, string(n.Role))
+
+					err := applyOne(n, positions[n.IPAddress], func(s string) { out.say(n, s) })
+					rec.NodeDone(n.Hostname, err)
+
+					if err != nil {
 						return struct{}{}, err
 					}
 

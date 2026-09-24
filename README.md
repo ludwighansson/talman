@@ -691,6 +691,71 @@ running its configured version and schematic, and `upgrade-k8s` whether the
 upgrade ran or the cluster was already on the target. Both already made that
 decision; the flag only surfaces it.
 
+### Metrics for CI
+
+`apply`, `upgrade`, `upgrade-k8s`, `reset`, `bootstrap` and `health` can record
+what a run did, for the whole run and for each node, in the Prometheus text
+format. They write it to a file, push it to a metrics push endpoint, or both:
+
+```console
+$ talman upgrade --metrics-file talman.prom --metrics-url https://metrics.example.com \
+    --metrics-label env=prod --metrics-label pipeline=nightly
+```
+
+| flag | environment | |
+| --- | --- | --- |
+| `--metrics-file <path>` | `TALMAN_METRICS_FILE` | write the metrics here, replacing the file in one step |
+| `--metrics-url <url>` | `TALMAN_METRICS_URL` | push them to this endpoint |
+| `--metrics-label k=v` | `TALMAN_METRICS_LABELS` (`k=v,k=v`) | add a label to every metric; repeatable |
+| | `TALMAN_METRICS_TOKEN` | sent as a bearer token with the push |
+
+The environment is there so a CI job can set them once for every step.
+Metrics are recorded whether the run succeeds or fails. A file that cannot be
+written or an endpoint that cannot be reached is a warning, and never changes
+the exit code.
+
+```text
+talman_run_success{cluster,command}                   1 or 0
+talman_run_changed{cluster,command}                   1 or 0, when talman knows
+talman_run_duration_seconds{cluster,command}
+talman_run_timestamp_seconds{cluster,command}         when the run ended
+talman_run_last_success_timestamp_seconds{cluster,command}
+talman_run_nodes{cluster,command,result}              how many nodes ended in each result
+talman_run_info{cluster,command,talman_version}       1
+talman_node_result{cluster,command,node,role,result}  1, one series per node
+talman_node_success{cluster,command,node,role}        1 or 0, for nodes the run reached
+talman_node_duration_seconds{cluster,command,node,role}
+talman_node_info{cluster,command,node,role,from_version,to_version}  1, upgrade only
+```
+
+A node's result is `changed`, `unchanged`, `done` (it succeeded, but whether
+it changed is not known), `failed`, or `not_reached` (the run stopped before
+it got there). With metrics on, `apply` asks each node what would change before
+changing it, the same way `--detailed-exit-code` does, so its nodes report
+`changed` or `unchanged` rather than `done`. `apply --dry-run` and
+`upgrade-k8s --dry-run` add `dry_run="true"`, so a drift check and a roll-out
+of the same cluster are kept apart.
+
+A push goes to `<url>/metrics/job/talman/cluster/<cluster>/command/<command>`,
+followed by the extra labels. Each cluster, command and label set is its own
+group, so an `apply` never replaces an `upgrade`'s metrics. Pushes are POSTs:
+a failed run sends no last-success timestamp, so the one from the last run that
+worked stays in place. The file does the same thing by carrying that timestamp
+over from the file it replaces.
+
+Some alerts this is meant for:
+
+```yaml
+- alert: TalmanRunFailed
+  expr: talman_run_success == 0
+- alert: TalmanNodeFailed
+  expr: talman_node_success == 0
+- alert: TalmanDrift                      # a nightly `apply --dry-run`
+  expr: talman_run_changed{dry_run="true"} == 1
+- alert: TalmanNotSucceededInADay         # also catches a job killed before it could report
+  expr: time() - talman_run_last_success_timestamp_seconds > 86400
+```
+
 ### Reaching talosctl flags talman does not model
 
 Every command that shells out takes `--extra-flags`, appended verbatim to the

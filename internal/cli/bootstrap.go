@@ -24,10 +24,14 @@ plane forms over the following minute or so, so a successful bootstrap is the
 beginning of the cluster rather than the end of the command.`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			rec := currentRun
+
 			_, tal, tc, target, err := controlPlaneTarget(node)
 			if err != nil {
 				return err
 			}
+
+			rec.NodeStart(target.Hostname, string(target.Role))
 
 			fmt.Fprintf(os.Stderr, "== bootstrapping etcd on %s (%s)\n", target.Hostname, target.IPAddress)
 
@@ -35,8 +39,13 @@ beginning of the cluster rather than the end of the command.`,
 			args = append(args, "--talosconfig", tc, "bootstrap", "--nodes", target.IPAddress)
 
 			if err := tal.Stream(append(args, extraFlags...)...); err != nil {
+				rec.NodeDone(target.Hostname, err)
+
 				return err
 			}
+
+			rec.NodeChanged(target.Hostname, true)
+			rec.NodeDone(target.Hostname, nil)
 
 			// talosctl prints nothing on success, which left the one command
 			// in a cluster's life that can only be run once looking like it

@@ -79,6 +79,7 @@ release.`,
 		"path to the talman config (default "+config.DefaultFileName+")")
 	cmd.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false,
 		"echo each talosctl invocation")
+	addMetricsFlags(cmd)
 
 	for _, sub := range []*cobra.Command{
 		newRenderCmd(),
@@ -88,14 +89,14 @@ release.`,
 		newSecretsCmd(),
 		newSchematicCmd(),
 		newImageCmd(),
-		newApplyCmd(),
-		newBootstrapCmd(),
+		recorded(newApplyCmd()),
+		recorded(newBootstrapCmd()),
 		newKubeconfigCmd(),
-		newUpgradeCmd(),
-		newUpgradeK8sCmd(),
-		newHealthCmd(),
+		recorded(newUpgradeCmd()),
+		recorded(newUpgradeK8sCmd()),
+		recorded(newHealthCmd()),
 		newDashboardCmd(),
-		newResetCmd(),
+		recorded(newResetCmd()),
 		newVersionCmd(),
 	} {
 		cmd.AddCommand(withNodeCompletion(sub))
@@ -110,7 +111,12 @@ release.`,
 
 // loadConfig reads and validates the config file.
 func loadConfig() (*config.Config, error) {
-	return config.Load(config.FindConfig(opts.configFile))
+	cfg, err := config.Load(config.FindConfig(opts.configFile))
+	if err == nil {
+		currentRun.SetCluster(cfg.ClusterName)
+	}
+
+	return cfg, err
 }
 
 // runner returns a talosctl runner honouring the config and -v.
