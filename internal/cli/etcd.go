@@ -67,9 +67,7 @@ they change anything.`,
 				path = args[0]
 			}
 
-			_, err = etcdSnapshot(cfg, tal, tc, from, path)
-
-			return err
+			return etcdSnapshot(cfg, tal, tc, from, path)
 		},
 	}
 
@@ -78,14 +76,14 @@ they change anything.`,
 	return cmd
 }
 
-// etcdSnapshot saves a snapshot and returns where it went. A nil from picks
+// etcdSnapshot saves a snapshot and says where it went. A nil from picks
 // the first control plane that answers; an empty path picks a name in the
 // output directory.
-func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *config.Node, path string) (string, error) {
+func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *config.Node, path string) error {
 	if from == nil {
 		n, err := healthNode(cfg, tal, tc)
 		if err != nil {
-			return "", err
+			return err
 		}
 
 		from = n
@@ -93,7 +91,7 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 
 	if path == "" {
 		if err := render.PrepareOutput(cfg, os.Stderr); err != nil {
-			return "", err
+			return err
 		}
 
 		stem := filepath.Join(cfg.OutputPath(),
@@ -108,7 +106,7 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 	}
 
 	if exists(path) {
-		return "", fmt.Errorf("%s already exists; talman does not overwrite a snapshot", render.Rel(path))
+		return fmt.Errorf("%s already exists; talman does not overwrite a snapshot", render.Rel(path))
 	}
 
 	fmt.Fprintf(os.Stderr, "== snapshotting etcd on %s (%s)\n", from.Hostname, from.IPAddress)
@@ -116,18 +114,18 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 	if out, err := tal.Combined("--talosconfig", tc, "--nodes", from.IPAddress, "etcd", "snapshot", path); err != nil {
 		_ = os.Remove(path)
 
-		return "", fmt.Errorf("%w\n%s", err, indent(out))
+		return fmt.Errorf("%w\n%s", err, indent(out))
 	}
 
 	// talosctl writes with the umask's permissions, and the file holds every
 	// Secret in the cluster.
 	if err := os.Chmod(path, 0o600); err != nil {
-		return "", err
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(path))
 
-	return path, nil
+	return nil
 }
 
 func exists(path string) bool {
