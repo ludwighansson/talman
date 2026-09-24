@@ -58,10 +58,15 @@ dockers_v2:
     dockerfile: Dockerfile
     images:
       - ghcr.io/ludwighansson/talman
-    # No `latest`: every release so far is a prerelease, and a latest tag that
-    # follows alphas is a trap for whoever pulls it expecting stability.
+    # The moving tags follow stable releases only: a `latest` that also
+    # followed alphas and betas would be a trap for whoever pulls it expecting
+    # stability. A template that renders empty is skipped, so a prerelease is
+    # tagged with its exact version alone.
     tags:
       - "{{ .Version }}"
+      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
+      - "{{ if not .Prerelease }}{{ .Major }}{{ end }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
     platforms:
       - linux/amd64
       - linux/arm64
