@@ -205,6 +205,7 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	unregister := interrupt.RemoveAllOnExit(stage)
 	defer func() {
 		_ = os.RemoveAll(stage)
+
 		unregister()
 	}()
 

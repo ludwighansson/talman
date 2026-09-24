@@ -134,6 +134,7 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 	unregister := interrupt.RemoveAllOnExit(stage)
 	defer func() {
 		_ = os.RemoveAll(stage)
+
 		unregister()
 	}()
 
