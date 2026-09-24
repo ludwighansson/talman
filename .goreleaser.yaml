@@ -141,7 +141,13 @@ changelog:
       - "^ci:"
       - Merge pull request
       - Merge branch
+  # Groups take commits in the order they are listed, so breaking changes
+  # come out of every type before Features and Fixes see them, and lead the
+  # notes where someone upgrading will look first.
   groups:
+    - title: Breaking changes
+      regexp: '^.*?\w+(\(.+\))??!:.+$'
+      order: -1
     - title: Features
       regexp: '^.*?feat(\(.+\))??!?:.+$'
       order: 0

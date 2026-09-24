@@ -846,9 +846,9 @@ decision; the flag only surfaces it.
 
 ### Metrics for CI
 
-`apply`, `upgrade`, `upgrade-k8s`, `reboot`, `reset`, `bootstrap` and `health` can record
-what a run did, for the whole run and for each node, in the Prometheus text
-format. They write it to a file, push it to a metrics push endpoint, or both:
+`apply`, `upgrade`, `upgrade-k8s`, `reboot`, `reset`, `rotate-ca`, `bootstrap`,
+`health` and `etcd snapshot` can record what a run did, for the whole run and
+for each node, in the Prometheus text format. They write it to a file, push it to a metrics push endpoint, or both:
 
 ```console
 $ talman upgrade --metrics-file talman.prom --metrics-url https://metrics.example.com \
