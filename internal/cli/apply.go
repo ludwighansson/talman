@@ -443,28 +443,11 @@ once, however many of these flags are passed.`,
 				return nil
 			}
 
-			// Control planes one at a time, workers up to --parallel: the
-			// unit of risk is still a node, and a batch of workers cannot
-			// take out a cluster the way two control planes rebooting
-			// together can.
-			done := 0
-
 			// Nothing is enacted by a dry run or a staged apply, so the rule
 			// that keeps control planes apart has nothing to protect: they
-			// batch with everything else: asking fifty nodes what would
+			// batch with everything else, and asking fifty nodes what would
 			// change should not take fifty turns.
 			inert := dryRun || mode == "staged"
-
-			// auto is the one mode that may reboot a node.
-			if !inert && !wait && mode == "auto" {
-				if err := waitsForControlPlanes(targets); err != nil {
-					return err
-				}
-			}
-
-			if inert && !cmd.Flags().Changed("parallel") {
-				parallel = defaultParallel
-			}
 
 			// [n/m] is the node's place in the run, not the order it
 			// finished in: a batch of workers reports as it goes.
@@ -473,88 +456,54 @@ once, however many of these flags are passed.`,
 				positions[n.IPAddress] = i + 1
 			}
 
-			var (
-				okMu      sync.Mutex
-				succeeded = map[string]bool{}
-			)
-
-			for _, batch := range batchesFor(targets, parallel, inert) {
-				out := newInOrder(os.Stderr, batch)
-
-				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					defer out.finish(n)
-
-					rec.NodeStart(n.Hostname, string(n.Role))
-
-					err := applyOne(n, positions[n.IPAddress], func(s string) { out.say(n, s) })
-					rec.NodeDone(n.Hostname, err)
-
-					if err != nil {
-						return struct{}{}, err
-					}
-
-					okMu.Lock()
-					succeeded[n.IPAddress] = true
-					okMu.Unlock()
-
-					return struct{}{}, nil
-				}); err != nil {
-					return fmt.Errorf("%w\n%s", err,
-						resumeHint("apply", "applied", without(targets[done:], succeeded),
-							replayFlags(cmd, "node")...))
-				}
-
-				done += len(batch)
-
-				if dryRun || mode == "staged" {
-					continue
-				}
-
-				// The gate protects the nodes still to come, and after the
-				// last batch there are none. Checking anyway would only turn
-				// an apply that landed into a failure, which on a cluster
-				// that was unhealthy before the run is every apply.
-				if done == len(targets) {
-					break
-				}
-
-				// The gate checks the cluster the config describes, so it
-				// only means something once that cluster exists. A node that
-				// has not been adopted yet answers with a self-signed
-				// maintenance certificate, which the check reports as
-				// "certificate signed by unknown authority" -- a build-out
-				// step read as a broken cluster.
-				//
-				// So while any node is outside the cluster, the gate stands
-				// down and says which nodes those are. Once they have all
-				// joined it gates every node, which is the roll-out case it
-				// exists for.
-				if health {
-					if outside := notInCluster(cfg, tal, tc, modes, parallel); len(outside) > 0 {
-						ungated++
-
-						// Which ones, for whoever is asking why; the summary
-						// at the end gives the count.
-						if opts.verbose && !saidUngated {
-							saidUngated = true
-
-							fmt.Fprintf(os.Stderr, "%s%s\n", detail, strings.Join(outside, ", "))
-						}
-
-						continue
-					}
-				}
-
-				if health {
+			// The gate checks the cluster the config describes, so it only
+			// means something once that cluster exists. A node that has not
+			// been adopted yet answers with a self-signed maintenance
+			// certificate, which the check reports as "certificate signed by
+			// unknown authority" -- a build-out step read as a broken
+			// cluster. So while any node is outside the cluster, the gate
+			// stands down and says which nodes those are. Once they have all
+			// joined it gates every node, which is the roll-out case it
+			// exists for.
+			standDown := func() bool {
+				outside := notInCluster(cfg, tal, tc, modes, parallel)
+				if len(outside) == 0 {
 					gated++
 
-					fmt.Fprintf(os.Stderr, "%schecking cluster health before continuing\n", detail)
-
-					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
-						return fmt.Errorf("cluster is unhealthy after applying to %s: %w\n%s",
-							names(batch), err, resumeHint("apply", "applied", targets[done:], replayFlags(cmd, "node")...))
-					}
+					return false
 				}
+
+				ungated++
+
+				// Which ones, for whoever is asking why; the summary at the
+				// end gives the count.
+				if opts.verbose && !saidUngated {
+					saidUngated = true
+
+					fmt.Fprintf(os.Stderr, "%s%s\n", detail, strings.Join(outside, ", "))
+				}
+
+				return true
+			}
+
+			// Control planes one at a time, workers up to --parallel: the
+			// unit of risk is still a node, and a batch of workers cannot
+			// take out a cluster the way two control planes rebooting
+			// together can. Every apply counts as acting for the gate: an
+			// apply that changed nothing is not known to have changed
+			// nothing unless the node was asked first.
+			if err := (rollOut{
+				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
+				verb: "apply", done: "applied",
+				targets: targets, parallel: parallel, inert: inert,
+				health: health, timeout: timeout,
+				// auto is the one mode that may reboot a node.
+				waits:     wait || mode != "auto",
+				standDown: standDown,
+			}).run(func(n *config.Node, _ bool, say func(string)) (bool, error) {
+				return true, applyOne(n, positions[n.IPAddress], say)
+			}); err != nil {
+				return err
 			}
 
 			adopted := adoptedEarly.Load()
