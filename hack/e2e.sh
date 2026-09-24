@@ -10,8 +10,10 @@
 #
 # What is left is still most of what breaks: rendering against a real talosctl,
 # adopting an existing cluster's secrets, the per-node probing, apply with its
-# wait and its health gate, the exit codes, and the decisions upgrade and
-# upgrade-k8s make about whether there is anything to do.
+# wait and its health gate, the exit codes, the decisions upgrade and
+# upgrade-k8s make about whether there is anything to do, talosctl passed
+# through by hostname, an etcd snapshot, and a CA rotation with the bundle and
+# talosconfig that follow it.
 set -euo pipefail
 
 cluster=${CLUSTER_NAME:-talman-e2e}
@@ -155,6 +157,45 @@ expect_exit 0 "upgrade --detailed-exit-code" "$talman" upgrade --detailed-exit-c
 
 step "upgrade-k8s decides there is nothing to do"
 expect_exit 0 "upgrade-k8s --detailed-exit-code" "$talman" upgrade-k8s --detailed-exit-code --dry-run
+
+step "status as JSON"
+json=$("$talman" status -o json)
+contains "$json" '"status": "running"' "status -o json reports running nodes"
+contains "$json" "\"running\": \"$talos_version\"" "status -o json reports the Talos version"
+
+step "talosctl through talman, by hostname"
+expect_exit 0 "ctl get members" "$talman" ctl -n "$cluster-controlplane-1" get members
+out=$("$talman" ctl -n "$cluster-worker-1" -- get machinetype -o yaml)
+contains "$out" "worker" "ctl reached the worker it was named"
+code=0
+"$talman" ctl -- no-such-command >/dev/null 2>&1 || code=$?
+[ "$code" -ne 0 ] || fail "a failing talosctl command exited 0 through talman"
+pass "talosctl's failure is talman's (exit $code)"
+
+step "etcd snapshot"
+expect_exit 0 "etcd snapshot" "$talman" etcd snapshot
+snapshot=$(find clusterconfig -name "etcd-$cluster-*.db" -perm 600 | head -1)
+[ -s "$snapshot" ] || fail "no 0600 snapshot in the output directory"
+pass "wrote $snapshot"
+
+step "rotate-ca, and the bundle and talosconfig that follow it"
+cp secrets.sops.yaml secrets-before-rotation.yaml
+expect_exit 0 "rotate-ca --dry-run" "$talman" rotate-ca --dry-run
+cmp -s secrets.sops.yaml secrets-before-rotation.yaml || fail "a dry run changed the bundle"
+expect_exit 0 "rotate-ca" "$talman" rotate-ca -y
+cmp -s secrets.sops.yaml secrets-before-rotation.yaml && fail "the bundle still holds the old CAs"
+pass "the bundle was replaced"
+# Everything from here reaches the cluster through the rotated talosconfig,
+# and renders from the bundle extracted after the rotation.
+expect_exit 0 "health, after rotating" "$talman" health
+expect_exit 0 "render, after rotating" "$talman" render
+expect_exit 0 "kubeconfig, after rotating" "$talman" kubeconfig
+dry=0
+"$talman" apply --dry-run --detailed-exit-code >/dev/null || dry=$?
+case $dry in
+0 | 2) pass "apply --dry-run after rotating (exit $dry)" ;;
+*) fail "apply --dry-run failed after rotating, exit $dry" ;;
+esac
 
 step "an old talosctl is refused before it reaches the cluster"
 printf '#!/bin/sh\nprintf "Client:\\n\\tTag:\\tv1.9.5\\n"\n' > old-talosctl

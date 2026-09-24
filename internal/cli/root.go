@@ -137,6 +137,7 @@ release.`,
 		newTalosctlCmd(),
 		newEtcdCmd(),
 		recorded(newResetCmd()),
+		recorded(newRotateCACmd()),
 		newVersionCmd(),
 	} {
 		cmd.AddCommand(withNodeCompletion(sub))
