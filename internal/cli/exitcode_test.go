@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ludwighansson/talman/internal/sopsx"
 )
 
 // stubTalosctl is a talosctl that answers the calls apply and upgrade make,
@@ -357,7 +359,7 @@ func TestRotateCA(t *testing.T) {
 		t.Errorf("bundle = %q, want the one extracted after the rotation", b)
 	}
 
-	backups, _ := filepath.Glob(secrets + ".pre-rotate-*")
+	backups, _ := filepath.Glob(filepath.Join(dir, "clusterconfig", "secrets-pre-rotate-*.yaml"))
 	if len(backups) != 1 {
 		t.Fatalf("old bundle backups: %v", backups)
 	} else if b, _ := os.ReadFile(backups[0]); string(b) != "bundle: old\n" {
@@ -502,4 +504,60 @@ func captureStderr(t *testing.T, fn func()) string {
 	_ = w.Close()
 
 	return <-done
+}
+
+// TestRotateCALeavesTheRotatedTalosconfigAlone: after a rotation that stopped
+// partway, talosconfig.rotated may be the only way into the cluster, so no
+// later run -- a dry run included -- may delete it.
+func TestRotateCALeavesTheRotatedTalosconfigAlone(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "secrets.sops.yaml"), []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rotated := filepath.Join(dir, "clusterconfig", "talosconfig.rotated")
+	if err := os.WriteFile(rotated, []byte("context: the only one that works\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{{"rotate-ca", "--dry-run"}, {"rotate-ca", "-y", "--talos=false"}} {
+		if got := run(args); got != 1 {
+			t.Errorf("%v with a rotated talosconfig left over: exit %d, want 1", args, got)
+		}
+
+		if b, _ := os.ReadFile(rotated); string(b) != "context: the only one that works\n" {
+			t.Fatalf("%v removed or changed the rotated talosconfig", args)
+		}
+	}
+
+	calls, _ := os.ReadFile(log)
+	if strings.Contains(string(calls), "rotate-ca") {
+		t.Errorf("talosctl rotate-ca ran anyway:\n%s", calls)
+	}
+}
+
+// TestRotateCAChecksEncryptionFirst: an encrypted bundle that could not be
+// re-encrypted is found out before the cluster's CAs change, not after.
+func TestRotateCAChecksEncryptionFirst(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	encrypted := "bundle: ENC[AES256_GCM,data:x]\nsops:\n  version: 3.13.3\n"
+	if err := os.WriteFile(filepath.Join(dir, "secrets.sops.yaml"), []byte(encrypted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	saved := sopsx.Bin
+	sopsx.Bin = filepath.Join(dir, "no-sops-here")
+
+	t.Cleanup(func() { sopsx.Bin = saved })
+
+	if got := run([]string{"rotate-ca", "-y"}); got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+
+	calls, _ := os.ReadFile(log)
+	if strings.Contains(string(calls), "rotate-ca") {
+		t.Errorf("the CAs were rotated before the bundle's encryption was known to work:\n%s", calls)
+	}
 }

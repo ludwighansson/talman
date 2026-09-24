@@ -73,6 +73,27 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 				return err
 			}
 
+			// Left by a rotation that did not finish, this may be the only
+			// talosconfig the cluster still accepts. It is never removed
+			// here: deleting it could lock the operator out of every node.
+			rotated := tc + ".rotated"
+			if exists(rotated) {
+				return fmt.Errorf("%s is left from a rotation that did not finish, and may be the only "+
+					"talosconfig the cluster still accepts: if `talosctl --talosconfig %s health` passes, "+
+					"move it over %s; delete it only if you are sure it is not needed; then run rotate-ca again",
+					render.Rel(rotated), render.Rel(rotated), render.Rel(tc))
+			}
+
+			// Whether the new bundle can be written the way the old one is,
+			// before anything is rotated: finding out afterwards leaves a
+			// cluster trusting CAs no bundle holds.
+			if !dryRun && sopsx.IsEncrypted(old) {
+				if _, err := sopsx.EncryptTo([]byte("preflight: true\n"), cfg.SecretPath()); err != nil {
+					return fmt.Errorf("%s is encrypted, and the rotated bundle could not be encrypted "+
+						"the same way, so nothing was rotated: %w", cfg.SecretFile, err)
+				}
+			}
+
 			if !dryRun && !yes {
 				which := map[[2]bool]string{
 					{true, true}:  "the Talos API and Kubernetes API CAs",
@@ -97,8 +118,25 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 				}
 			}
 
-			rotated := tc + ".rotated"
-			_ = os.Remove(rotated)
+			// A dry run's talosconfig goes somewhere private and is thrown
+			// away: only a real rotation's is worth keeping.
+			output := rotated
+
+			if dryRun {
+				stage, err := os.MkdirTemp("", "talman-rotate-")
+				if err != nil {
+					return err
+				}
+
+				unregister := interrupt.RemoveAllOnExit(stage)
+				defer func() {
+					_ = os.RemoveAll(stage)
+
+					unregister()
+				}()
+
+				output = filepath.Join(stage, "talosconfig")
+			}
 
 			args := []string{
 				"--talosconfig", tc,
@@ -107,7 +145,7 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 				fmt.Sprintf("--talos=%t", talos),
 				fmt.Sprintf("--kubernetes=%t", kubernetes),
 				fmt.Sprintf("--dry-run=%t", dryRun),
-				"--output", rotated,
+				"--output", output,
 				// talman's renders carry neither, and the next apply would
 				// only take them out again.
 				"--with-docs=false",
@@ -163,7 +201,13 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 			}
 
 			fmt.Fprintln(os.Stderr, "next:")
-			fmt.Fprintf(os.Stderr, "  commit %s\n", cfg.SecretFile)
+
+			if sopsx.IsEncrypted(old) {
+				fmt.Fprintf(os.Stderr, "  commit %s\n", cfg.SecretFile)
+			} else {
+				fmt.Fprintf(os.Stderr, "  keep %s out of git: it is unencrypted\n", cfg.SecretFile)
+			}
+
 			fmt.Fprintln(os.Stderr, "  talman render       the rendered configs still carry the old CAs")
 
 			if kubernetes {
@@ -235,7 +279,16 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		}
 	}
 
-	backup := fmt.Sprintf("%s.pre-rotate-%s", dest, time.Now().UTC().Format("20060102T150405Z"))
+	// Into the output directory, gitignored: a plaintext bundle's copy still
+	// holds every key rotate-ca does not change -- etcd's, the service
+	// account's, the cluster secret -- and beside the bundle it would be one
+	// `git add .` from a commit.
+	if err := render.PrepareOutput(cfg, os.Stderr); err != nil {
+		return err
+	}
+
+	backup := filepath.Join(cfg.OutputPath(),
+		fmt.Sprintf("secrets-pre-rotate-%s.yaml", time.Now().UTC().Format("20060102T150405Z")))
 	if err := render.WriteAtomic(backup, old); err != nil {
 		return fmt.Errorf("keeping the old bundle: %w", err)
 	}
