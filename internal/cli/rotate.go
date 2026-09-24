@@ -187,8 +187,8 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		return err
 	}
 
-	machineConfig, err := tal.Output("--talosconfig", talosconfig, "--nodes", from.IPAddress,
-		"read", "/system/state/config.yaml")
+	machineConfig, err := tal.Output(append(tal.NodeArgs(talosconfig, from.IPAddress),
+		"read", "/system/state/config.yaml")...)
 	if err != nil {
 		return fmt.Errorf("reading %s's machine config: %w", from.Hostname, err)
 	}

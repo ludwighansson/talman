@@ -258,6 +258,21 @@ func (r *Runner) prefersProxy(node string) bool {
 	return r.routes[node]
 }
 
+// NodeArgs are the leading arguments that reach node the way it last
+// answered: pinned to its own address, or through the talosconfig's
+// endpoints. A command that follows a probe -- a snapshot, a read -- goes the
+// way the probe proved works, rather than through endpoints that may be the
+// very thing that is down.
+func (r *Runner) NodeArgs(talosconfig, node string) []string {
+	args := []string{"--talosconfig", talosconfig}
+
+	if !r.prefersProxy(node) {
+		args = append(args, "--endpoints", node)
+	}
+
+	return append(args, "--nodes", node)
+}
+
 func (r *Runner) rememberRoute(node string, viaProxy bool) {
 	r.routeMu.Lock()
 	defer r.routeMu.Unlock()
