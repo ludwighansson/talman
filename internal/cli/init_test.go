@@ -59,3 +59,23 @@ func TestInit(t *testing.T) {
 		t.Errorf("init with no control plane gave exit %d, want 1", got)
 	}
 }
+
+func TestInitIPv6(t *testing.T) {
+	t.Setenv("TALMAN_CONFIG", "")
+
+	dir := filepath.Join(t.TempDir(), "v6")
+
+	if got := run([]string{"init", dir, "--talos-version", "v1.14.1", "--kubernetes-version", "1.37.0",
+		"--controlplane", "cp=fd00::11"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	cfg, err := config.Load(filepath.Join(dir, config.DefaultFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Endpoint != "https://[fd00::11]:6443" {
+		t.Errorf("endpoint = %q, want the address bracketed", cfg.Endpoint)
+	}
+}

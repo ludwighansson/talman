@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -135,7 +136,7 @@ It refuses to overwrite a talman.yaml or a .sops.yaml that is already there.`,
 
 			if endpoint == "" {
 				_, ip, _ := strings.Cut(controlPlanes[0], "=")
-				endpoint = "https://" + ip + ":6443"
+				endpoint = "https://" + net.JoinHostPort(ip, "6443")
 			}
 
 			tal := runnerFor(config.DefaultTalosctl)
