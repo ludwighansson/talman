@@ -121,7 +121,16 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 			tal := runner(cfg)
 
 			if err := tal.Stream(append(args, extraFlags...)...); err != nil {
-				return err
+				if dryRun {
+					return err
+				}
+
+				// talosctl stopped partway, and how far it got is not
+				// something talman can tell from outside: it rotates the
+				// Talos CA first and writes the talosconfig for the new
+				// one when that is done, so that file is the one clue.
+				return fmt.Errorf("%w\n  the rotation did not finish, and may have got partway.%s",
+					err, partialRotation(cfg, tc, rotated))
 			}
 
 			if dryRun {
@@ -140,12 +149,8 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 			}
 
 			if err := replaceBundle(cfg, tal, talosconfig, old); err != nil {
-				return fmt.Errorf("%w\n  the cluster's CAs WERE rotated, but %s still holds the old ones; "+
-					"finish by hand before the next apply:\n"+
-					"    talosctl --talosconfig %s --nodes <control plane> read /system/state/config.yaml > cp.yaml\n"+
-					"    talman secrets generate --force --from-controlplane-config cp.yaml\n"+
-					"    rm cp.yaml",
-					err, cfg.SecretFile, render.Rel(talosconfig))
+				return fmt.Errorf("%w\n  the cluster's CAs WERE rotated, but %s still holds the old ones.\n%s",
+					err, cfg.SecretFile, finishByHand(cfg, talosconfig))
 			}
 
 			if talos {
@@ -243,4 +248,32 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		cfg.SecretFile, from.Hostname, render.Rel(backup))
 
 	return nil
+}
+
+// partialRotation says what an unfinished rotation left behind, and how to
+// finish it.
+func partialRotation(cfg *config.Config, tc, rotated string) string {
+	if !exists(rotated) {
+		return fmt.Sprintf("\n  talosctl wrote no talosconfig for a new Talos CA, so %s is still the one to use,\n"+
+			"  and %s still matches the Talos CA. Check the cluster with `talman health`, then run\n"+
+			"  `talman rotate-ca` again; if the Kubernetes CA got partway, the rerun carries it through.",
+			render.Rel(tc), cfg.SecretFile)
+	}
+
+	return fmt.Sprintf("\n  talosctl wrote %s, the talosconfig for a new Talos CA, so the Talos CA has\n"+
+		"  probably been rotated and %s may no longer be accepted. Once `talosctl --talosconfig %s health`\n"+
+		"  passes, make it talman's and bring %s in line:\n"+
+		"    mv %s %s\n%s",
+		render.Rel(rotated), render.Rel(tc), render.Rel(rotated), cfg.SecretFile,
+		render.Rel(rotated), render.Rel(tc), finishByHand(cfg, tc))
+}
+
+// finishByHand spells out extracting the bundle from a control plane, which is
+// what rotate-ca does itself once a rotation has finished.
+func finishByHand(cfg *config.Config, talosconfig string) string {
+	return fmt.Sprintf("  finish by hand before the next apply:\n"+
+		"    talosctl --talosconfig %s --nodes <control plane> read /system/state/config.yaml > cp.yaml\n"+
+		"    talman secrets generate --force --from-controlplane-config cp.yaml\n"+
+		"    rm cp.yaml    # it holds every key in the bundle",
+		render.Rel(talosconfig))
 }
