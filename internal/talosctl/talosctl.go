@@ -214,7 +214,7 @@ func (r *Runner) Output(args ...string) ([]byte, error) {
 
 	r.echo(args)
 
-	if err := cmd.Run(); err != nil {
+	if err := interrupt.Run(cmd); err != nil {
 		return nil, &ExitError{Args: args, Stderr: stderr.String(), Err: err}
 	}
 
@@ -242,7 +242,7 @@ func (r *Runner) Combined(args ...string) ([]byte, error) {
 
 	r.echo(args)
 
-	if err := cmd.Run(); err != nil {
+	if err := interrupt.Run(cmd); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return buf.Bytes(), fmt.Errorf("talosctl %s exited with status %d", subcommand(args), exitErr.ExitCode())
@@ -264,7 +264,7 @@ func (r *Runner) Stream(args ...string) error {
 
 	r.echo(args)
 
-	if err := cmd.Run(); err != nil {
+	if err := interrupt.Run(cmd); err != nil {
 		// Named the same way as a captured failure: the streamed output has
 		// already shown the operator what went wrong, so repeating the argv
 		// only buries it.

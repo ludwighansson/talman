@@ -177,7 +177,7 @@ func run(args ...string) ([]byte, string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 
-	err := cmd.Run()
+	err := interrupt.Run(cmd)
 
 	return out.Bytes(), errBuf.String(), err
 }

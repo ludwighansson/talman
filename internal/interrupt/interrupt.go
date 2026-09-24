@@ -38,6 +38,8 @@ var (
 	mu       sync.Mutex
 	cleanups = map[int]func(){}
 	nextID   int
+
+	running = map[*os.Process]bool{}
 )
 
 // Context is cancelled by the first SIGINT or SIGTERM.
@@ -64,6 +66,7 @@ func Watch() (stop func()) {
 
 		select {
 		case <-ch:
+			killRunning()
 			RunCleanups()
 			os.Exit(ExitCode)
 		case <-done:
@@ -126,6 +129,41 @@ func Command(name string, args ...string) *exec.Cmd {
 	cmd.WaitDelay = waitDelay
 
 	return cmd
+}
+
+// Run starts cmd and waits for it, like cmd.Run, keeping track of the process
+// while it runs so a forced exit can kill it: exiting without doing so would
+// leave a talosctl that ignored SIGTERM carrying on against the cluster after
+// talman is gone.
+func Run(cmd *exec.Cmd) error {
+	mu.Lock()
+
+	if err := cmd.Start(); err != nil {
+		mu.Unlock()
+
+		return err
+	}
+
+	proc := cmd.Process
+	running[proc] = true
+	mu.Unlock()
+
+	defer func() {
+		mu.Lock()
+		delete(running, proc)
+		mu.Unlock()
+	}()
+
+	return cmd.Wait()
+}
+
+func killRunning() {
+	mu.Lock()
+	defer mu.Unlock()
+
+	for proc := range running {
+		_ = proc.Kill()
+	}
 }
 
 // Sleep waits for d, or until the run is interrupted, whichever is first.
