@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ludwighansson/talman/internal/config"
-	"github.com/ludwighansson/talman/internal/render"
 )
 
 // rebootModes are the modes `talosctl reboot --mode` accepts.
@@ -23,6 +22,7 @@ func newRebootCmd() *cobra.Command {
 		health     bool
 		timeout    time.Duration
 		parallel   int
+		waves      waveFlags
 		extraFlags []string
 	)
 
@@ -56,7 +56,12 @@ the cluster is unhealthy. As with apply and upgrade, it is off by default.`,
 				return err
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
+			if err != nil {
+				return err
+			}
+
+			stages, targets, thenFrom, err := waves.plan(cfg, targets)
 			if err != nil {
 				return err
 			}
@@ -98,6 +103,7 @@ the cluster is unhealthy. As with apply and upgrade, it is off by default.`,
 				verb: "reboot", done: "rebooted",
 				targets: targets, parallel: parallel,
 				health: health, timeout: timeout, waits: wait,
+				stages: stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
 			}).run(rebootOne); err != nil {
 				return err
 			}
@@ -118,6 +124,7 @@ the cluster is unhealthy. As with apply and upgrade, it is off by default.`,
 		"how long to wait for each node to come back, and for the health check between nodes")
 	addParallelFlag(cmd, &parallel, 1,
 		"how many workers to reboot at once; control planes always go one at a time")
+	addWaveFlags(cmd, &waves)
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd

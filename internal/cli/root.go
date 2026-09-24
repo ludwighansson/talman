@@ -38,6 +38,8 @@ func addDetailedExitCode(cmd *cobra.Command, target *bool) {
 type globals struct {
 	configFile string
 	verbose    bool
+	// groups is -g/--group, on every command whose -n takes a list.
+	groups []string
 }
 
 var opts globals
@@ -253,6 +255,12 @@ func ensureTalosconfig(cfg *config.Config) (string, error) {
 func replayFlags(cmd *cobra.Command, except ...string) []string {
 	var out []string
 
+	// A hint that names the nodes left names them all: -g beside it would
+	// add its whole group back.
+	if slices.Contains(except, "node") {
+		except = append(except, "group")
+	}
+
 	cmd.Flags().Visit(func(f *pflag.Flag) {
 		if slices.Contains(except, f.Name) {
 			return
@@ -342,7 +350,7 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool, output output
 		return err
 	}
 
-	targets, err := render.Nodes(cfg, nodes)
+	targets, err := selectNodes(cfg, nodes)
 	if err != nil {
 		return err
 	}
@@ -399,4 +407,50 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool, output output
 func addExtraFlags(cmd *cobra.Command, target *[]string) {
 	cmd.Flags().StringArrayVar(target, "extra-flags", nil,
 		"extra flag passed verbatim to the underlying talosctl command (repeatable)")
+}
+
+// selectNodes is the nodes a command works on: those -n names and those in
+// the groups -g names, in config order; every node when neither is given.
+func selectNodes(cfg *config.Config, names []string) ([]*config.Node, error) {
+	if len(opts.groups) == 0 {
+		return render.Nodes(cfg, names)
+	}
+
+	declared := cfg.DeclaredGroups()
+
+	for _, g := range opts.groups {
+		if g != config.GroupControlPlane && g != config.GroupWorker && !declared[g] {
+			return nil, fmt.Errorf("-g %s: no node declares the group %q, and it is not a role", g, g)
+		}
+	}
+
+	named := map[string]bool{}
+
+	if len(names) > 0 {
+		picked, err := render.Nodes(cfg, names)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, n := range picked {
+			named[n.Hostname] = true
+		}
+	}
+
+	var out []*config.Node
+
+	for i := range cfg.Nodes {
+		n := &cfg.Nodes[i]
+
+		in := named[n.Hostname] || slices.Contains(opts.groups, string(n.Role))
+		for _, g := range n.Groups {
+			in = in || slices.Contains(opts.groups, g)
+		}
+
+		if in {
+			out = append(out, n)
+		}
+	}
+
+	return out, nil
 }

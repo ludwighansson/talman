@@ -47,6 +47,7 @@ type schemaGen struct {
 // schemaRequired lists the keys Validate insists on, by type.
 var schemaRequired = map[reflect.Type][]string{
 	reflect.TypeFor[Config]():            {"apiVersion", "clusterName", "endpoint", "talosVersion", "kubernetesVersion", "nodes"},
+	reflect.TypeFor[Rollout]():           {"waves"},
 	reflect.TypeFor[Node]():              {"hostname", "ipAddress", "role"},
 	reflect.TypeFor[factory.MetaValue](): {"key", "value"},
 }
@@ -54,6 +55,7 @@ var schemaRequired = map[reflect.Type][]string{
 // schemaDefNames names the types that get a $defs entry of their own.
 var schemaDefNames = map[reflect.Type]string{
 	reflect.TypeFor[Node]():                     "node",
+	reflect.TypeFor[Rollout]():                  "rollout",
 	reflect.TypeFor[factory.Config]():           "imageFactory",
 	reflect.TypeFor[factory.Schematic]():        "schematic",
 	reflect.TypeFor[factory.Customization]():    "customization",
@@ -83,6 +85,9 @@ var schemaDescriptions = map[string]string{
 	"Config.schematicID":       "A schematic ID to use as is, instead of a schematic.",
 	"Config.patches":           "Patch files by group: all, controlplane, worker, or a group some node declares. Applied in that order.",
 	"Config.nodes":             "Every machine in the cluster.",
+	"Config.rollout":           "The order upgrade, reboot and apply take through the cluster, in waves of groups.",
+	"Rollout.soak":             "How long to wait after each wave before the next, e.g. 10m.",
+	"Rollout.waves":            "Waves in order. A node goes in the first that names its role or a group of its; the rest go last.",
 	"Node.hostname":            "An RFC 1123 host name: the Kubernetes node name, and the rendered file's name.",
 	"Node.ipAddress":           "The address talman reaches the node at.",
 	"Node.role":                "controlplane or worker.",
@@ -108,6 +113,22 @@ func (g *schemaGen) schema(t reflect.Type) any {
 		return map[string]any{"enum": []string{string(RoleControlPlane), string(RoleWorker)}}
 	case reflect.TypeFor[factory.Bootloader]():
 		return map[string]any{"enum": []string{"none", "dual-boot", "sd-boot", "grub"}}
+	case reflect.TypeFor[Wave]():
+		groups := map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1}
+
+		return map[string]any{"oneOf": []any{
+			map[string]any{"type": "string", "description": "One group, or a role."},
+			withDescription(groups, "Several groups, rolled out together."),
+			map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"groups"},
+				"properties": map[string]any{
+					"groups": groups,
+					"pause":  map[string]any{"type": "boolean", "description": "Stop after this wave."},
+				},
+			},
+		}}
 	case reflect.TypeFor[SchematicRef]():
 		return map[string]any{"oneOf": []any{
 			map[string]any{"type": "string", "minLength": 1, "description": "A path to a schematic file."},

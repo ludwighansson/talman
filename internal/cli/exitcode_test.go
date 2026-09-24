@@ -699,3 +699,130 @@ func TestApplyGatesBetweenBatches(t *testing.T) {
 		t.Errorf("health gate ran %d time(s), want once, between c1 and w1:\n%s", n, calls)
 	}
 }
+
+const waveNodes = `  - hostname: g1
+    ipAddress: 10.0.0.3
+    role: worker
+    groups: [green]
+  - hostname: b1
+    ipAddress: 10.0.0.2
+    role: worker
+    groups: [blue]
+  - hostname: p1
+    ipAddress: 10.0.0.4
+    role: worker
+    groups: [pink]
+  - hostname: x1
+    ipAddress: 10.0.0.5
+    role: worker
+`
+
+// rebooted lists the nodes talosctl was asked to reboot, in order.
+func rebooted(t *testing.T, log string) string {
+	t.Helper()
+
+	calls, _ := os.ReadFile(log)
+
+	var out []string
+
+	for line := range strings.SplitSeq(string(calls), "\n") {
+		if _, rest, ok := strings.Cut(line, " reboot --nodes "); ok {
+			ip, _, _ := strings.Cut(rest, " ")
+			out = append(out, ip)
+		}
+	}
+
+	return strings.Join(out, " ")
+}
+
+// TestRolloutWaves: the config's waves order a roll-out, and --wave, --from,
+// --until and -g select from them without reordering.
+func TestRolloutWaves(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes+`rollout:
+  soak: 10ms
+  waves:
+    - controlplane
+    - blue
+    - [green, pink]
+`)
+
+	for _, tt := range []struct {
+		args []string
+		want string
+		hint string
+	}{
+		// c1, then blue, then green and pink in config order, then the rest.
+		{[]string{"reboot"}, "10.0.0.1 10.0.0.2 10.0.0.3 10.0.0.4 10.0.0.5", ""},
+		{[]string{"reboot", "--until", "blue"}, "10.0.0.1 10.0.0.2", "--from green"},
+		{[]string{"reboot", "--from", "pink"}, "10.0.0.3 10.0.0.4 10.0.0.5", ""},
+		{[]string{"reboot", "--wave", "green"}, "10.0.0.3 10.0.0.4", ""},
+		{[]string{"reboot", "--wave", "rest"}, "10.0.0.5", ""},
+		{[]string{"reboot", "-g", "pink", "-g", "blue"}, "10.0.0.2 10.0.0.4", ""},
+		{[]string{"reboot", "-g", "worker", "--until", "blue"}, "10.0.0.2", "--from green"},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			_ = os.WriteFile(log, nil, 0o644)
+
+			var got int
+
+			stderr := captureStderr(t, func() { got = run(tt.args) })
+
+			if got != 0 {
+				t.Fatalf("exit %d\n%s", got, stderr)
+			}
+
+			if order := rebooted(t, log); order != tt.want {
+				t.Errorf("rebooted %q, want %q\n%s", order, tt.want, stderr)
+			}
+
+			if tt.hint != "" && !strings.Contains(stderr, tt.hint) {
+				t.Errorf("no %q in the hint:\n%s", tt.hint, stderr)
+			}
+		})
+	}
+
+	stderr := captureStderr(t, func() { run([]string{"reboot"}) })
+	if !strings.Contains(stderr, "== wave 2/4: blue, 1 node(s)") || !strings.Contains(stderr, "soaking 10ms") {
+		t.Errorf("waves were not announced, or not soaked between:\n%s", stderr)
+	}
+
+	for _, args := range [][]string{{"reboot", "--wave", "purple"}, {"reboot", "-g", "purple"}} {
+		if got := run(args); got != 1 {
+			t.Errorf("%v: exit %d, want 1", args, got)
+		}
+	}
+}
+
+// TestRolloutPause: a wave marked pause stops the roll-out after it, and says
+// how to carry on.
+func TestRolloutPause(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes+`rollout:
+  waves:
+    - {groups: [blue], pause: true}
+    - green
+`)
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"reboot", "-g", "worker"}) })
+	if got != 0 {
+		t.Fatalf("exit %d\n%s", got, stderr)
+	}
+
+	if order := rebooted(t, log); order != "10.0.0.2" {
+		t.Errorf("rebooted %q before pausing, want only blue's 10.0.0.2", order)
+	}
+
+	if !strings.Contains(stderr, "continue with: talman reboot --from green --group=worker") {
+		t.Errorf("the pause did not say how to carry on:\n%s", stderr)
+	}
+}
+
+// Without rollout in the config, the wave flags have nothing to select from.
+func TestWaveFlagsNeedARollout(t *testing.T) {
+	exitFixture(t)
+
+	if got := run([]string{"reboot", "--until", "blue"}); got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+}

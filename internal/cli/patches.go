@@ -6,8 +6,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-
-	"github.com/ludwighansson/talman/internal/render"
 )
 
 func newPatchesCmd() *cobra.Command {
@@ -32,7 +30,7 @@ value".`,
 				return err
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
 			}

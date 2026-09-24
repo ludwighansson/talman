@@ -12,7 +12,6 @@ import (
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/interrupt"
-	"github.com/ludwighansson/talman/internal/render"
 )
 
 func newResetCmd() *cobra.Command {
@@ -55,7 +54,7 @@ cluster to leave.`,
 				return err
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
 			}

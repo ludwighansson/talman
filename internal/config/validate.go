@@ -98,6 +98,7 @@ func (c *Config) Validate() error {
 	c.validatePatchKeys(add)
 	c.validatePatchFiles(add)
 	c.validateValuesFiles(add)
+	c.validateRollout(add)
 
 	return errors.Join(errs...)
 }
