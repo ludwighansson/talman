@@ -129,8 +129,13 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 		return nil, err
 	}
 
-	defer os.RemoveAll(stage) //nolint:errcheck // best effort cleanup; the error that matters is returned below
-	defer interrupt.RemoveAllOnExit(stage)()
+	// Removed, then unregistered, in that order: a forced exit between the
+	// two must still find the directory on the list.
+	unregister := interrupt.RemoveAllOnExit(stage)
+	defer func() {
+		_ = os.RemoveAll(stage)
+		unregister()
+	}()
 
 	tmpName := filepath.Join(stage, "secrets.yaml")
 
