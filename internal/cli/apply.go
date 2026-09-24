@@ -560,6 +560,11 @@ once, however many of these flags are passed.`,
 				fmt.Fprintf(os.Stderr, "%d node(s) adopted → talman bootstrap\n", adopted)
 			}
 
+			if mode == "staged" && !dryRun && len(targets) > 0 {
+				fmt.Fprintf(os.Stderr, "\nconfigs staged; they take effect on the next reboot → talman reboot%s\n",
+					nodeArgs(targets, len(cfg.Nodes)))
+			}
+
 			if detailed && changed {
 				return errChanged
 			}

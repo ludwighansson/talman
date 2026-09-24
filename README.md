@@ -410,6 +410,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman bootstrap` | initialise etcd, once |
 | `talman kubeconfig` | fetch the kubeconfig into the output directory |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
+| `talman reboot` | a rolling reboot, one node at a time |
 | `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` (a noop when every node is already there) |
 | `talman health` | cluster health |
 | `talman dashboard <node>` | the Talos text UI for one node |
@@ -691,13 +692,13 @@ are worked on at once:
 | command | default | why |
 | --- | --- | --- |
 | `render`, `status` | 8 | nothing is enacted; the work is local, or a question |
-| `apply`, `upgrade`, `reset` | 1 | one node at a time is the unit of risk |
+| `apply`, `upgrade`, `reboot`, `reset` | 1 | one node at a time is the unit of risk |
 
 A run that enacts nothing — `apply --dry-run` or `--mode=staged` — batches
 every node together, control planes included, and does so without being asked:
 there are no reboots to stagger, so there is nothing to keep apart.
 
-For the three that change a cluster the flag raises the limit for **workers
+For the ones that change a cluster the flag raises the limit for **workers
 only**. A control plane always goes alone, whatever the number says: two
 rebooting together is how a three-node control plane loses quorum, and the
 reason to reach for `--parallel` is a hundred workers rather than a shortcut
@@ -800,7 +801,7 @@ decision; the flag only surfaces it.
 
 ### Metrics for CI
 
-`apply`, `upgrade`, `upgrade-k8s`, `reset`, `bootstrap` and `health` can record
+`apply`, `upgrade`, `upgrade-k8s`, `reboot`, `reset`, `bootstrap` and `health` can record
 what a run did, for the whole run and for each node, in the Prometheus text
 format. They write it to a file, push it to a metrics push endpoint, or both:
 
@@ -959,6 +960,21 @@ unknown version is never read as agreement. `--force` upgrades regardless, and
 talosctl waits for each node to come back on its new version, up to
 `--timeout` (30m), before talman moves on to the next; `--wait=false` only
 starts each upgrade. `--health` gates between nodes as it does for `apply`.
+
+`reboot` is the roll-out for anything only a reboot applies, above all a
+`talman apply --mode=staged`, which says so when it is done:
+
+```console
+$ talman apply --mode=staged
+...
+configs staged; they take effect on the next reboot → talman reboot
+$ talman reboot --health
+```
+
+It goes one node at a time in config order, control planes always alone, and
+talosctl waits for each to come back before the next, up to `--timeout`
+(30m). `--parallel`, `--health` and `--wait` mean what they mean for
+`upgrade`; `--mode powercycle` bypasses kexec.
 
 `upgrade-k8s` does the same for Kubernetes: it asks every node which version
 its kubelet runs, and does nothing when they are all already on
