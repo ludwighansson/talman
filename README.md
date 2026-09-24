@@ -461,6 +461,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman etcd snapshot [path]` | save an etcd snapshot, by default into the output directory |
 | `talman dashboard <node>` | the Talos text UI for one node |
 | `talman talosctl -n <node> …` | any other talosctl command, with the talosconfig and node addresses filled in |
+| `talman rotate-ca` | rotate the Talos and Kubernetes API CAs, and the secrets bundle with them |
 | `talman reset` | wipe nodes (requires typing the cluster name) |
 | `talman version` | the talman and talosctl versions |
 
@@ -1132,6 +1133,29 @@ credentials, gitignored and `0600`. talman never overwrites one.
 
 `upgrade --snapshot` and `upgrade-k8s --snapshot` take one before they change
 anything, which is the moment a snapshot is most worth having.
+
+### Rotating the CAs
+
+```console
+$ talman rotate-ca --dry-run     # what talosctl would do
+$ talman rotate-ca               # asks for the cluster name
+...
+wrote secrets.sops.yaml, extracted from talos-c01 (the old one is secrets.sops.yaml.pre-rotate-20260924T101500Z)
+wrote clusterconfig/talosconfig, signed by the new Talos CA
+```
+
+`talosctl rotate-ca` rolls new Talos API and Kubernetes API CAs out to every
+node gracefully. What it leaves behind is a secrets bundle holding the old
+ones, which the next `apply` would put back. So once the rotation is done,
+talman extracts the bundle from a control plane's new machine config — as
+`secrets generate --from-controlplane-config` does — and writes it over the
+old one, encrypted if the old one was, with the old one kept beside it. The
+talosconfig is replaced with the one the new CA signed.
+
+`--talos=false` or `--kubernetes=false` rotates only the other. Afterwards,
+commit the new bundle, `talman render`, and fetch a new `talman kubeconfig` if
+the Kubernetes CA changed. Should anything fail after the rotation itself, the
+error says so and spells out the two commands that finish the job by hand.
 
 ## Compatibility
 

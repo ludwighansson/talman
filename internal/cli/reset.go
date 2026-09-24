@@ -351,6 +351,12 @@ func confirm(clusterName string, targets []*config.Node, consequence string) err
 		fmt.Fprintf(os.Stderr, "  %s (%s)\n", n.Hostname, n.IPAddress)
 	}
 
+	return typeClusterName("reset", clusterName, consequence)
+}
+
+// typeClusterName asks for the cluster name and fails unless it is typed back.
+// what names the operation in the refusal.
+func typeClusterName(what, clusterName, consequence string) error {
 	fmt.Fprintf(os.Stderr, "%s Type the cluster name to continue: ", consequence)
 
 	// Read off to the side: the signal handler keeps Ctrl-C from ending the
@@ -373,16 +379,16 @@ func confirm(clusterName string, targets []*config.Node, consequence string) err
 	select {
 	case a := <-answered:
 		if a.err != nil {
-			return fmt.Errorf("reset aborted: %w", a.err)
+			return fmt.Errorf("%s aborted: %w", what, a.err)
 		}
 
 		line = a.line
 	case <-interrupt.Context().Done():
-		return errors.New("reset aborted: interrupted")
+		return fmt.Errorf("%s aborted: interrupted", what)
 	}
 
 	if strings.TrimSpace(line) != clusterName {
-		return fmt.Errorf("reset aborted: input did not match %q", clusterName)
+		return fmt.Errorf("%s aborted: input did not match %q", what, clusterName)
 	}
 
 	return nil

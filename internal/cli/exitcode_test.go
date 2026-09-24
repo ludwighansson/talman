@@ -21,12 +21,23 @@ for a in "$@"; do
 	esac
 done
 
+output=
+prev=
+for a in "$@"; do
+	[ "$prev" = "--output" ] && output=$a
+	prev=$a
+done
+
 case " $* " in
 *" version --client "*) printf 'Client:\n\tTag:         v1.14.1\n' ;;
 *" apply-config "*"--dry-run"*) printf 'Dry run summary:\nConfig diff:\n\n%s\n' "$STUB_DIFF" ;;
 *" apply-config "*) echo "Applied configuration without a reboot" ;;
 *" upgrade "*) echo "upgraded" ;;
 *" reboot "*) echo "rebooted" ;;
+*" rotate-ca "*"--dry-run=false"*) echo "context: rotated" > "$output" ;;
+*" rotate-ca "*) echo "would rotate" ;;
+*" read /system/state/config.yaml"*) echo "machine: {ca: new}" ;;
+*" gen secrets "*) echo "bundle: rotated" ;;
 *" etcd snapshot "*) eval "out=\${$#}"; umask 022; echo "snapshot" > "$out" ;;
 *" version "*) echo "Server: Tag: v1.14.1" ;;
 esac
@@ -263,5 +274,64 @@ func TestEtcdSnapshot(t *testing.T) {
 
 	if snap < 0 || upgrade < 0 || snap > upgrade {
 		t.Errorf("upgrade --snapshot did not snapshot before upgrading:\n%s", calls)
+	}
+}
+
+// TestRotateCA follows a rotation through: talosctl rotates across every
+// node, the new bundle is extracted from a control plane through the new
+// talosconfig, it replaces the old bundle with the old one kept beside it, and
+// the talosconfig is swapped for the rotated one. A dry run touches nothing.
+func TestRotateCA(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	secrets := filepath.Join(dir, "secrets.sops.yaml")
+	if err := os.WriteFile(secrets, []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tc := filepath.Join(dir, "clusterconfig", "talosconfig")
+
+	if got := run([]string{"rotate-ca", "--dry-run"}); got != 0 {
+		t.Fatalf("dry run: exit %d", got)
+	}
+
+	if b, _ := os.ReadFile(secrets); string(b) != "bundle: old\n" {
+		t.Errorf("a dry run changed the bundle to %q", b)
+	}
+
+	if got := run([]string{"rotate-ca", "-y", "--kubernetes=false"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d\n%s", got, calls)
+	}
+
+	calls, _ := os.ReadFile(log)
+
+	for _, want := range []string{
+		"rotate-ca --control-plane-nodes 10.0.0.1 --talos=true --kubernetes=false --dry-run=false",
+		"--talosconfig " + tc + ".rotated --nodes 10.0.0.1 read /system/state/config.yaml",
+		"gen secrets --output-file - --talos-version v1.14.1 --from-controlplane-config",
+	} {
+		if !strings.Contains(string(calls), want) {
+			t.Errorf("no call containing %q in:\n%s", want, calls)
+		}
+	}
+
+	if b, _ := os.ReadFile(secrets); string(b) != "bundle: rotated\n" {
+		t.Errorf("bundle = %q, want the one extracted after the rotation", b)
+	}
+
+	backups, _ := filepath.Glob(secrets + ".pre-rotate-*")
+	if len(backups) != 1 {
+		t.Fatalf("old bundle backups: %v", backups)
+	} else if b, _ := os.ReadFile(backups[0]); string(b) != "bundle: old\n" {
+		t.Errorf("backup = %q", b)
+	}
+
+	if b, _ := os.ReadFile(tc); string(b) != "context: rotated\n" {
+		t.Errorf("talosconfig = %q, want the rotated one", b)
+	}
+
+	if got := run([]string{"rotate-ca", "--talos=false", "--kubernetes=false"}); got != 1 {
+		t.Errorf("rotating nothing gave exit %d, want 1", got)
 	}
 }
