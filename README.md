@@ -1141,7 +1141,7 @@ anything, which is the moment a snapshot is most worth having.
 $ talman rotate-ca --dry-run     # what talosctl would do
 $ talman rotate-ca               # asks for the cluster name
 ...
-wrote secrets.sops.yaml, extracted from talos-c01 (the old one is secrets.sops.yaml.pre-rotate-20260924T101500Z)
+wrote secrets.sops.yaml, extracted from talos-c01 (the old one is clusterconfig/secrets-pre-rotate-20260924T101500Z.yaml)
 wrote clusterconfig/talosconfig, signed by the new Talos CA
 ```
 
@@ -1150,8 +1150,16 @@ node gracefully. What it leaves behind is a secrets bundle holding the old
 ones, which the next `apply` would put back. So once the rotation is done,
 talman extracts the bundle from a control plane's new machine config — as
 `secrets generate --from-controlplane-config` does — and writes it over the
-old one, encrypted if the old one was, with the old one kept beside it. The
-talosconfig is replaced with the one the new CA signed.
+old one, encrypted if the old one was. The old one is kept in the gitignored
+output directory, since it still holds every key a rotation leaves alone, and
+the talosconfig is replaced with the one the new CA signed.
+
+Whether the new bundle can be encrypted is checked before anything rotates, so
+a missing `sops` or a `.sops.yaml` rule that no longer matches refuses the run
+instead of stranding it halfway. A `talosconfig.rotated` left by a rotation
+that did not finish is never deleted — it may be the only talosconfig the
+cluster still accepts — and rotate-ca refuses to start until you have dealt
+with it.
 
 `--talos=false` or `--kubernetes=false` rotates only the other. Afterwards,
 commit the new bundle, `talman render`, and fetch a new `talman kubeconfig` if
