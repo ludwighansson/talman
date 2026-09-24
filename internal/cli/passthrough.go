@@ -3,15 +3,12 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
-	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/render"
+	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
 // exitCodeError is a child's exit status that talman passes on as its own.
@@ -75,28 +72,13 @@ talosctl's exit status is talman's.`,
 
 			argv = append(argv, args...)
 
-			if opts.verbose {
-				fmt.Fprintf(os.Stderr, "+ %s %s\n", cfg.Talosctl, strings.Join(argv, " "))
-			}
-
-			c := interrupt.Command(cfg.Talosctl, argv...)
-			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-
-			if err := interrupt.Run(c); err != nil {
-				var exitErr *exec.ExitError
-				if errors.As(err, &exitErr) {
-					code := exitErr.ExitCode()
-
-					// A signal leaves no exit status (-1, which would exit
-					// 255); report it as a shell does, 128 + the signal.
-					if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-						code = 128 + int(ws.Signal())
-					}
-
-					return exitCodeError{code}
+			if err := runner(cfg).Stream(argv...); err != nil {
+				var status *talosctl.StatusError
+				if errors.As(err, &status) {
+					return exitCodeError{status.Code}
 				}
 
-				return fmt.Errorf("running %s: %w", cfg.Talosctl, err)
+				return err
 			}
 
 			return nil
