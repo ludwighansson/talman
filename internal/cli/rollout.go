@@ -38,6 +38,11 @@ type rollOut struct {
 	// back. Without it the next control plane would start while the last
 	// is still down.
 	waits bool
+
+	// standDown, when set, is asked before each health gate, and a true
+	// answer skips it: apply's gate means nothing while nodes it has not
+	// adopted yet are still outside the cluster.
+	standDown func() bool
 }
 
 // one does a single node's work. grouped says its output is captured with a
@@ -103,7 +108,11 @@ func (ro rollOut) run(do one) error {
 		// a batch that skipped every node left nothing new to check, and
 		// after the last there is nothing left for the gate to protect.
 		if ro.health && !ro.inert && acted && done < len(ro.targets) {
-			fmt.Fprintf(os.Stderr, "   checking cluster health before continuing\n")
+			if ro.standDown != nil && ro.standDown() {
+				continue
+			}
+
+			fmt.Fprintf(os.Stderr, "%schecking cluster health before continuing\n", detail)
 
 			if err := clusterHealth(ro.cfg, ro.tal, ro.tc, ro.timeout); err != nil {
 				return fmt.Errorf("cluster is unhealthy after %s %s: %w\n%s",

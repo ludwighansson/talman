@@ -676,3 +676,26 @@ func captureStdout(t *testing.T, fn func()) string {
 
 	return <-done
 }
+
+// TestApplyGatesBetweenBatches: on the shared roll-out loop, apply still gates
+// between batches and not after the last.
+func TestApplyGatesBetweenBatches(t *testing.T) {
+	dir, log := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "--health"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d\n%s", got, calls)
+	}
+
+	calls, _ := os.ReadFile(log)
+	if n := strings.Count(string(calls), " health "); n != 1 {
+		t.Errorf("health gate ran %d time(s), want once, between c1 and w1:\n%s", n, calls)
+	}
+}
