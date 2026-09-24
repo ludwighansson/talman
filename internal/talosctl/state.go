@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/ludwighansson/talman/internal/interrupt"
 )
 
 // NodeState is what talman can learn about a running node through talosctl.
@@ -499,7 +501,9 @@ func (r *Runner) WaitReady(talosconfig, node string, stabilize, timeout time.Dur
 				"installer image before it can reboot)", node, stabilize, timeout)
 		}
 
-		time.Sleep(poll)
+		if err := interrupt.Sleep(poll); err != nil {
+			return fmt.Errorf("stopped waiting for %s: %w", node, err)
+		}
 	}
 }
 

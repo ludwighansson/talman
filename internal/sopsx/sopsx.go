@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/ludwighansson/talman/internal/interrupt"
 )
 
 // Bin is the sops binary talman invokes. Overridable for tests.
@@ -128,6 +130,7 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 	}
 
 	defer os.RemoveAll(stage) //nolint:errcheck // best effort cleanup; the error that matters is returned below
+	defer interrupt.RemoveAllOnExit(stage)()
 
 	tmpName := filepath.Join(stage, "secrets.yaml")
 
@@ -162,7 +165,7 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 
 // run invokes sops and returns stdout, sops' stderr, and the process error.
 func run(args ...string) ([]byte, string, error) {
-	cmd := exec.Command(Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+	cmd := interrupt.Command(Bin, args...)
 
 	var out, errBuf bytes.Buffer
 

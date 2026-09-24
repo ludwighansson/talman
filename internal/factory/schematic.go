@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/ludwighansson/talman/internal/interrupt"
 )
 
 // Defaults for the public Image Factory.
@@ -214,7 +216,7 @@ func (c Config) Submit(s *Schematic) (string, error) {
 
 	url := c.Protocol + "://" + c.RegistryURL + c.SchematicEndpoint
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(interrupt.Context(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/render"
 )
 
@@ -352,9 +353,32 @@ func confirm(clusterName string, targets []*config.Node, consequence string) err
 
 	fmt.Fprintf(os.Stderr, "%s Type the cluster name to continue: ", consequence)
 
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("reset aborted: %w", err)
+	// Read off to the side: the signal handler keeps Ctrl-C from ending the
+	// process, so a read blocked on the terminal would otherwise be the one
+	// place an interrupt could not get out of.
+	type answer struct {
+		line string
+		err  error
+	}
+
+	answered := make(chan answer, 1)
+
+	go func() {
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		answered <- answer{line, err}
+	}()
+
+	var line string
+
+	select {
+	case a := <-answered:
+		if a.err != nil {
+			return fmt.Errorf("reset aborted: %w", a.err)
+		}
+
+		line = a.line
+	case <-interrupt.Context().Done():
+		return errors.New("reset aborted: interrupted")
 	}
 
 	if strings.TrimSpace(line) != clusterName {
