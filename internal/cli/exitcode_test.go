@@ -47,6 +47,7 @@ case " $* " in
 *" apply-config "*"--dry-run"*) printf 'Dry run summary:\nConfig diff:\n\n%s\n' "$STUB_DIFF" ;;
 *" apply-config "*) echo "Applied configuration without a reboot" ;;
 *" upgrade "*) echo "upgraded" ;;
+*" get services etcd "*) printf 'spec:\n    running: %s\n    healthy: %s\n' "${STUB_ETCD:-true}" "${STUB_ETCD:-true}" ;;
 *" reboot "*) echo "rebooted" ;;
 *" rotate-ca "*"--dry-run=false"*)
 	echo "context: rotated" > "$output"
@@ -127,6 +128,7 @@ nodes:
 	t.Setenv("STUB_KILL", "")
 	t.Setenv("STUB_DEAD_ENDPOINTS", "")
 	t.Setenv("STUB_ROTATE_PARTWAY", "")
+	t.Setenv("STUB_ETCD", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -621,4 +623,56 @@ func TestNoWaitKeepsControlPlanesApart(t *testing.T) {
 	if got := run([]string{"reboot", "--wait=false", "-n", "c1"}); got != 0 {
 		t.Errorf("one control plane without waiting: exit %d, want 0", got)
 	}
+}
+
+// TestStatusJSONBootstrapped: the field says true or false whenever the
+// control planes answered, so a script can tell a bootstrapped cluster from
+// one nobody asked about.
+func TestStatusJSONBootstrapped(t *testing.T) {
+	exitFixture(t)
+
+	for etcd, want := range map[string]string{"true": `"bootstrapped": true`, "false": `"bootstrapped": false`} {
+		t.Setenv("STUB_ETCD", etcd)
+
+		out := captureStdout(t, func() {
+			if got := run([]string{"status", "-o", "json"}); got != 0 {
+				t.Errorf("exit %d", got)
+			}
+		})
+
+		if !strings.Contains(out, want) {
+			t.Errorf("etcd running=%s: no %s in\n%s", etcd, want, out)
+		}
+	}
+
+	out := captureStdout(t, func() { run([]string{"status", "-o", "json", "--offline"}) })
+	if strings.Contains(out, "bootstrapped") {
+		t.Errorf("an offline status claims to know:\n%s", out)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	saved := os.Stdout
+	os.Stdout = w
+
+	done := make(chan string)
+
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+
+	fn()
+
+	os.Stdout = saved
+	_ = w.Close()
+
+	return <-done
 }
