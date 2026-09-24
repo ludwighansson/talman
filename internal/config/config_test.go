@@ -277,6 +277,21 @@ nodes:
 			wantErr: "duplicate ipAddress",
 		},
 		{
+			// It names the default etcd snapshot, among other files.
+			name: "cluster name that is a path",
+			body: `apiVersion: talman.dev/v1
+clusterName: a/../../x
+endpoint: https://10.0.0.1:6443
+talosVersion: v1.14.0
+kubernetesVersion: v1.37.0
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "clusterName",
+		},
+		{
 			name: "endpoint without a port",
 			body: `apiVersion: talman.dev/v1
 clusterName: t
