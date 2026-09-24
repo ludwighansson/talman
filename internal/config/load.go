@@ -91,8 +91,11 @@ func LoadNoValidate(path string) (*Config, error) {
 
 	// A second document would be ignored, and whatever it says with it: two
 	// clusters pasted into one file, or a patch saved over the config.
-	var extra yaml.Node
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+	// An empty one -- a trailing `---`, or a document of comments -- is
+	// not a second config, and plenty of generated YAML ends that way.
+	if more, err := moreDocuments(dec); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	} else if more {
 		return nil, fmt.Errorf("parsing %s: it holds more than one YAML document; "+
 			"a talman config is exactly one", path)
 	}
@@ -192,4 +195,37 @@ func renameHint(err error) string {
 	}
 
 	return strings.Join(hints, "")
+}
+
+// moreDocuments reports whether the decoder holds another document with
+// anything in it.
+func moreDocuments(dec *yaml.Decoder) (bool, error) {
+	for {
+		var doc yaml.Node
+
+		err := dec.Decode(&doc)
+
+		switch {
+		case errors.Is(err, io.EOF):
+			return false, nil
+		case err != nil:
+			return false, err
+		case !emptyDocument(&doc):
+			return true, nil
+		}
+	}
+}
+
+func emptyDocument(doc *yaml.Node) bool {
+	if doc.Kind == yaml.DocumentNode {
+		for _, c := range doc.Content {
+			if !emptyDocument(c) {
+				return false
+			}
+		}
+
+		return true
+	}
+
+	return doc.Kind == 0 || (doc.Kind == yaml.ScalarNode && doc.Tag == "!!null" && doc.Value == "")
 }
