@@ -312,3 +312,46 @@ func TestSubmit(t *testing.T) {
 		})
 	}
 }
+
+// TestImageURL pins the boot media URLs to the shapes the public factory
+// serves; each was checked against factory.talos.dev.
+func TestImageURL(t *testing.T) {
+	const id, v = "abc", "v1.14.0"
+
+	tests := []struct {
+		name         string
+		cfg          Config
+		kind, format string
+		arch         string
+		want         string
+	}{
+		{"iso", Config{}, KindISO, "", "amd64", "https://factory.talos.dev/image/abc/v1.14.0/metal-amd64.iso"},
+		{"secure boot iso", Config{SecureBoot: new(true)}, KindISO, "", "amd64",
+			"https://factory.talos.dev/image/abc/v1.14.0/metal-amd64-secureboot.iso"},
+		{"metal disk", Config{}, KindDisk, "", "arm64", "https://factory.talos.dev/image/abc/v1.14.0/metal-arm64.raw.zst"},
+		{"platform disk", Config{Platform: "vmware"}, KindDisk, "", "amd64",
+			"https://factory.talos.dev/image/abc/v1.14.0/vmware-amd64.ova"},
+		{"explicit format", Config{}, KindDisk, "qcow2", "amd64",
+			"https://factory.talos.dev/image/abc/v1.14.0/metal-amd64.qcow2"},
+		{"pxe", Config{}, KindPXE, "", "amd64", "https://factory.talos.dev/pxe/abc/v1.14.0/metal-amd64"},
+		{"own factory", Config{RegistryURL: "factory.internal", Protocol: "http"}, KindISO, "", "amd64",
+			"http://factory.internal/image/abc/v1.14.0/metal-amd64.iso"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.cfg.ImageURL(tt.kind, id, v, tt.arch, tt.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != tt.want {
+				t.Errorf("ImageURL() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := (Config{Platform: "somewhere-new"}).ImageURL(KindDisk, id, v, "amd64", ""); err == nil {
+		t.Error("a platform with no known disk format was given one anyway")
+	}
+}

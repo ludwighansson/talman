@@ -17,10 +17,10 @@ values:
     quay.io: quay_io_cache
     registry.k8s.io: k8s_io_cache
 
-# These VMs boot the OpenStack installer, not the default metal one.
-# {{.ID}} is the resolved schematic, {{.Version}} the node's Talos version.
+# These VMs boot OpenStack's images, not the default metal ones: the installer,
+# and the disk image `talman image url --kind disk` names.
 imageFactory:
-  installerURLTmpl: "{{.RegistryURL}}/openstack-installer/{{.ID}}:{{.Version}}"
+  platform: openstack
 
 # The schematic ID is computed offline (sha256 of its canonical form), so
 # rendering needs no network. `talman render --submit` registers it instead.
