@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
@@ -41,13 +42,32 @@ type globals struct {
 var opts globals
 
 // Execute runs the root command and returns a process exit code.
+//
+// 0 is success, 1 a failure of any kind -- a usage error included -- 2 a
+// --detailed-exit-code run that changed something, and 130 a run stopped by
+// SIGINT or SIGTERM, which is reported whatever else the command returned.
 func Execute() int {
-	if err := newRootCmd().Execute(); err != nil {
+	defer interrupt.Watch()()
+
+	err := newRootCmd().ExecuteContext(interrupt.Context())
+
+	if interrupt.Interrupted() {
+		if err != nil && !errors.Is(err, errChanged) {
+			fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		}
+
+		fmt.Fprintln(os.Stderr, "interrupted")
+
+		return interrupt.ExitCode
+	}
+
+	if err != nil {
 		if errors.Is(err, errChanged) {
 			return 2
 		}
 
-		// Cobra has already printed usage errors; everything else is ours.
+		// SilenceErrors is set, so this is the only place any error is
+		// printed, cobra's own usage errors included.
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 
 		return 1

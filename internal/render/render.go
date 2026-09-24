@@ -14,6 +14,7 @@ import (
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/factory"
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/patch"
 	"github.com/ludwighansson/talman/internal/redact"
 	"github.com/ludwighansson/talman/internal/sopsx"
@@ -38,6 +39,9 @@ type Renderer struct {
 	// the rendered patches for the duration of a pass.
 	workspace   string
 	secretsFile string
+	// unregister drops the workspace from the forced-exit cleanup list once
+	// Close has removed it.
+	unregister func()
 
 	// secrets is every secret value the pass has rendered into a config: the
 	// bundle, the values SOPS decrypted out of patches, and whatever a
@@ -95,6 +99,7 @@ func (r *Renderer) Open() error {
 	}
 
 	r.workspace = dir
+	r.unregister = interrupt.RemoveAllOnExit(dir)
 	r.schematicIDs = map[string]string{}
 
 	secretPath := r.Cfg.SecretPath()
@@ -167,6 +172,7 @@ func (r *Renderer) Close() {
 	if r.workspace != "" {
 		_ = os.RemoveAll(r.workspace)
 		r.workspace = ""
+		r.unregister()
 	}
 }
 
@@ -513,7 +519,9 @@ func (r *Renderer) blame(cause error, gen func([]string) ([]byte, error),
 ) string {
 	msg := cause.Error()
 
-	if len(paths) == 0 {
+	// An interrupted generation was not rejected, and every re-run would fail
+	// the same way and blame whatever came first.
+	if len(paths) == 0 || interrupt.Interrupted() {
 		return msg
 	}
 

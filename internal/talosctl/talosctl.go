@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/ludwighansson/talman/internal/interrupt"
 )
 
 // Runner invokes a talosctl binary.
@@ -203,7 +205,7 @@ func semver(tag string) ([3]int, bool) {
 // only if the command fails: talosctl writes progress lines like
 // "generating PKI and tokens" to stderr on success.
 func (r *Runner) Output(args ...string) ([]byte, error) {
-	cmd := exec.Command(r.Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+	cmd := interrupt.Command(r.Bin, args...)
 
 	var stdout, stderr bytes.Buffer
 
@@ -231,7 +233,7 @@ func (r *Runner) Output(args ...string) ([]byte, error) {
 // The bytes come back on failure too. What a command managed to say before it
 // died is usually the explanation.
 func (r *Runner) Combined(args ...string) ([]byte, error) {
-	cmd := exec.Command(r.Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+	cmd := interrupt.Command(r.Bin, args...)
 
 	var buf bytes.Buffer
 
@@ -255,7 +257,7 @@ func (r *Runner) Combined(args ...string) ([]byte, error) {
 // Stream runs talosctl with the caller's stdio attached, for interactive and
 // long-running commands where progress matters more than capture.
 func (r *Runner) Stream(args ...string) error {
-	cmd := exec.Command(r.Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+	cmd := interrupt.Command(r.Bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
