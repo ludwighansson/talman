@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/ludwighansson/talman/internal/interrupt"
 )
@@ -103,6 +104,34 @@ func subcommand(args []string) string {
 }
 
 func (e *ExitError) Unwrap() error { return e.Err }
+
+// StatusError is a talosctl that ran and exited non-zero, from a caller that
+// passed its output on as it came: the output said what went wrong, so all
+// this adds is how it ended.
+type StatusError struct {
+	Subcommand string
+	// Code is the exit status, or 128 + the signal that killed it, as a
+	// shell reports it.
+	Code int
+	err  *exec.ExitError
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("talosctl %s exited with status %d", e.Subcommand, e.Code)
+}
+
+func (e *StatusError) Unwrap() error { return e.err }
+
+// exitStatus is a process's exit status. exec reports -1 for one a signal
+// ended; that becomes 128 + the signal, so an OOM kill reads as 137 rather
+// than a status no process can have.
+func exitStatus(e *exec.ExitError) int {
+	if ws, ok := e.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+
+	return e.ExitCode()
+}
 
 // MinVersion is the oldest talosctl talman drives.
 //
@@ -245,7 +274,7 @@ func (r *Runner) Combined(args ...string) ([]byte, error) {
 	if err := interrupt.Run(cmd); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return buf.Bytes(), fmt.Errorf("talosctl %s exited with status %d", subcommand(args), exitErr.ExitCode())
+			return buf.Bytes(), &StatusError{Subcommand: subcommand(args), Code: exitStatus(exitErr), err: exitErr}
 		}
 
 		return buf.Bytes(), fmt.Errorf("talosctl %s: %w", subcommand(args), err)
@@ -270,7 +299,7 @@ func (r *Runner) Stream(args ...string) error {
 		// only buries it.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return fmt.Errorf("talosctl %s exited with status %d", subcommand(args), exitErr.ExitCode())
+			return &StatusError{Subcommand: subcommand(args), Code: exitStatus(exitErr), err: exitErr}
 		}
 
 		return fmt.Errorf("talosctl %s: %w", subcommand(args), err)
