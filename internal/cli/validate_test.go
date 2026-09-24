@@ -85,12 +85,12 @@ nodes:
 	counter := filepath.Join(dir, "sops-calls")
 	wrapper := filepath.Join(dir, "sops-counting")
 
-	real, err := exec.LookPath(sopsx.Bin)
+	sops, err := exec.LookPath(sopsx.Bin)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	script := "#!/bin/sh\necho x >> " + counter + "\nexec " + real + " \"$@\"\n"
+	script := "#!/bin/sh\necho x >> " + counter + "\nexec " + sops + " \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
