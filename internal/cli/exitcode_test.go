@@ -222,6 +222,20 @@ func TestTalosctlPassthrough(t *testing.T) {
 		t.Errorf("talosctl was called as\n%s\nwant a call ending in\n%s", calls, want)
 	}
 
+	// talosctl's own flags reach it wherever they are, before its
+	// subcommand included, and -c still reaches talman.
+	_ = os.WriteFile(log, nil, 0o644)
+
+	if got := run([]string{"ctl", "-c", filepath.Join(dir, "talman.yaml"), "-n", "c1",
+		"--endpoints", "10.9.9.9", "-e", "10.9.9.8", "version"}); got != 0 {
+		t.Fatalf("talosctl flags before its subcommand: exit %d", got)
+	}
+
+	calls, _ = os.ReadFile(log)
+	if !strings.Contains(string(calls), "--nodes 10.0.0.1 --endpoints 10.9.9.9 -e 10.9.9.8 version") {
+		t.Errorf("talosctl's flags did not reach it as given:\n%s", calls)
+	}
+
 	t.Setenv("STUB_FAIL", "dmesg")
 	t.Setenv("STUB_CODE", "3")
 

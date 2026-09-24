@@ -677,8 +677,9 @@ $ talman ctl -n talos-c01 -n talos-c02 etcd members
 $ talman ctl -- service
 ```
 
-Everything after the talosctl command is talosctl's, its own flags included, so
-there is nothing to quote; `--` is accepted and not needed. Without `-n`,
+talman's own `-n`, `-c` and `-v` come first; everything from the first argument
+that is not one of them is talosctl's, its own flags included — `talman ctl -e
+10.0.0.2 version` reaches talosctl whole. `--` is accepted and not needed. Without `-n`,
 talosctl uses the talosconfig's default nodes, which are every node in the
 config. talosctl's exit status is talman's.
 
