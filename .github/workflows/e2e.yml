@@ -25,7 +25,8 @@ jobs:
     # which hosted runners do not reliably have. What that costs is written
     # down in hack/e2e.sh.
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # rotate-ca rolls two CAs through every node, which is most of the run.
+    timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v4
