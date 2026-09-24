@@ -76,6 +76,8 @@ var schemaDescriptions = map[string]string{
 	"Config.secretFile":        "The (usually SOPS-encrypted) Talos secrets bundle. Default: secrets.sops.yaml.",
 	"Config.validationMode":    "The talosctl validate --mode. Default: metal for the metal platform, cloud otherwise.",
 	"Config.values":            "Free-form data, available to every patch template as .Values.",
+	"Config.valuesFiles":       "YAML files merged into values, in order and beneath the inline map. Plaintext only.",
+	"Node.valuesFiles":         "YAML files merged into this node's values, in order and beneath its inline map.",
 	"Config.imageFactory":      "Where installer images come from and how their references are spelled.",
 	"Config.schematic":         "The Image Factory schematic: inline, or a path to a (templated) file.",
 	"Config.schematicID":       "A schematic ID to use as is, instead of a schematic.",

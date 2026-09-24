@@ -92,6 +92,9 @@ type Config struct {
 	// Values is cluster-wide free-form data, exposed to every patch template
 	// as .Values. Node.Values is the per-node counterpart.
 	Values map[string]any `yaml:"values,omitempty"`
+	// ValuesFiles are YAML files merged into Values, in order and beneath the
+	// inline map, so values several clusters share can live in one place.
+	ValuesFiles []string `yaml:"valuesFiles,omitempty"`
 
 	ImageFactory factory.Config `yaml:"imageFactory,omitempty"`
 	Schematic    *SchematicRef  `yaml:"schematic,omitempty"`
@@ -119,8 +122,10 @@ type Node struct {
 	Groups    []string `yaml:"groups,omitempty"`
 	// Values is per-node free-form data, exposed to that node's patch
 	// templates as .Node.Values.
-	Values  map[string]any `yaml:"values,omitempty"`
-	Patches []string       `yaml:"patches,omitempty"`
+	Values map[string]any `yaml:"values,omitempty"`
+	// ValuesFiles are merged into Values the way the cluster's are.
+	ValuesFiles []string `yaml:"valuesFiles,omitempty"`
+	Patches     []string `yaml:"patches,omitempty"`
 
 	// TalosVersion overrides the cluster version for this node, for staged
 	// upgrades across a mixed-version cluster.

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -746,5 +747,67 @@ func TestFindConfig(t *testing.T) {
 
 	if got := FindConfig("explicit.yaml"); got != "explicit.yaml" {
 		t.Errorf("FindConfig(explicit) = %q; -c must win over the environment", got)
+	}
+}
+
+func TestValuesFiles(t *testing.T) {
+	path := write(t, validBase+`valuesFiles: [shared.yaml, site.yaml]
+values:
+  registry:
+    mirror: inline.example
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    valuesFiles: [node.yaml]
+    values:
+      zone: az2
+`)
+	dir := filepath.Dir(path)
+
+	for name, body := range map[string]string{
+		"shared.yaml": "registry:\n  mirror: shared.example\n  insecure: false\nntp: [a, b]\n",
+		"site.yaml":   "registry:\n  insecure: true\nntp: [c]\n",
+		"node.yaml":   "zone: az1\ndisk: /dev/vda\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registry, _ := cfg.Values["registry"].(map[string]any)
+
+	switch {
+	case registry["mirror"] != "inline.example":
+		t.Errorf("registry.mirror = %v; the inline map must win", registry["mirror"])
+	case registry["insecure"] != true:
+		t.Errorf("registry.insecure = %v; a later file must win over an earlier one, key by key", registry["insecure"])
+	case fmt.Sprint(cfg.Values["ntp"]) != "[c]":
+		t.Errorf("ntp = %v; a list is replaced, not appended to", cfg.Values["ntp"])
+	}
+
+	if n := cfg.Nodes[0].Values; n["zone"] != "az2" || n["disk"] != "/dev/vda" {
+		t.Errorf("node values = %v", n)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "site.yaml"), []byte("a: ENC[x]\nsops:\n  version: 3.9.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "SOPS-encrypted") {
+		t.Errorf("an encrypted values file gave %v, want it refused", err)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "node.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("a missing values file gave %v", err)
 	}
 }
