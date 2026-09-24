@@ -61,13 +61,16 @@ func run(args []string) int {
 	err := root.ExecuteContext(interrupt.Context())
 
 	if interrupt.Interrupted() {
-		if err != nil && !errors.Is(err, errChanged) {
+		// A passed-through talosctl's status is not news: it stopped
+		// because of the same signal, and said whatever it had to.
+		var exit exitCodeError
+		if err != nil && !errors.Is(err, errChanged) && !errors.As(err, &exit) {
 			fmt.Fprintln(os.Stderr, "error: "+err.Error())
 		}
 
 		fmt.Fprintln(os.Stderr, "interrupted")
 
-		return interrupt.ExitCode
+		return interrupt.ExitCode()
 	}
 
 	if err != nil {

@@ -24,9 +24,19 @@ import (
 	"time"
 )
 
-// ExitCode is what an interrupted run exits with: 128 + SIGINT, as a shell
-// reports it.
-const ExitCode = 130
+// ExitCode is what an interrupted run exits with: 128 + the signal, as a shell
+// reports it -- 130 for Ctrl-C, 143 for a CI runner's SIGTERM, so tooling can
+// tell a person stopping a run from a job being cancelled.
+func ExitCode() int {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if s, ok := interruptedBy.(syscall.Signal); ok {
+		return 128 + int(s)
+	}
+
+	return 128 + int(syscall.SIGINT)
+}
 
 // waitDelay is how long a child gets to exit after it has been signalled
 // before it is killed outright.
@@ -40,13 +50,21 @@ var (
 	nextID   int
 
 	running = map[*os.Process]bool{}
+
+	// interruptedBy is the first signal, for ExitCode.
+	interruptedBy os.Signal
 )
 
 // Context is cancelled by the first SIGINT or SIGTERM.
-func Context() context.Context { return ctx }
+func Context() context.Context {
+	mu.Lock()
+	defer mu.Unlock()
+
+	return ctx
+}
 
 // Interrupted reports whether a signal has cancelled the run.
-func Interrupted() bool { return ctx.Err() != nil }
+func Interrupted() bool { return Context().Err() != nil }
 
 // Watch installs the signal handler. The returned function uninstalls it.
 func Watch() (stop func()) {
@@ -59,7 +77,13 @@ func Watch() (stop func()) {
 		select {
 		case sig := <-ch:
 			fmt.Fprintf(os.Stderr, "\n%s: stopping (again to exit immediately)\n", sig)
-			cancel()
+
+			mu.Lock()
+			interruptedBy = sig
+			stop := cancel
+			mu.Unlock()
+
+			stop()
 		case <-done:
 			return
 		}
@@ -68,7 +92,7 @@ func Watch() (stop func()) {
 		case <-ch:
 			killRunning()
 			RunCleanups()
-			os.Exit(ExitCode)
+			os.Exit(ExitCode())
 		case <-done:
 		}
 	}()
@@ -117,7 +141,7 @@ func RunCleanups() {
 // Command is exec.Command bound to Context: when the run is interrupted the
 // child is sent SIGTERM, and killed if it has not exited within waitDelay.
 func Command(name string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // args are built by talman, not user shell input
+	cmd := exec.CommandContext(Context(), name, args...) //nolint:gosec // args are built by talman, not user shell input
 
 	cmd.Cancel = func() error {
 		if runtime.GOOS == "windows" {
@@ -174,7 +198,7 @@ func Sleep(d time.Duration) error {
 	select {
 	case <-t.C:
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-Context().Done():
+		return Context().Err()
 	}
 }
