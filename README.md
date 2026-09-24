@@ -412,6 +412,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` (a noop when every node is already there) |
 | `talman health` | cluster health |
 | `talman dashboard <node>` | the Talos text UI for one node |
+| `talman talosctl -n <node> …` | any other talosctl command, with the talosconfig and node addresses filled in |
 | `talman reset` | wipe nodes (requires typing the cluster name) |
 | `talman version` | the talman and talosctl versions |
 
@@ -613,6 +614,22 @@ $ talman dashboard talos-c01
 The node is reached at its own address rather than through the talosconfig
 endpoints: a dashboard is most wanted when the cluster is unhappy, which is
 when a control plane proxying for the node is least able to serve it.
+
+### Everything else talosctl does
+
+`talman talosctl` (or `talman ctl`) runs any talosctl command with this
+cluster's talosconfig, and with `--nodes` set from the nodes named with `-n`:
+
+```console
+$ talman talosctl -n talos-w01 logs kubelet -f
+$ talman ctl -n talos-c01 -n talos-c02 etcd members
+$ talman ctl -- service
+```
+
+Everything after the talosctl command is talosctl's, its own flags included, so
+there is nothing to quote; `--` is accepted and not needed. Without `-n`,
+talosctl uses the talosconfig's default nodes, which are every node in the
+config. talosctl's exit status is talman's.
 
 ### The kubeconfig
 

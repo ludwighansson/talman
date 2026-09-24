@@ -11,13 +11,13 @@ import (
 // stubTalosctl is a talosctl that answers the calls apply and upgrade make,
 // logs every invocation to $STUB_LOG, and takes its answers from the
 // environment: STUB_DIFF is what a dry run reports, STUB_FAIL names a
-// subcommand that exits 1.
+// subcommand that fails, with STUB_CODE (default 1).
 const stubTalosctl = `#!/bin/sh
 echo "$*" >> "$STUB_LOG"
 
 for a in "$@"; do
 	case "$a" in
-	"$STUB_FAIL") echo "stub: $a failed" >&2; exit 1 ;;
+	"$STUB_FAIL") echo "stub: $a failed" >&2; exit "${STUB_CODE:-1}" ;;
 	esac
 done
 
@@ -77,6 +77,7 @@ nodes:
 	t.Setenv("STUB_LOG", log)
 	t.Setenv("STUB_DIFF", "No changes.")
 	t.Setenv("STUB_FAIL", "")
+	t.Setenv("STUB_CODE", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -151,5 +152,35 @@ func TestDryRunSendsNothing(t *testing.T) {
 
 	if !strings.Contains(string(calls), "apply-config") {
 		t.Error("the dry run never asked the node what would change")
+	}
+}
+
+// TestTalosctlPassthrough holds `talman talosctl` to its word: talosctl gets
+// the talosconfig, the named nodes' addresses and every other argument as it
+// was, talman parses none of them, and talosctl's exit status is talman's.
+func TestTalosctlPassthrough(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	if got := run([]string{"talosctl", "-n", "c1", "logs", "kubelet", "-f", "--tail", "5"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	calls, _ := os.ReadFile(log)
+	want := "--talosconfig " + filepath.Join(dir, "clusterconfig", "talosconfig") +
+		" --nodes 10.0.0.1 logs kubelet -f --tail 5"
+
+	if !strings.Contains(string(calls), want) {
+		t.Errorf("talosctl was called as\n%s\nwant a call ending in\n%s", calls, want)
+	}
+
+	t.Setenv("STUB_FAIL", "dmesg")
+	t.Setenv("STUB_CODE", "3")
+
+	if got := run([]string{"ctl", "--", "dmesg"}); got != 3 {
+		t.Errorf("a talosctl exiting 3 gave exit %d, want its 3", got)
+	}
+
+	if got := run([]string{"talosctl", "-n", "nope", "dmesg"}); got != 1 {
+		t.Errorf("an unknown node gave exit %d, want 1", got)
 	}
 }
