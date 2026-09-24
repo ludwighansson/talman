@@ -18,8 +18,6 @@ type exitCodeError struct{ code int }
 func (e exitCodeError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
 func newTalosctlCmd() *cobra.Command {
-	var nodes []string
-
 	cmd := &cobra.Command{
 		Use:     "talosctl [-n node]... [--] <talosctl args>...",
 		Aliases: []string{"ctl"},
@@ -36,12 +34,29 @@ It is for everything talman does not wrap: logs, dmesg, get, service, edit and
 the rest. Without -n, talosctl reaches the talosconfig's default nodes, which
 render sets to every node in the config.
 
-talman's own flags go before the talosctl command; everything from the first
-argument that is not one of them on belongs to talosctl, "--" included or not.
+talman's own flags -- -n, -c and -v -- come first; everything from the first
+argument that is not one of them belongs to talosctl, its flags included and
+"--" optional, so "talman ctl -e 10.0.0.2 version" reaches talosctl whole.
 talosctl's exit status is talman's.`,
-		Args:                  cobra.MinimumNArgs(1),
 		DisableFlagsInUseLine: true,
-		RunE: func(_ *cobra.Command, args []string) error {
+		// Parsed here rather than by cobra, which rejects a flag it does
+		// not know even when it comes before the first argument that is
+		// talosctl's.
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, raw []string) error {
+			nodes, args, help, err := passthroughArgs(raw)
+			if err != nil {
+				return err
+			}
+
+			if help {
+				return cmd.Help()
+			}
+
+			if len(args) == 0 {
+				return errors.New("name a talosctl command to run, e.g. `talman ctl -n <node> logs kubelet`")
+			}
+
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -85,10 +100,65 @@ talosctl's exit status is talman's.`,
 		},
 	}
 
-	// Stop at the first argument that is not talman's, so talosctl's own
-	// flags reach it without a "--" and without talman rejecting them.
-	cmd.Flags().SetInterspersed(false)
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "run against these nodes (repeatable)")
-
 	return cmd
+}
+
+// passthroughArgs takes talman's own flags off the front of a `talman ctl`
+// command line -- -n/--node, -c/--config, -v/--verbose, -h/--help -- and
+// returns the rest for talosctl. It stops at "--", or at the first argument
+// that is not one of them.
+func passthroughArgs(raw []string) (nodes, rest []string, help bool, err error) {
+	value := func(i int, a, long, short string) (string, int, bool, error) {
+		switch {
+		case a == long || a == short:
+			if i+1 >= len(raw) {
+				return "", i, true, fmt.Errorf("%s needs a value", a)
+			}
+
+			return raw[i+1], i + 1, true, nil
+		case strings.HasPrefix(a, long+"="):
+			return strings.TrimPrefix(a, long+"="), i, true, nil
+		case strings.HasPrefix(a, short+"="):
+			return strings.TrimPrefix(a, short+"="), i, true, nil
+		}
+
+		return "", i, false, nil
+	}
+
+	for i := 0; i < len(raw); i++ {
+		a := raw[i]
+
+		switch a {
+		case "--":
+			return nodes, raw[i+1:], false, nil
+		case "-h", "--help":
+			return nil, nil, true, nil
+		case "-v", "--verbose":
+			opts.verbose = true
+
+			continue
+		}
+
+		if v, next, ok, err := value(i, a, "--node", "-n"); err != nil {
+			return nil, nil, false, err
+		} else if ok {
+			nodes = append(nodes, strings.Split(v, ",")...)
+			i = next
+
+			continue
+		}
+
+		if v, next, ok, err := value(i, a, "--config", "-c"); err != nil {
+			return nil, nil, false, err
+		} else if ok {
+			opts.configFile = v
+			i = next
+
+			continue
+		}
+
+		return nodes, raw[i:], false, nil
+	}
+
+	return nodes, nil, false, nil
 }
