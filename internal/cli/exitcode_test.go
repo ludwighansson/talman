@@ -561,3 +561,36 @@ func TestRotateCAChecksEncryptionFirst(t *testing.T) {
 		t.Errorf("the CAs were rotated before the bundle's encryption was known to work:\n%s", calls)
 	}
 }
+
+// TestNoWaitKeepsControlPlanesApart: without --wait each command returns
+// before its node is back, so more than one control plane selected would go
+// down together. Refused, for every command that reboots.
+func TestNoWaitKeepsControlPlanesApart(t *testing.T) {
+	cps := `  - hostname: c2
+    ipAddress: 10.0.0.2
+    role: controlplane
+`
+
+	_, log := exitFixtureWith(t, cps)
+
+	for _, args := range [][]string{
+		{"upgrade", "--force", "--wait=false"},
+		{"reboot", "--wait=false"},
+		{"apply", "--no-render", "--redact-secrets=false", "--wait=false"},
+	} {
+		if got := run(args); got != 1 {
+			t.Errorf("%v with two control planes: exit %d, want 1", args, got)
+		}
+	}
+
+	calls, _ := os.ReadFile(log)
+	for _, verb := range []string{" upgrade --nodes", " reboot --nodes", " apply-config "} {
+		if strings.Contains(string(calls), verb) {
+			t.Errorf("%q ran anyway:\n%s", verb, calls)
+		}
+	}
+
+	if got := run([]string{"reboot", "--wait=false", "-n", "c1"}); got != 0 {
+		t.Errorf("one control plane without waiting: exit %d, want 0", got)
+	}
+}

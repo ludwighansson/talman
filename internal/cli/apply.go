@@ -455,6 +455,13 @@ once, however many of these flags are passed.`,
 			// change should not take fifty turns.
 			inert := dryRun || mode == "staged"
 
+			// auto is the one mode that may reboot a node.
+			if !inert && !wait && mode == "auto" {
+				if err := waitsForControlPlanes(targets); err != nil {
+					return err
+				}
+			}
+
 			if inert && !cmd.Flags().Changed("parallel") {
 				parallel = defaultParallel
 			}

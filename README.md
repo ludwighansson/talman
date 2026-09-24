@@ -961,7 +961,9 @@ for that node to answer the API again and hold steady for `--stabilize` (30s),
 and stops the roll-out if it does not — leaving the remaining nodes untouched,
 rather than rebooting the next control plane while the last is still away.
 The wait asks only the node itself, so a cluster that is already in trouble
-does not hold it up. Disable it with `--wait=false`.
+does not hold it up. Disable it with `--wait=false` — which talman refuses for
+a run that reaches more than one control plane, since without the wait the
+next one would go down while the last is still away.
 
 `--health` adds a cluster health check between nodes, and stops the roll-out
 if the cluster is unhealthy. It is off by default: it asks the whole cluster,

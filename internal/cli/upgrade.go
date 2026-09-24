@@ -186,7 +186,7 @@ schematic, 1 on error.`,
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
 				verb: "upgrade", done: "upgraded",
 				targets: targets, parallel: parallel, inert: dryRun,
-				health: health, timeout: timeout,
+				health: health, timeout: timeout, waits: wait,
 			}).run(upgradeOne); err != nil {
 				return err
 			}
