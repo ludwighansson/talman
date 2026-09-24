@@ -26,6 +26,7 @@ case " $* " in
 *" apply-config "*"--dry-run"*) printf 'Dry run summary:\nConfig diff:\n\n%s\n' "$STUB_DIFF" ;;
 *" apply-config "*) echo "Applied configuration without a reboot" ;;
 *" upgrade "*) echo "upgraded" ;;
+*" reboot "*) echo "rebooted" ;;
 *" version "*) echo "Server: Tag: v1.14.1" ;;
 esac
 `
@@ -182,5 +183,31 @@ func TestTalosctlPassthrough(t *testing.T) {
 
 	if got := run([]string{"talosctl", "-n", "nope", "dmesg"}); got != 1 {
 		t.Errorf("an unknown node gave exit %d, want 1", got)
+	}
+}
+
+// TestReboot checks the rolling reboot's shape: one talosctl reboot per node,
+// in config order, with the mode and the wait it was given; and a failure
+// stops the roll-out and exits 1.
+func TestReboot(t *testing.T) {
+	_, log := exitFixture(t)
+
+	if got := run([]string{"reboot", "--mode", "powercycle"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "reboot --nodes 10.0.0.1 --mode powercycle --wait=true --timeout 30m0s") {
+		t.Errorf("no reboot call as expected in:\n%s", calls)
+	}
+
+	if got := run([]string{"reboot", "--mode", "gently"}); got != 1 {
+		t.Errorf("an unknown mode gave exit %d, want 1", got)
+	}
+
+	t.Setenv("STUB_FAIL", "reboot")
+
+	if got := run([]string{"reboot"}); got != 1 {
+		t.Errorf("a failed reboot gave exit %d, want 1", got)
 	}
 }
