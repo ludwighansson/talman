@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,10 @@ type rollOut struct {
 	inert   bool
 	health  bool
 	timeout time.Duration
+	// waits is whether each node's command returns only once the node is
+	// back. Without it the next control plane would start while the last
+	// is still down.
+	waits bool
 }
 
 // one does a single node's work. grouped says its output is captured with a
@@ -42,6 +47,12 @@ type one func(n *config.Node, grouped bool, say func(string)) (acted bool, err e
 
 func (ro rollOut) run(do one) error {
 	rec := currentRun
+
+	if !ro.inert && !ro.waits {
+		if err := waitsForControlPlanes(ro.targets); err != nil {
+			return err
+		}
+	}
 
 	parallel := ro.parallel
 
@@ -135,4 +146,30 @@ func gerund(verb string) string {
 	default:
 		return verb + "ing"
 	}
+}
+
+// waitsForControlPlanes refuses a pass that would not wait for its nodes when
+// it reaches more than one control plane.
+//
+// Going one at a time only keeps control planes apart if each command returns
+// once its node is back. Without the wait, the next control plane starts while
+// the last is still rebooting, which is the loss of quorum the one-at-a-time
+// rule exists to prevent -- and a health gate run before the node has even
+// gone down passes, and protects nothing.
+func waitsForControlPlanes(targets []*config.Node) error {
+	var cps []string
+
+	for _, n := range targets {
+		if n.IsControlPlane() {
+			cps = append(cps, n.Hostname)
+		}
+	}
+
+	if len(cps) < 2 {
+		return nil
+	}
+
+	return fmt.Errorf("--wait=false with %d control planes selected (%s) would let them go down together "+
+		"and lose etcd quorum: keep --wait, or select at most one control plane with -n",
+		len(cps), strings.Join(cps, ", "))
 }

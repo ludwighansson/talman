@@ -97,7 +97,7 @@ the cluster is unhealthy. As with apply and upgrade, it is off by default.`,
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
 				verb: "reboot", done: "rebooted",
 				targets: targets, parallel: parallel,
-				health: health, timeout: timeout,
+				health: health, timeout: timeout, waits: wait,
 			}).run(rebootOne); err != nil {
 				return err
 			}
