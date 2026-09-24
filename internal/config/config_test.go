@@ -811,3 +811,25 @@ nodes:
 		t.Errorf("a missing values file gave %v", err)
 	}
 }
+
+// A trailing separator, or a trailing document holding only comments, is not
+// a second config: plenty of generated YAML ends that way.
+func TestTrailingEmptyDocument(t *testing.T) {
+	body := validBase + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`
+
+	for name, tail := range map[string]string{
+		"separator":          "---\n",
+		"separator, comment": "---\n# nothing here\n",
+		"two separators":     "---\n---\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(write(t, body+tail)); err != nil {
+				t.Errorf("Load() = %v", err)
+			}
+		})
+	}
+}
