@@ -18,6 +18,7 @@ echo "$*" >> "$STUB_LOG"
 
 for a in "$@"; do
 	case "$a" in
+	"$STUB_KILL") kill -TERM $$ ;;
 	"$STUB_FAIL") echo "stub: $a failed" >&2; exit "${STUB_CODE:-1}" ;;
 	esac
 done
@@ -103,6 +104,7 @@ nodes:
 	t.Setenv("STUB_FAIL", "")
 	t.Setenv("STUB_CODE", "")
 	t.Setenv("STUB_STALE", "")
+	t.Setenv("STUB_KILL", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -203,6 +205,14 @@ func TestTalosctlPassthrough(t *testing.T) {
 
 	if got := run([]string{"ctl", "--", "dmesg"}); got != 3 {
 		t.Errorf("a talosctl exiting 3 gave exit %d, want its 3", got)
+	}
+
+	// Killed by a signal, talosctl has no exit status of its own; talman
+	// reports it the way a shell would, 128 + the signal.
+	t.Setenv("STUB_KILL", "logs")
+
+	if got := run([]string{"ctl", "logs", "kubelet"}); got != 128+15 {
+		t.Errorf("a talosctl killed by SIGTERM gave exit %d, want 143", got)
 	}
 
 	if got := run([]string{"talosctl", "-n", "nope", "dmesg"}); got != 1 {

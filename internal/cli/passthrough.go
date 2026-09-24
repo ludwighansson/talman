@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -84,7 +85,15 @@ talosctl's exit status is talman's.`,
 			if err := interrupt.Run(c); err != nil {
 				var exitErr *exec.ExitError
 				if errors.As(err, &exitErr) {
-					return exitCodeError{exitErr.ExitCode()}
+					code := exitErr.ExitCode()
+
+					// A signal leaves no exit status (-1, which would exit
+					// 255); report it as a shell does, 128 + the signal.
+					if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+						code = 128 + int(ws.Signal())
+					}
+
+					return exitCodeError{code}
 				}
 
 				return fmt.Errorf("running %s: %w", cfg.Talosctl, err)
