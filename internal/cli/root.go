@@ -74,6 +74,13 @@ func run(args []string) int {
 			return 2
 		}
 
+		// A passed-through talosctl has said what went wrong already; its
+		// status is the answer.
+		var exit exitCodeError
+		if errors.As(err, &exit) {
+			return exit.code
+		}
+
 		// SilenceErrors is set, so this is the only place any error is
 		// printed, cobra's own usage errors included.
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
@@ -124,6 +131,7 @@ release.`,
 		recorded(newUpgradeK8sCmd()),
 		recorded(newHealthCmd()),
 		newDashboardCmd(),
+		newTalosctlCmd(),
 		recorded(newResetCmd()),
 		newVersionCmd(),
 	} {
