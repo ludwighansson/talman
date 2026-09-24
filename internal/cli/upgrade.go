@@ -192,7 +192,7 @@ schematic, 1 on error.`,
 			)
 
 			if snapshot && !dryRun {
-				if _, err := etcdSnapshot(cfg, tal, tc, nil, ""); err != nil {
+				if err := etcdSnapshot(cfg, tal, tc, nil, ""); err != nil {
 					return fmt.Errorf("taking the etcd snapshot --snapshot asked for: %w", err)
 				}
 			}
@@ -356,7 +356,7 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 			args = append(args, extraK8s...)
 
 			if snapshot && !dryRun {
-				if _, err := etcdSnapshot(cfg, tal, tc, nil, ""); err != nil {
+				if err := etcdSnapshot(cfg, tal, tc, nil, ""); err != nil {
 					return fmt.Errorf("taking the etcd snapshot --snapshot asked for: %w", err)
 				}
 			}
