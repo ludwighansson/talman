@@ -195,7 +195,7 @@ values:                          # free-form, available to templates as .Values
   harbor: harbor.example.net
 
 imageFactory:
-  installerURLTmpl: "{{.RegistryURL}}/openstack-installer/{{.ID}}:{{.Version}}"
+  platform: openstack            # the installer and boot media are openstack's
 
 schematic:                       # inline, or a path to a (templated) file
   customization:
@@ -282,6 +282,20 @@ nodes:
     imageFactory:
       platform: metal
 ```
+
+The same schematic and version name the boot media for a machine that has no
+Talos on it yet, from the same factory:
+
+```console
+$ talman image url --kind iso -n talos-w01
+talos-w01  https://factory.talos.dev/image/0791…/v1.14.0/metal-amd64.iso
+$ talman image url --kind pxe --arch arm64
+$ talman image url --kind disk -n talos-w01          # metal-amd64.raw.zst
+```
+
+`disk` uses the format each platform is published in (`raw.zst` for metal,
+`ova` for vmware, …), and `--format` names another, or one for a platform
+talman has no default for.
 
 Schematic IDs are computed offline, as the sha256 of the schematic's canonical
 form. That is the factory's own algorithm, and a test holds talman's output to
@@ -405,7 +419,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman secrets generate` | create the encrypted secrets bundle |
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
-| `talman image url` | the installer image reference per node |
+| `talman image url` | the installer image per node, or with `--kind` its ISO, disk image or iPXE script |
 | `talman apply` | re-render, then apply, adopting nodes in maintenance mode |
 | `talman bootstrap` | initialise etcd, once |
 | `talman kubeconfig` | fetch the kubeconfig into the output directory |

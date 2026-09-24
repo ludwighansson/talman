@@ -33,7 +33,7 @@ computes it offline by default and never needs to reach the factory. Pass
 returns instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return printPerNode(cmd, nodes, submit, output, "schematicID", func(ctx renderContext) string { return ctx.SchematicID })
+			return printPerNode(cmd, nodes, submit, output, "schematicID", func(ctx renderContext) (string, error) { return ctx.SchematicID, nil })
 		},
 	}
 

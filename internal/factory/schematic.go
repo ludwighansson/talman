@@ -268,6 +268,66 @@ func (c Config) InstallerURL(schematicID, talosVersion string) (string, error) {
 	return buf.String(), nil
 }
 
+// Boot media kinds ImageURL can name, besides the installer image.
+const (
+	KindISO  = "iso"
+	KindDisk = "disk"
+	KindPXE  = "pxe"
+)
+
+// diskFormats is the disk image each platform is published as, by the file
+// extension the factory serves it under. Only formats checked against the
+// public factory are listed; any other platform has to be told.
+var diskFormats = map[string]string{
+	"metal":         "raw.zst",
+	"aws":           "raw.xz",
+	"azure":         "vhd.xz",
+	"digital-ocean": "raw.gz",
+	"exoscale":      "qcow2",
+	"gcp":           "raw.tar.gz",
+	"hcloud":        "raw.xz",
+	"nocloud":       "raw.xz",
+	"openstack":     "raw.xz",
+	"scaleway":      "raw.zst",
+	"upcloud":       "raw.xz",
+	"vmware":        "ova",
+}
+
+// ImageURL is the factory URL of a boot medium for a schematic: an ISO, a
+// disk image, or the iPXE script that netboots it. format overrides the disk
+// image's extension, and is required for a platform talman has no default
+// for.
+func (c Config) ImageURL(kind, schematicID, talosVersion, arch, format string) (string, error) {
+	c = c.WithDefaults()
+
+	name := c.Platform + "-" + arch
+	if c.SecureBootEnabled() {
+		name += "-secureboot"
+	}
+
+	base := c.Protocol + "://" + c.RegistryURL
+
+	switch kind {
+	case KindISO:
+		return fmt.Sprintf("%s/image/%s/%s/%s.iso", base, schematicID, talosVersion, name), nil
+	case KindPXE:
+		return fmt.Sprintf("%s/pxe/%s/%s/%s", base, schematicID, talosVersion, name), nil
+	case KindDisk:
+		if format == "" {
+			format = diskFormats[c.Platform]
+		}
+
+		if format == "" {
+			return "", fmt.Errorf("talman has no default disk image format for platform %q: "+
+				"pass --format with the extension the factory serves it as (raw.xz, qcow2, …)", c.Platform)
+		}
+
+		return fmt.Sprintf("%s/image/%s/%s/%s.%s", base, schematicID, talosVersion, name, format), nil
+	default:
+		return "", fmt.Errorf("unknown image kind %q", kind)
+	}
+}
+
 // Submit POSTs a schematic to the Image Factory and returns the authoritative
 // ID it assigns. The factory may canonicalise fields we do not know about, so
 // a mismatch against the locally computed ID is reported rather than hidden.

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/factory"
 	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/talosctl"
@@ -322,12 +323,14 @@ func resumeHint(command, done string, remaining []*config.Node, flags ...string)
 type renderContext struct {
 	SchematicID    string
 	InstallerImage string
+	TalosVersion   string
+	Factory        factory.Config
 }
 
 // printPerNode prints one value per node: a two-column table, or with
 // -o json a list of {"hostname": ..., field: value}.
 func printPerNode(cmd *cobra.Command, nodes []string, submit bool, output outputFormat,
-	field string, value func(renderContext) string,
+	field string, value func(renderContext) (string, error),
 ) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -351,10 +354,15 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool, output output
 			return err
 		}
 
-		v := value(renderContext{
+		v, err := value(renderContext{
 			SchematicID:    ctx.Node.SchematicID,
 			InstallerImage: ctx.Node.InstallerImage,
+			TalosVersion:   ctx.Node.TalosVersion,
+			Factory:        cfg.ImageFactoryFor(n),
 		})
+		if err != nil {
+			return fmt.Errorf("node %s: %w", n.Hostname, err)
+		}
 
 		if output.json() {
 			rows = append(rows, map[string]string{"hostname": n.Hostname, field: v})
