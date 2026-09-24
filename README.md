@@ -3,13 +3,10 @@
 Manage [Talos Linux](https://www.talos.dev/) clusters and, above all, their
 configuration patches.
 
-> [!WARNING]
-> **talman is early in development.** It is pre-1.0 and ships as alpha
-> releases: the config schema, the commands and their flags can still change in
-> ways that break your cluster directory, and an upgrade may need a manual
-> migration. It also drives real clusters — read what `render` writes and what
-> `apply --dry-run` reports before you `apply`. Pin a tagged version rather than tracking
-> `main`.
+> [!IMPORTANT]
+> talman drives real clusters. Read what `render` writes and what
+> `apply --dry-run` reports before you `apply`, and pin a tagged release rather
+> than tracking `main`.
 
 ```console
 $ talman patches -n development-worker-01
@@ -82,19 +79,20 @@ registers it with the factory instead.
 ## Install
 
 ```console
-go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-alpha.9
+go install github.com/ludwighansson/talman/cmd/talman@v1.0.0
 ```
 
 Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
-[releases page](https://github.com/ludwighansson/talman/releases). Pin the tag
-rather than reaching for `@latest`: while talman is pre-1.0, `@latest` follows
-every alpha, breaking changes included.
+[releases page](https://github.com/ludwighansson/talman/releases). Pinning a
+version is still the better habit than `@latest`: a cluster directory is
+reviewed against the talman that renders it, and an upgrade is worth making on
+purpose.
 
 Or take the image, which carries `talosctl` and `sops` with it:
 
 ```console
 $ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
-    ghcr.io/ludwighansson/talman:1.0.0-alpha.9 validate
+    ghcr.io/ludwighansson/talman:1.0.0 validate
 ```
 
 It holds exactly three binaries — talman and the two it drives — on Alpine,
@@ -106,7 +104,7 @@ rather than as the job image itself.
 ```yaml
 # .gitlab-ci.yml
 drift:
-  image: ghcr.io/ludwighansson/talman:1.0.0-alpha.9
+  image: ghcr.io/ludwighansson/talman:1.0.0
   script:
     - talman apply --dry-run --detailed-exit-code
 ```
@@ -122,7 +120,7 @@ image as a label as well as in `talman version`:
 
 ```console
 $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version" }}' \
-    ghcr.io/ludwighansson/talman:1.0.0-alpha.9
+    ghcr.io/ludwighansson/talman:1.0.0
 v1.14.1
 ```
 
@@ -139,7 +137,7 @@ $ cosign verify-blob checksums.txt \
     --signature checksums.txt.sig --certificate checksums.txt.pem \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
-$ cosign verify ghcr.io/ludwighansson/talman:1.0.0-alpha.9 \
+$ cosign verify ghcr.io/ludwighansson/talman:1.0.0 \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -389,7 +387,7 @@ and drops a `.gitignore` that excludes the whole output directory.
 
 | Command | |
 | --- | --- |
-| `talman validate` | check keys, paths and templates; needs no secrets or network |
+| `talman validate` | check keys, paths and templates; needs no secrets, keys or network |
 | `talman patches` | the resolved patch chain per node, in application order |
 | `talman status` | the node table, with what each one is running (`--offline` asks nothing) |
 | `talman secrets generate` | create the encrypted secrets bundle |
@@ -406,9 +404,34 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman reset` | wipe nodes (requires typing the cluster name) |
 | `talman version` | the talman and talosctl versions |
 
-`-n/--node` restricts most commands to named nodes (hostname or IP,
-repeatable). `-v` echoes every `talosctl` invocation. `-c` points at a config
-other than `./talman.yaml`.
+`-n/--node` restricts a command to named nodes, by hostname or IP. It is
+repeatable wherever a command works node by node — `apply`, `upgrade`,
+`reset`, `render`, `status`, `patches`, `schematic id`, `image url` — and names
+the one control plane to run from on `bootstrap`, `health`, `kubeconfig` and
+`upgrade-k8s`, which act on the cluster as a whole. `-v` echoes every
+`talosctl` invocation. `-c` points at a config other than `./talman.yaml`, and
+so does `TALMAN_CONFIG` when `-c` is not given.
+
+`status`, `patches`, `schematic id`, `image url` and `version` take
+`-o json`: the text they print is for reading, the JSON for scripts.
+
+```console
+$ talman status -o json | jq -r '.nodes[] | select(.talos.running and .talos.running != .talos.configured) | .hostname'
+```
+
+Shell completion comes from `talman completion bash|zsh|fish|powershell`, and
+completes node names for `-n` and for `dashboard` from the config in the
+working directory:
+
+```console
+$ source <(talman completion zsh)
+```
+
+Ctrl-C, or a CI runner's SIGTERM, stops a run in order rather than on the
+spot. The talosctl process in flight is signalled too, the decrypted secrets
+are removed, metrics are written and a stopped roll-out names the nodes it did
+not reach, as it does for any failure; talman then exits 130. A second Ctrl-C
+exits at once, still removing the decrypted secrets.
 
 ### Adopting nodes
 
@@ -545,7 +568,9 @@ bootstrapping again would be the wrong advice:
 ```console
 6 node(s): 3 running, 3 unreachable
 cluster: not bootstrapped — a node with a config but no cluster to join stays quiet; run `talman bootstrap`
-``` Nodes are asked in parallel, because the report is most wanted when
+```
+
+Nodes are asked in parallel, because the report is most wanted when
 something is down, and a machine that is down takes two dial timeouts to admit
 it.
 
@@ -675,10 +700,15 @@ attribute to a machine.
 | --- | --- |
 | 0 | nothing changed, or would have |
 | 2 | something changed, or would have |
-| 1 | the command failed |
+| 1 | the command failed, a usage error included |
+| 130 | the run was interrupted |
+
+Without the flag, a change is a 0 like anything else that succeeded. Test the
+code rather than chaining `||` and `&&`, which reads 0 as drift too:
 
 ```console
-$ talman apply --dry-run --detailed-exit-code || [ $? -eq 2 ] && echo "drift"
+$ talman apply --dry-run --detailed-exit-code; rc=$?
+$ [ "$rc" -eq 2 ] && echo "drift"
 ```
 
 `--diff` prints that answer instead of reducing it to a code — each node is
@@ -779,9 +809,9 @@ A node's result is `changed`, `unchanged`, `done` (it succeeded, but whether
 it changed is not known), `failed`, or `not_reached` (the run stopped before
 it got there). With metrics on, `apply` asks each node what would change before
 changing it, the same way `--detailed-exit-code` does, so its nodes report
-`changed` or `unchanged` rather than `done`. `apply --dry-run` and
-`upgrade-k8s --dry-run` add `dry_run="true"`, so a drift check and a roll-out
-of the same cluster are kept apart.
+`changed` or `unchanged` rather than `done`. `apply --dry-run`,
+`upgrade --dry-run` and `upgrade-k8s --dry-run` add `dry_run="true"`, so a
+drift check and a roll-out of the same cluster are kept apart.
 
 A push goes to `<url>/metrics/job/talman/cluster/<cluster>/command/<command>`,
 followed by the extra labels. Each cluster, command and label set is its own
@@ -812,19 +842,23 @@ underlying invocation:
 $ talman render --extra-flags=--with-docs=true
 $ talman apply --extra-flags=--timeout=5m
 $ talman upgrade --extra-flags=--reboot-mode=powercycle
-$ talman reset --extra-flags=--system-labels-to-wipe=STATE --extra-flags=--system-labels-to-wipe=EPHEMERAL
+$ talman reset --extra-flags=--user-disks-to-wipe=/dev/sdb
 ```
 
 It is repeatable rather than one string talman splits: values contain commas,
 spaces and quotes, and splitting them here would mangle exactly the arguments
 most worth passing through.
 
-Flags land last on the command line, so they override what talman set — which
-is the point, and also the caveat. `--extra-flags=--output=/tmp/x` on `render`
-will send a machine config somewhere talman then cannot find. Use `-v` to see
-the full command.
+Flags land last on the command line. A flag that takes one value overrides
+what talman set, which is the point, and also the caveat:
+`--extra-flags=--output=/tmp/x` on `render` sends a machine config somewhere
+talman then cannot find. A flag that takes a list is added to talman's instead:
+`reset --extra-flags=--system-labels-to-wipe=STATE` wipes STATE on top of the
+EPHEMERAL and STATE talman already asked for, rather than instead of them. To
+change something talman sets, use talman's own flag for it, here
+`--wipe-labels`. Use `-v` to see the full command.
 
-`validate`, `patches`, `nodes`, `schematic id` and `image url` have no such
+`validate`, `patches`, `schematic id` and `image url` have no such
 flag: none of them invokes `talosctl`. Neither does `status`, for the opposite
 reason — it composes several calls per node rather than driving one, so there
 is no single invocation for a forwarded flag to land on.
@@ -889,8 +923,12 @@ The check is against *running* state, so it ignores the registry and
 repository half of the installer reference: those decide where the next image
 is pulled from, not what is running, and switching mirrors is not a reason to
 reboot a cluster. Anything talman cannot determine counts as out of date — an
-unknown version is never read as agreement. `--force` upgrades regardless;
-`--skip-etcd-check` is the separate flag that passes `--force` to `talosctl`.
+unknown version is never read as agreement. `--force` upgrades regardless, and
+`--dry-run` stops after the asking and names the nodes an upgrade would reach.
+
+talosctl waits for each node to come back on its new version, up to
+`--timeout` (30m), before talman moves on to the next; `--wait=false` only
+starts each upgrade. `--health` gates between nodes as it does for `apply`.
 
 `upgrade-k8s` does the same for Kubernetes: it asks every node which version
 its kubelet runs, and does nothing when they are all already on
