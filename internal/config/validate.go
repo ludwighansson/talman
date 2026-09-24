@@ -237,19 +237,25 @@ func (c *Config) validatePatchKeys(add func(string, ...any)) {
 // directory", which points at the wrong thing entirely.
 func (c *Config) validatePatchFiles(add func(string, ...any)) {
 	for _, ref := range c.AllPatchPaths() {
-		info, err := os.Stat(ref.Path)
+		checkFile(add, "patches."+ref.Group, ref.Rel, ref.Path,
+			"patches must be individual files so the apply order is explicit")
+	}
+}
 
-		switch {
-		case os.IsNotExist(err):
-			add("patches.%s: %q does not exist (resolved to %s)", ref.Group, ref.Rel, ref.Path)
-		case err != nil:
-			add("patches.%s: %q is not readable: %v", ref.Group, ref.Rel, err)
-		case info.IsDir():
-			add("patches.%s: %q is a directory; patches must be individual files "+
-				"so the apply order is explicit", ref.Group, ref.Rel)
-		case !info.Mode().IsRegular():
-			add("patches.%s: %q is not a regular file", ref.Group, ref.Rel)
-		}
+// checkFile reports a path that is missing, unreadable, a directory -- with
+// why that is wrong for this key -- or anything else that is not a file.
+func checkFile(add func(string, ...any), where, rel, path, notDir string) {
+	info, err := os.Stat(path)
+
+	switch {
+	case os.IsNotExist(err):
+		add("%s: %q does not exist (resolved to %s)", where, rel, path)
+	case err != nil:
+		add("%s: %q is not readable: %v", where, rel, err)
+	case info.IsDir():
+		add("%s: %q is a directory; %s", where, rel, notDir)
+	case !info.Mode().IsRegular():
+		add("%s: %q is not a regular file", where, rel)
 	}
 }
 
@@ -265,26 +271,15 @@ func isReserved(key string) bool {
 // validateValuesFiles checks every valuesFiles entry names a readable file, as
 // validatePatchFiles does for patches.
 func (c *Config) validateValuesFiles(add func(string, ...any)) {
-	check := func(where, rel string) {
-		info, err := os.Stat(c.resolvePath(rel))
-
-		switch {
-		case os.IsNotExist(err):
-			add("%s: %q does not exist (resolved to %s)", where, rel, c.resolvePath(rel))
-		case err != nil:
-			add("%s: %q is not readable: %v", where, rel, err)
-		case !info.Mode().IsRegular():
-			add("%s: %q is not a regular file", where, rel)
-		}
-	}
+	const notDir = "valuesFiles lists files, merged in the order given"
 
 	for _, rel := range c.ValuesFiles {
-		check("valuesFiles", rel)
+		checkFile(add, "valuesFiles", rel, c.resolvePath(rel), notDir)
 	}
 
 	for i := range c.Nodes {
 		for _, rel := range c.Nodes[i].ValuesFiles {
-			check("node "+c.Nodes[i].Hostname+": valuesFiles", rel)
+			checkFile(add, "node "+c.Nodes[i].Hostname+": valuesFiles", rel, c.resolvePath(rel), notDir)
 		}
 	}
 }
