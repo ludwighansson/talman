@@ -472,7 +472,7 @@ func (r *Runner) Reachable(talosconfig, node string) bool {
 // single successful probe can land in the window before it goes down. Holding
 // the check for a settling period is what makes "the node came back" mean it.
 //
-// It says what it is waiting for while it waits. A node adopted out of
+// It says what it is waiting for while it waits. A node onboarded out of
 // maintenance mode installs Talos to disk and reboots, which takes minutes,
 // and it is away for all of them -- so the version that only spoke when a node
 // first answered printed one line and then nothing, for up to the whole

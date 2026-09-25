@@ -1186,10 +1186,11 @@ func TestStagedHintKeepsTheConfig(t *testing.T) {
 	}
 }
 
-// TestApplyAdoptsOnlyWhenAsked: a node answering only the maintenance
+// TestApplyOnboardsOnlyWhenAsked: a node answering only the maintenance
 // service is reached without authentication, so apply sends it a config --
-// the CA keys in a control plane's -- only with --adopt or --only-new.
-func TestApplyAdoptsOnlyWhenAsked(t *testing.T) {
+// the CA keys in a control plane's -- only with --onboard-new-nodes or
+// --only-new-nodes.
+func TestApplyOnboardsOnlyWhenAsked(t *testing.T) {
 	dir, log := exitFixtureWith(t, `  - hostname: w1
     ipAddress: 10.0.0.2
     role: worker
@@ -1214,8 +1215,8 @@ func TestApplyAdoptsOnlyWhenAsked(t *testing.T) {
 			t.Errorf("%v: exit %d, want 1", args, got)
 		}
 
-		if !strings.Contains(stderr, "talman apply --adopt -n w1") {
-			t.Errorf("%v: no --adopt hint:\n%s", args, stderr)
+		if !strings.Contains(stderr, "talman apply --onboard-new-nodes -n w1") {
+			t.Errorf("%v: no --onboard-new-nodes hint:\n%s", args, stderr)
 		}
 
 		if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "--insecure --nodes") ||
@@ -1224,7 +1225,7 @@ func TestApplyAdoptsOnlyWhenAsked(t *testing.T) {
 		}
 	}
 
-	for _, extra := range []string{"--adopt", "--only-new"} {
+	for _, extra := range []string{"--onboard-new-nodes", "--only-new-nodes"} {
 		_ = os.WriteFile(log, nil, 0o644)
 		_ = os.Remove(log + ".adopted") // each run starts with the node in maintenance mode
 
@@ -1234,7 +1235,7 @@ func TestApplyAdoptsOnlyWhenAsked(t *testing.T) {
 		}
 
 		if calls, _ := os.ReadFile(log); !strings.Contains(string(calls), "apply-config --nodes 10.0.0.2") {
-			t.Errorf("%s did not adopt the node:\n%s", extra, calls)
+			t.Errorf("%s did not onboard the node:\n%s", extra, calls)
 		}
 	}
 }
@@ -1383,7 +1384,7 @@ func TestApplyOnAnUnbootstrappedClusterPointsAtBootstrap(t *testing.T) {
 
 	var got int
 
-	stderr := captureStderr(t, func() { got = run([]string{"apply", "--adopt", "--no-render", "--redact-secrets=false"}) })
+	stderr := captureStderr(t, func() { got = run([]string{"apply", "--onboard-new-nodes", "--no-render", "--redact-secrets=false"}) })
 
 	if got != 1 || !strings.Contains(stderr, "talman apply --bootstrap") {
 		t.Errorf("exit %d, want 1 and a pointer at --bootstrap:\n%s", got, stderr)

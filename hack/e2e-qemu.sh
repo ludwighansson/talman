@@ -18,7 +18,7 @@
 #
 # What it proves, in order: a cluster comes up, talman adopts it, an upgrade
 # actually replaces Talos on a node, a reset returns that node to maintenance
-# mode, and talman adopts it back into the cluster it just left.
+# mode, and talman onboards it back into the cluster it just left.
 set -euo pipefail
 
 # shellcheck source=hack/lib.sh
@@ -412,12 +412,12 @@ main() {
 
 	await 600 "the worker is in maintenance mode" in_maintenance "$cluster-worker-1"
 
-	step "apply adopts it back into the cluster it just left"
+	step "apply onboards it back into the cluster it just left"
 	expect_exit 0 "apply -n worker" \
-		"$talman" apply --adopt -n "$cluster-worker-1" --timeout=10m
+		"$talman" apply --onboard-new-nodes -n "$cluster-worker-1" --timeout=10m
 
 	await 600 "the worker is running again" settled "$cluster-worker-1"
-	expect_exit 0 "health after the adoption" "$talman" health
+	expect_exit 0 "health after onboarding it" "$talman" health
 
 	step "and the whole cluster agrees with the config"
 	status=$("$talman" status)

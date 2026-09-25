@@ -30,7 +30,7 @@ func newApplyCmd() *cobra.Command {
 		mode       string
 		insecure   bool
 		onlyNew    bool
-		adopt      bool
+		onboard    bool
 		bootstrap  bool
 		parallel   int
 		detailed   bool
@@ -52,16 +52,16 @@ func newApplyCmd() *cobra.Command {
 waiting for each to come back before the next. Control planes always go
 alone; --parallel batches workers.
 
-Nodes in maintenance mode are only configured with --adopt or --only-new: the
-maintenance service authenticates nothing, and a config carries the CA keys.
---bootstrap builds a new cluster: the first control plane, etcd on it, then
-the rest.
+New nodes, in maintenance mode, are configured only with --onboard-new-nodes
+or --only-new-nodes: the maintenance service authenticates nothing, and a
+config carries the CA keys. --bootstrap builds a new cluster: the first
+control plane, etcd on it, then the rest.
 
 --dry-run asks each node what would change, --diff prints that before
 applying, and --detailed-exit-code turns it into an exit code (2 changed, 0
 unchanged, 1 error). Printed diffs have this cluster's secrets redacted.
 
-More in the README: "Adopting nodes", "Rolling changes out safely" and
+More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 "Exit codes for CI".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -100,13 +100,13 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				}
 
 				// A cluster being built is made of nodes in maintenance
-				// mode: adopting them is the point.
-				adopt = true
+				// mode: onboarding them is the point.
+				onboard = true
 			}
 
 			// The waves first, so a mistyped --from fails before the bundle
 			// is decrypted, and only the nodes in the selected waves are
-			// rendered. Planned again after --only-new, below.
+			// rendered. Planned again after --only-new-nodes, below.
 			if _, targets, _, err = waves.plan(cfg, targets); err != nil {
 				return err
 			}
@@ -204,14 +204,14 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				}
 
 				if len(targets) == 0 {
-					fmt.Fprintf(os.Stderr, "nothing to adopt: no selected node is in maintenance mode\n")
+					fmt.Fprintf(os.Stderr, "nothing to onboard: no selected node is new (in maintenance mode)\n")
 					rec.SetChanged(false)
 
 					return nil
 				}
 			}
 
-			// After --only-new, so the waves hold only the nodes it kept.
+			// After --only-new-nodes, so the waves hold only the nodes it kept.
 			stages, targets, thenFrom, err := waves.plan(cfg, targets)
 			if err != nil {
 				return err
@@ -269,7 +269,7 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				// machine is added, some nodes answer with cluster PKI and
 				// some only on the maintenance service. Asking each node
 				// which it is costs one call and is the difference between
-				// adopting a node and failing the run.
+				// onboarding a node and failing the run.
 				maintenance := insecure
 
 				if !forced {
@@ -284,10 +284,10 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 						// Unauthenticated: a reused address, a spoofed host or
 						// a passing TLS failure on a real node all look like
 						// this, and each would be handed the cluster's keys.
-						if !adopt && !onlyNew {
-							return fmt.Errorf("%s (%s) answers only the maintenance service, which "+
-								"authenticates nothing: it gets its config, CA keys included, only when "+
-								"asked\n  talman apply --adopt -n %s", n.Hostname, n.IPAddress, n.Hostname)
+						if !onboard && !onlyNew {
+							return fmt.Errorf("%s (%s) is a new node: it answers only the maintenance service, "+
+								"which authenticates nothing, so it gets its config, CA keys included, only when "+
+								"asked\n  talman apply --onboard-new-nodes -n %s", n.Hostname, n.IPAddress, n.Hostname)
 						}
 
 						maintenance = true
@@ -344,7 +344,7 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				case maintenance && forced:
 					note = " · through the maintenance service (--insecure)"
 				case maintenance:
-					note = " · adopting"
+					note = " · onboarding"
 				}
 
 				header := fmt.Sprintf("== [%d/%d] %s (%s)%s\n",
@@ -473,7 +473,7 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 
 			// The gate checks the cluster the config describes, so it only
 			// means something once that cluster exists. A node that has not
-			// been adopted yet answers with a self-signed maintenance
+			// been onboarded yet answers with a self-signed maintenance
 			// certificate, which the check reports as "certificate signed by
 			// unknown authority" -- a build-out step read as a broken
 			// cluster. So while any node is outside the cluster, the gate
@@ -549,13 +549,13 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				}
 
 				// A resume carries on in the cluster this run made: it is
-				// not a second bootstrap, and its nodes are still adopted.
+				// not a second bootstrap, and its nodes are still onboarded.
 				if ro.stages, ro.targets, ro.thenFrom, err = waves.plan(cfg, rest); err != nil {
 					return err
 				}
 
 				ro.hintDrop = []string{"bootstrap"}
-				ro.hintAdd = []string{"--adopt"}
+				ro.hintAdd = []string{"--onboard-new-nodes"}
 			}
 
 			if len(ro.targets) > 0 {
@@ -587,12 +587,12 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 		"apply mode: "+strings.Join(applyModes, ", "))
 	cmd.Flags().BoolVarP(&insecure, "insecure", "i", false,
 		"force the maintenance service for every node (default: ask each node which API it answers)")
-	cmd.Flags().BoolVar(&adopt, "adopt", false,
-		"send configs to nodes in maintenance mode, over the unauthenticated maintenance service")
+	cmd.Flags().BoolVar(&onboard, "onboard-new-nodes", false,
+		"configure new nodes (in maintenance mode) too, over the unauthenticated maintenance service")
 	cmd.Flags().BoolVar(&bootstrap, "bootstrap", false,
 		"build a new cluster: configure the first control plane, bootstrap etcd on it, then the rest")
-	cmd.Flags().BoolVar(&onlyNew, "only-new", false,
-		"restrict the run to nodes that are in maintenance mode")
+	cmd.Flags().BoolVar(&onlyNew, "only-new-nodes", false,
+		"restrict the run to new nodes (in maintenance mode), and onboard them")
 
 	addParallelFlag(cmd, &parallel, 1,
 		"how many nodes to work on at once; control planes go one at a time unless nothing is enacted")
@@ -626,7 +626,7 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 }
 
 // newNodes keeps the targets that are in maintenance mode, which is what
-// "not adopted yet" looks like from outside.
+// "not onboarded yet" looks like from outside.
 //
 // This is the one path that probes every target up front rather than node by
 // node: the filter cannot be applied without knowing all the answers, and
@@ -652,7 +652,7 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node, 
 			fmt.Fprintf(os.Stderr, "   %s (%s) is running; not new, skipping\n", n.Hostname, n.IPAddress)
 		case talosctl.ModeUnreachable:
 			return nil, fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service: "+
-				"--only-new cannot tell whether it needs adopting\n"+
+				"--only-new-nodes cannot tell whether it needs onboarding\n"+
 				"  bring it up, or narrow the run with -n", n.Hostname, n.IPAddress)
 		}
 	}
@@ -664,7 +664,7 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node, 
 // yet, empty when every one of them is.
 //
 // Nodes this run has already asked about are not asked again: the answers are
-// carried in modes, including for a node this run just adopted and watched
+// carried in modes, including for a node this run just onboarded and watched
 // come back.
 func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	modes map[string]talosctl.Mode, parallel int,
