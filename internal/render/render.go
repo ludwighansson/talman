@@ -39,9 +39,8 @@ type Renderer struct {
 	// the rendered patches for the duration of a pass.
 	workspace   string
 	secretsFile string
-	// unregister drops the workspace from the forced-exit cleanup list once
-	// Close has removed it.
-	unregister func()
+	// cleanup removes the workspace, for Close.
+	cleanup func()
 
 	// secrets is every secret value the pass has rendered into a config: the
 	// bundle, the values SOPS decrypted out of patches, and whatever a
@@ -93,13 +92,13 @@ func (r *Renderer) Open() error {
 		return err
 	}
 
-	dir, err := os.MkdirTemp("", "talman-")
+	dir, cleanup, err := interrupt.TempDir("", "talman-")
 	if err != nil {
 		return err
 	}
 
 	r.workspace = dir
-	r.unregister = interrupt.RemoveAllOnExit(dir)
+	r.cleanup = cleanup
 	r.schematicIDs = map[string]string{}
 
 	secretPath := r.Cfg.SecretPath()
@@ -170,9 +169,8 @@ func (r *Renderer) noteSecretsErr(err error) {
 // Close removes the workspace and the decrypted secrets inside it.
 func (r *Renderer) Close() {
 	if r.workspace != "" {
-		_ = os.RemoveAll(r.workspace)
+		r.cleanup()
 		r.workspace = ""
-		r.unregister()
 	}
 }
 

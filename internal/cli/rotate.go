@@ -123,17 +123,11 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 			output := rotated
 
 			if dryRun {
-				stage, err := os.MkdirTemp("", "talman-rotate-")
+				stage, cleanup, err := interrupt.TempDir("", "talman-rotate-")
 				if err != nil {
 					return err
 				}
-
-				unregister := interrupt.RemoveAllOnExit(stage)
-				defer func() {
-					_ = os.RemoveAll(stage)
-
-					unregister()
-				}()
+				defer cleanup()
 
 				output = filepath.Join(stage, "talosconfig")
 			}
@@ -244,19 +238,11 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 
 	// The machine config carries every key the bundle does, so it is staged
 	// like the decrypted bundle is: private, and gone after the run.
-	stage, err := os.MkdirTemp("", "talman-rotate-")
+	stage, cleanup, err := interrupt.TempDir("", "talman-rotate-")
 	if err != nil {
 		return err
 	}
-
-	// Removed, then unregistered, in that order: a forced exit between the
-	// two must still find the directory on the list.
-	unregister := interrupt.RemoveAllOnExit(stage)
-	defer func() {
-		_ = os.RemoveAll(stage)
-
-		unregister()
-	}()
+	defer cleanup()
 
 	staged := filepath.Join(stage, "controlplane.yaml")
 	if err := os.WriteFile(staged, machineConfig, 0o600); err != nil {
