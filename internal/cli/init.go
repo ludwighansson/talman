@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -198,15 +199,23 @@ It refuses to overwrite a talman.yaml or a .sops.yaml that is already there.`,
 			// if any of it fails -- the directory too, if it made that.
 			var written []string
 
-			created := !exists(abs)
+			// Every directory MkdirAll is about to make, innermost first:
+			// `init clusters/prod/eu` may make three.
+			var created []string
+
+			for d := abs; !exists(d); d = filepath.Dir(d) {
+				created = append(created, d)
+			}
 
 			undo := func() {
 				for _, p := range written {
 					_ = os.Remove(p)
 				}
 
-				if created {
-					_ = os.Remove(abs) // only if empty, which it is unless someone else wrote there
+				// os.Remove takes only an empty directory, so one someone
+				// else wrote into meanwhile stays.
+				for _, d := range created {
+					_ = os.Remove(d)
 				}
 			}
 
@@ -214,14 +223,35 @@ It refuses to overwrite a talman.yaml or a .sops.yaml that is already there.`,
 				return err
 			}
 
+			// Created exclusively: the check above is only a courtesy, and a
+			// file that appeared since must be refused, not truncated.
 			write := func(p string, b []byte) error {
-				if err := os.WriteFile(p, b, 0o644); err != nil {
+				f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+				if err != nil {
 					undo()
+
+					if errors.Is(err, fs.ErrExist) {
+						return fmt.Errorf("%s already exists; init does not overwrite it", render.Rel(p))
+					}
 
 					return err
 				}
 
 				written = append(written, p)
+
+				if _, err := f.Write(b); err != nil {
+					_ = f.Close()
+
+					undo()
+
+					return err
+				}
+
+				if err := f.Close(); err != nil {
+					undo()
+
+					return err
+				}
 
 				return nil
 			}

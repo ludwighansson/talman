@@ -146,3 +146,19 @@ func TestInitIsAllOrNothing(t *testing.T) {
 		t.Errorf("init after the failed one: exit %d, want 0", got)
 	}
 }
+
+// A failed init into a path of several new directories leaves none of them.
+func TestInitRemovesTheDirectoriesItMade(t *testing.T) {
+	t.Setenv("TALMAN_CONFIG", "")
+
+	root := t.TempDir()
+
+	if got := run([]string{"init", filepath.Join(root, "clusters", "prod", "eu"), "--talos-version", "v1.14.1",
+		"--kubernetes-version", "1.37.0", "--controlplane", "CP-01=10.0.0.1"}); got != 1 {
+		t.Fatalf("exit %d, want 1", got)
+	}
+
+	if exists(filepath.Join(root, "clusters")) {
+		t.Error("a failed init left the directories it made behind")
+	}
+}
