@@ -1006,8 +1006,9 @@ unknown version is never read as agreement. `--force` upgrades regardless, and
 `--dry-run` stops after the asking and names the nodes an upgrade would reach.
 
 talosctl waits for each node to come back on its new version, up to
-`--timeout` (30m), before talman moves on to the next; `--wait=false` only
-starts each upgrade. `--health` gates between nodes as it does for `apply`.
+`--timeout` (30m), before talman moves on to the next. It always does: it
+drains each node before upgrading it, and a drain waits. `--health` gates
+between nodes as it does for `apply`.
 
 `reboot` is the roll-out for anything only a reboot applies, above all a
 `talman apply --mode=staged`, which says so when it is done:
@@ -1021,8 +1022,9 @@ $ talman reboot --health
 
 It goes one node at a time in config order, control planes always alone, and
 talosctl waits for each to come back before the next, up to `--timeout`
-(30m). `--parallel`, `--health` and `--wait` mean what they mean for
-`upgrade`; `--mode powercycle` bypasses kexec.
+(30m). `--parallel` and `--health` mean what they mean for `upgrade`;
+`--wait=false` only starts each reboot, which talman refuses for more than one
+control plane at a time, and `--mode powercycle` bypasses kexec.
 
 `upgrade-k8s` does for Kubernetes what `upgrade` does for Talos: it asks every node which version
 its kubelet runs, and does nothing when they are all already on
