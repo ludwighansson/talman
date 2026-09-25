@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/talosctl"
@@ -90,4 +91,39 @@ func controlPlane(cfg *config.Config, name string) (*config.Node, error) {
 	}
 
 	return n, nil
+}
+
+// clusterCheck answers "is there no cluster yet?", asking ask until it knows.
+//
+// A known answer is kept for the run; "unknown" is not, and is asked again
+// next time. The first ask in a fresh build comes moments after the first
+// control plane took its config, before its etcd service exists, and keeping
+// that "unknown" made every later node wait for a cluster that cannot exist
+// until bootstrap -- a ten-minute timeout at the first worker.
+//
+// Deliberately not "the probe said no": unknown is not absent. A probe that
+// could not reach a control plane has established nothing, and what this
+// gates -- waiting for a node, and the health check between nodes -- is what
+// keeps one bad config from reaching a whole control plane. Silence must not
+// switch those off.
+func clusterCheck(ask func() clusterState) func() bool {
+	var (
+		mu    sync.Mutex
+		known *clusterState
+	)
+
+	return func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if known == nil {
+			if state := ask(); state != clusterUnknown {
+				known = &state
+			} else {
+				return false
+			}
+		}
+
+		return *known == clusterAbsent
+	}
 }

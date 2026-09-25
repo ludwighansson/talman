@@ -2,6 +2,7 @@ package talosctl
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -366,6 +367,16 @@ const (
 func (r *Runner) Etcd(talosconfig, node string) EtcdState {
 	out, err := r.askNode(talosconfig, node, "get", "services", "etcd", "--output", "yaml")
 	if err != nil {
+		// Answered, and there is no etcd service: a control plane that has
+		// just taken its config serves the Talos API before its services
+		// are registered. No etcd service is no etcd running -- which is
+		// what tells apply there is no cluster yet -- rather than a failure
+		// to find out.
+		var exit *ExitError
+		if errors.As(err, &exit) && strings.Contains(exit.Stderr, "code = NotFound") {
+			return EtcdStopped
+		}
+
 		return EtcdUnknown
 	}
 
