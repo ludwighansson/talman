@@ -183,26 +183,12 @@ func TestDryRunChanged(t *testing.T) {
 func TestGateSummary(t *testing.T) {
 	tests := []struct {
 		name    string
-		adopted int64
 		ungated int
 		gated   int
 		want    string
 	}{
 		{
 			name: "an ordinary run says nothing",
-		},
-		{
-			name:    "every step ungated, nodes adopted: a cluster being built",
-			adopted: 2,
-			ungated: 3,
-			want:    "not waiting, and not gating on health: no cluster to join yet",
-		},
-		{
-			name:    "adopted, but the gate did run",
-			adopted: 1,
-			ungated: 1,
-			gated:   2,
-			want:    "not waiting: nothing to join until `talman bootstrap` runs",
 		},
 		{
 			name:    "gate stood down throughout, nothing adopted",
@@ -226,7 +212,7 @@ func TestGateSummary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := gateSummary(tt.adopted, tt.ungated, tt.gated); got != tt.want {
+			if got := gateSummary(tt.ungated, tt.gated); got != tt.want {
 				t.Errorf("gateSummary() = %q, want %q", got, tt.want)
 			}
 		})

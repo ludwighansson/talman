@@ -349,7 +349,7 @@ func (r *Runner) inMaintenance(node string) bool {
 type EtcdState int
 
 // The three answers, and the difference between the last two matters: the
-// remedy for a cluster that was never bootstrapped is `talman bootstrap`, and
+// remedy for a cluster that was never bootstrapped is `talman apply --bootstrap`, and
 // the remedy for a bootstrapped cluster that has lost quorum is anything but.
 const (
 	// EtcdUnknown is a node that did not answer, or answered in a shape

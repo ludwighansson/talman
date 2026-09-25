@@ -457,8 +457,7 @@ alone and the render stops, rather than being replaced.
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
 | `talman image url` | the installer image per node, or with `--kind` its ISO, disk image or iPXE script |
-| `talman apply` | re-render, then apply; `--adopt` also configures nodes in maintenance mode |
-| `talman bootstrap` | initialise etcd, once |
+| `talman apply` | re-render, then apply; `--adopt` also configures nodes in maintenance mode, `--bootstrap` builds a new cluster |
 | `talman kubeconfig` | fetch the kubeconfig into the output directory |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
 | `talman reboot` | a rolling reboot, one node at a time |
@@ -473,7 +472,7 @@ alone and the render stops, rather than being replaced.
 `-n/--node` restricts a command to named nodes, by hostname or IP. It is
 repeatable wherever a command works node by node — `apply`, `upgrade`,
 `reboot`, `reset`, `render`, `status`, `patches`, `schematic id`, `image url`,
-`ctl` — and names the one control plane to run from on `bootstrap`, `health`,
+`ctl` — and names the one control plane to run from on `health`,
 `kubeconfig` and `upgrade-k8s`, which act on the cluster as a whole. Wherever
 `-n` is repeatable, `-g/--group` selects by group or role as well:
 `talman reboot -g blue` is every node in `blue`, and `-n` and `-g` together
@@ -546,36 +545,34 @@ talman applies its config through a control plane, so it has to be able to ask
 after it the same way. Whichever route answered is remembered for the rest of
 the run.
 
-A fresh cluster, where the configs go out before there is a cluster to join:
+A new cluster is built with one command:
 
 ```console
-$ talman apply --adopt        # adopts every node; does not wait for what cannot finish
-...
-not waiting: nothing to join until `talman bootstrap` runs
-2 node(s) adopted → talman bootstrap
-```
-
-A node adopted out of maintenance mode installs Talos, reboots, and then waits
-for a cluster. Before `bootstrap` there is no etcd and no cluster, so its API
-never comes back — waiting for it is a ten-minute timeout per node, on the one
-path where every node is in that state. So talman doesn't: it checks whether
-any control plane has etcd running, and when none does it says what is missing
-instead of waiting for it. Step by step, that flow is:
-
-```console
-$ talman apply --adopt -n talos-c01   # installs and reboots into its config
-$ talman bootstrap            # once, ever: initialises etcd
+$ talman apply --bootstrap
+== [1/6] talos-c01 (10.164.0.27) · adopting
+     Applied configuration without a reboot
+     waiting for 10.164.0.27 to come back, up to 10m0s
+     ...
 == bootstrapping etcd on talos-c01 (10.164.0.27)
-cluster bootstrap initiated; etcd is starting on talos-c01
-  talman status      to watch the control plane come up
-  talman kubeconfig  once it is serving
-$ talman apply --adopt        # the rest, control planes and workers alike
+     etcd is running on talos-c01 after 38s
+== [2/6] talos-c02 (10.164.0.28) · adopting
+...
 ```
 
-`bootstrap` returns as soon as Talos accepts the request — etcd starts
-afterwards and the control plane forms over the following minute — so it says
-so rather than exiting silently on the one command a cluster only ever gets
-once.
+It configures the first control plane, bootstraps etcd on it and waits until
+etcd runs, and only then configures the rest — which is the order that works:
+a node given its config before there is a cluster to join cannot finish, and
+waiting for it just times out. From the second node on it is an ordinary
+apply, with its waits, its health gate, `--parallel` and the config's waves.
+
+Before it touches anything, it checks there is nothing to bootstrap yet:
+every control plane has to answer, in maintenance mode or configured and
+waiting for etcd, and none may run etcd — bootstrapping twice would split the
+cluster. So it also finishes a cluster half built by an earlier run. It builds
+the whole cluster, so it takes no `-n`, `-g` or wave flags.
+
+A plain `apply` on a cluster that is not bootstrapped stops and says to use
+`--bootstrap`, rather than configuring nodes that cannot finish joining.
 
 Adding a machine to a live cluster is `talman apply --adopt -n <new node>`,
 and re-adopting one after `reset` is the same command. `--only-new` does the
@@ -646,7 +643,7 @@ bootstrapping again would be the wrong advice:
 
 ```console
 6 node(s): 3 running, 3 unreachable
-cluster: not bootstrapped — a node with a config but no cluster to join stays quiet; run `talman bootstrap`
+cluster: not bootstrapped — a node with a config but no cluster to join stays quiet; run `talman apply --bootstrap`
 ```
 
 Nodes are asked in parallel, because the report is most wanted when
@@ -718,7 +715,7 @@ it twice would fail without `--force`. `--merge` set explicitly wins either way.
 
 ### The talosconfig
 
-Every command that reaches the cluster — `apply`, `bootstrap`, `kubeconfig`,
+Every command that reaches the cluster — `apply`, `kubeconfig`,
 `upgrade`, `upgrade-k8s`, `reboot`, `health`, `reset`, `rotate-ca`,
 `etcd snapshot`, `status` and `ctl` — authenticates with
 `clusterconfig/talosconfig`, and generates it when it is not there:
@@ -860,8 +857,8 @@ decision; the flag only surfaces it.
 
 ### Metrics for CI
 
-`apply`, `upgrade`, `upgrade-k8s`, `reboot`, `reset`, `rotate-ca`, `bootstrap`,
-`health` and `etcd snapshot` can record what a run did, for the whole run and
+`apply`, `upgrade`, `upgrade-k8s`, `reboot`, `reset`, `rotate-ca`, `health`
+and `etcd snapshot` can record what a run did, for the whole run and
 for each node, in the Prometheus text format. They write it to a file, push it to a metrics push endpoint, or both:
 
 ```console
@@ -992,8 +989,7 @@ for the first time is away for minutes, and silence is indistinguishable from
 a hang — and the health gate is bounded by the same `--timeout`, because
 `talosctl` otherwise takes twenty minutes to report that a gate will not pass.
 The health gate also stands down while any configured node is still outside
-the cluster — see below — which covers a first bootstrap, where there is no
-cluster to be healthy yet.
+the cluster — see below — which covers a node being adopted.
 
 Both `apply`'s gate and `talman health` run the check from one control plane —
 the first in the config that answers the Talos API, or `--node` — and report on
@@ -1300,6 +1296,7 @@ and a removed flag is refused as an unknown flag.
 | `upgrade --stage`, `--skip-etcd-check` | removed: Talos 1.14's upgrade API ignores both; `--extra-flags` reaches them on a legacy node |
 | `upgrade --wait=false` | removed: talosctl waits whenever it drains, which is by default |
 | `apply` adopting a node in maintenance mode by itself | `apply --adopt`, or `--only-new`: the maintenance service authenticates nothing |
+| `talman bootstrap`, and `apply` on a cluster not bootstrapped | `talman apply --bootstrap` builds a new cluster in one run |
 
 ## Migrating from talhelper
 

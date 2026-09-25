@@ -141,32 +141,3 @@ func TestAskCluster(t *testing.T) {
 		})
 	}
 }
-
-// TestClusterCheckRemembersOnlyAnswers: whether a cluster exists is asked
-// again until it is known. The first ask in a fresh build comes moments after
-// the first control plane took its config, before its etcd service exists;
-// remembering "unknown" from then made every later node wait for a cluster
-// that could not exist yet.
-func TestClusterCheckRemembersOnlyAnswers(t *testing.T) {
-	answers := []clusterState{clusterUnknown, clusterAbsent, clusterUp}
-	asked := 0
-
-	noClusterYet := clusterCheck(func() clusterState {
-		a := answers[asked]
-		asked++
-
-		return a
-	})
-
-	if noClusterYet() {
-		t.Error("an unknown answer read as no cluster")
-	}
-
-	if !noClusterYet() {
-		t.Error("asking again after unknown did not find the cluster absent")
-	}
-
-	if !noClusterYet() || asked != 2 {
-		t.Errorf("a known answer was asked again (%d asks)", asked)
-	}
-}

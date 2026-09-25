@@ -54,6 +54,16 @@ type rollOut struct {
 	// thenFrom is the wave --until stopped short of, for the hint that
 	// carries on from it.
 	thenFrom string
+
+	// hintDrop and hintAdd adjust the flags a resume hint repeats: after
+	// apply --bootstrap has built the cluster, carrying on is not a second
+	// bootstrap, and the nodes left still need adopting.
+	hintDrop, hintAdd []string
+}
+
+// hintFlags are the flags a resume hint that names the nodes left repeats.
+func (ro rollOut) hintFlags() []string {
+	return append(replayFlags(ro.cmd, append([]string{"node"}, ro.hintDrop...)...), ro.hintAdd...)
 }
 
 // one does a single node's work. grouped says its output is captured with a
@@ -106,7 +116,7 @@ func (ro rollOut) run(do one) error {
 		if err := clusterHealth(ro.cfg, ro.tal, ro.tc, ro.timeout); err != nil {
 			return fmt.Errorf("cluster is unhealthy after %s %s: %w\n%s",
 				gerund(ro.verb), names(after), err,
-				resumeHint(ro.verb, ro.done, ro.targets[done:], replayFlags(ro.cmd, "node")...))
+				resumeHint(ro.verb, ro.done, ro.targets[done:], ro.hintFlags()...))
 		}
 
 		return nil
@@ -147,7 +157,7 @@ func (ro rollOut) run(do one) error {
 			}); err != nil {
 				return fmt.Errorf("%w\n%s", err,
 					resumeHint(ro.verb, ro.done, without(ro.targets[done:], succeeded),
-						replayFlags(ro.cmd, "node")...))
+						ro.hintFlags()...))
 			}
 
 			done += len(batch)
@@ -184,7 +194,7 @@ func (ro rollOut) run(do one) error {
 
 				if err := interrupt.Sleep(ro.soak); err != nil {
 					return fmt.Errorf("stopped soaking after wave %s: %w\n%s", st.Name(), err,
-						resumeHint(ro.verb, ro.done, ro.targets[done:], replayFlags(ro.cmd, "node")...))
+						resumeHint(ro.verb, ro.done, ro.targets[done:], ro.hintFlags()...))
 				}
 			}
 
