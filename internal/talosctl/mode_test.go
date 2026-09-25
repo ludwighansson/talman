@@ -292,3 +292,37 @@ func TestEtcdNotYetRegistered(t *testing.T) {
 		t.Errorf("Etcd() = %v on a refused connection, want EtcdUnknown", got)
 	}
 }
+
+// TestMachineConfigIsTheResourceSpec: the config comes back as the spec of
+// the MachineConfig resource, a YAML string, which is what is returned.
+func TestMachineConfigIsTheResourceSpec(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "talosctl")
+
+	script := `#!/bin/sh
+cat <<'OUT'
+node: 10.0.0.1
+metadata:
+    namespace: config
+    type: MachineConfigs.config.talos.dev
+    id: v1alpha1
+spec: |
+    version: v1alpha1
+    machine:
+        ca:
+            crt: bmV3
+OUT
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := New(bin).MachineConfig("tc", "10.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "version: v1alpha1\nmachine:\n    ca:\n        crt: bmV3\n"; string(got) != want {
+		t.Errorf("MachineConfig() = %q, want %q", got, want)
+	}
+}

@@ -552,3 +552,33 @@ func round(d time.Duration) time.Duration {
 
 	return d.Round(10 * time.Second)
 }
+
+// MachineConfig is the machine config a node is running, as Talos serves it:
+// the MachineConfig resource, whose spec is the config document itself.
+//
+// Asked for rather than read from disk. The file under /system/state is where
+// a docker node keeps it, but a machine installed to disk has no such path in
+// its API's view, and "read" fails there with "no such file or directory".
+func (r *Runner) MachineConfig(talosconfig, node string) ([]byte, error) {
+	out, err := r.Output(append(r.NodeArgs(talosconfig, node),
+		"get", "machineconfig", "v1alpha1", "--output", "yaml")...)
+	if err != nil {
+		return nil, err
+	}
+
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+
+	for {
+		var doc struct {
+			Spec string `yaml:"spec"`
+		}
+
+		if err := dec.Decode(&doc); err != nil {
+			return nil, fmt.Errorf("talosctl get machineconfig on %s returned no machine config", node)
+		}
+
+		if strings.TrimSpace(doc.Spec) != "" {
+			return []byte(doc.Spec), nil
+		}
+	}
+}

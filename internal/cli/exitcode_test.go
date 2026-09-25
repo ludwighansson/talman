@@ -34,7 +34,7 @@ fi
 if [ -n "$STUB_DEAD_ENDPOINTS" ]; then
 	case " $* " in
 	*" --endpoints "*|*" version --client "*) ;;
-	*" etcd snapshot "*|*" read "*) echo "stub: endpoints unreachable" >&2; exit 1 ;;
+	*" etcd snapshot "*|*" read "*|*" get machineconfig "*) echo "stub: endpoints unreachable" >&2; exit 1 ;;
 	esac
 fi
 
@@ -89,7 +89,7 @@ case " $* " in
 	if [ -n "$STUB_ROTATE_PARTWAY" ]; then echo "stub: kubernetes rotation failed" >&2; exit 1; fi
 	;;
 *" rotate-ca "*) echo "would rotate" ;;
-*" read /system/state/config.yaml"*) echo "machine: {ca: new}" ;;
+*" get machineconfig v1alpha1 "*) printf 'node: 10.0.0.1\nmetadata:\n    id: v1alpha1\nspec: |\n    machine: {ca: new}\n' ;;
 *" gen secrets "*) echo "bundle: rotated" ;;
 *" etcd snapshot "*)
 	eval "out=\${$#}"
@@ -420,7 +420,7 @@ func TestRotateCA(t *testing.T) {
 
 	for _, want := range []string{
 		"rotate-ca --control-plane-nodes 10.0.0.1 --talos=true --kubernetes=false --dry-run=false",
-		"--talosconfig " + tc + ".rotated --endpoints 10.0.0.1 --nodes 10.0.0.1 read /system/state/config.yaml",
+		"--talosconfig " + tc + ".rotated --endpoints 10.0.0.1 --nodes 10.0.0.1 get machineconfig v1alpha1",
 		"gen secrets --output-file - --talos-version v1.14.1 --from-controlplane-config",
 		// The rotated talosconfig gets render's endpoints and nodes, not the
 		// one pinned control plane talosctl wrote it with.
@@ -544,7 +544,7 @@ func TestRotateCAPartway(t *testing.T) {
 	for _, want := range []string{
 		"did not finish",
 		"talosconfig.rotated",
-		"secrets generate --force --from-controlplane-config",
+		"talman rotate-ca --finish",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("the error does not mention %q:\n%s", want, stderr)
@@ -1229,5 +1229,59 @@ func TestMetricsFlagsOnlyWhereRecorded(t *testing.T) {
 
 	if !exists(file) {
 		t.Error("reboot --metrics-file wrote no metrics")
+	}
+}
+
+// TestRotateCAReadsBackFirst: the bundle is read back out of the cluster
+// before anything rotates, so a cluster talman cannot read it from is refused
+// with nothing changed, rather than left trusting CAs no bundle holds.
+func TestRotateCAReadsBackFirst(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "secrets.sops.yaml"), []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_FAIL", "machineconfig")
+
+	if got := run([]string{"rotate-ca", "-y"}); got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), " rotate-ca ") {
+		t.Errorf("the CAs were rotated although the bundle could not be read back:\n%s", calls)
+	}
+}
+
+// TestRotateCAFinish: a rotation that finished on the nodes but not here --
+// the bundle stale, talosconfig.rotated left -- is finished by one command.
+func TestRotateCAFinish(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	secrets := filepath.Join(dir, "secrets.sops.yaml")
+	if err := os.WriteFile(secrets, []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tc := filepath.Join(dir, "clusterconfig", "talosconfig")
+	if err := os.WriteFile(tc+".rotated", []byte("context: rotated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run([]string{"rotate-ca", "--finish"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d\n%s", got, calls)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), " rotate-ca ") {
+		t.Errorf("--finish rotated the CAs again:\n%s", calls)
+	}
+
+	if b, _ := os.ReadFile(secrets); string(b) != "bundle: rotated\n" {
+		t.Errorf("bundle = %q, want the one read back from the cluster", b)
+	}
+
+	if b, _ := os.ReadFile(tc); string(b) != "context: rotated\n" || exists(tc+".rotated") {
+		t.Errorf("talosconfig = %q, want the rotated one moved into place", b)
 	}
 }

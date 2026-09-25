@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -21,6 +22,7 @@ func newRotateCACmd() *cobra.Command {
 		talos      bool
 		kubernetes bool
 		dryRun     bool
+		finish     bool
 		yes        bool
 		extraFlags []string
 	)
@@ -34,8 +36,10 @@ put the old CAs back. The old bundle is kept in the output directory, and the
 talosconfig is replaced with one signed by the new CA.
 
 --dry-run shows what talosctl would do. A real rotation asks for the cluster
-name first, unless --yes. Afterwards: commit the bundle, run "talman render",
-and "talman kubeconfig" if the Kubernetes CA changed.
+name first, unless --yes, and refuses to start unless the bundle can be read
+back from a control plane. --finish completes a rotation that stopped after
+the nodes changed. Afterwards: commit the bundle, run "talman render", and
+"talman kubeconfig" if the Kubernetes CA changed.
 
 More in the README: "Rotating the CAs".`,
 		Args: cobra.NoArgs,
@@ -65,10 +69,19 @@ More in the README: "Rotating the CAs".`,
 				return err
 			}
 
+			tal := runner(cfg)
+
 			// Left by a rotation that did not finish, this may be the only
 			// talosconfig the cluster still accepts. It is never removed
 			// here: deleting it could lock the operator out of every node.
 			rotated := tc + ".rotated"
+
+			// The second half alone, for a rotation that finished on the
+			// nodes but not here: the bundle still holds the old CAs.
+			if finish {
+				return finishRotation(cfg, tal, tc, rotated, old)
+			}
+
 			if exists(rotated) {
 				return fmt.Errorf("%s is left from a rotation that did not finish, and may be the only "+
 					"talosconfig the cluster still accepts: if `talosctl --talosconfig %s health` passes, "+
@@ -83,6 +96,16 @@ More in the README: "Rotating the CAs".`,
 				if _, err := sopsx.EncryptTo([]byte("preflight: true\n"), cfg.SecretPath()); err != nil {
 					return fmt.Errorf("%s is encrypted, and the rotated bundle could not be encrypted "+
 						"the same way, so nothing was rotated: %w", cfg.SecretFile, err)
+				}
+			}
+
+			// Whether the bundle can be read back out of the cluster, before
+			// anything is rotated: finding out afterwards leaves a cluster
+			// trusting CAs no bundle holds.
+			if !dryRun {
+				if _, _, err := extractBundle(cfg, tal, tc, 0); err != nil {
+					return fmt.Errorf("%w\n  talman reads the rotated bundle back from a control plane, and could "+
+						"not read this one, so nothing was rotated", err)
 				}
 			}
 
@@ -123,8 +146,6 @@ More in the README: "Rotating the CAs".`,
 
 				output = filepath.Join(stage, "talosconfig")
 			}
-
-			tal := runner(cfg)
 
 			// talosctl rotate-ca talks to the cluster through exactly one
 			// node, and reaches the rest by the two lists below. Left to
@@ -189,15 +210,16 @@ More in the README: "Rotating the CAs".`,
 			}
 
 			// From here the cluster trusts the new CAs and the bundle does
-			// not, so a failure has to say how to finish by hand.
+			// not. The control planes may still be settling, so the read is
+			// given a couple of minutes before --finish is the way on.
 			talosconfig := tc
 			if talos {
 				talosconfig = rotated
 			}
 
-			if err := replaceBundle(cfg, tal, talosconfig, old); err != nil {
-				return fmt.Errorf("%w\n  the cluster's CAs WERE rotated, but %s still holds the old ones.\n%s",
-					err, cfg.SecretFile, finishByHand(cfg, talosconfig))
+			if err := replaceBundle(cfg, tal, talosconfig, old, 2*time.Minute); err != nil {
+				return fmt.Errorf("%w\n  the cluster's CAs WERE rotated, but %s still holds the old ones; "+
+					"once the cluster answers again, finish with:\n    talman rotate-ca --finish", err, cfg.SecretFile)
 			}
 
 			if talos {
@@ -209,19 +231,7 @@ More in the README: "Rotating the CAs".`,
 				fmt.Fprintf(os.Stderr, "wrote %s, signed by the new Talos CA\n", render.Rel(tc))
 			}
 
-			fmt.Fprintln(os.Stderr, "next:")
-
-			if sopsx.IsEncrypted(old) {
-				fmt.Fprintf(os.Stderr, "  commit %s\n", cfg.SecretFile)
-			} else {
-				fmt.Fprintf(os.Stderr, "  keep %s out of git: it is unencrypted\n", cfg.SecretFile)
-			}
-
-			fmt.Fprintln(os.Stderr, "  talman render       the rendered configs still carry the old CAs")
-
-			if kubernetes {
-				fmt.Fprintln(os.Stderr, "  talman kubeconfig   the old one is signed by the old Kubernetes CA")
-			}
+			printRotationNext(cfg, old, kubernetes)
 
 			return nil
 		},
@@ -230,44 +240,77 @@ More in the README: "Rotating the CAs".`,
 	cmd.Flags().BoolVar(&talos, "talos", true, "rotate the Talos API CA")
 	cmd.Flags().BoolVar(&kubernetes, "kubernetes", true, "rotate the Kubernetes API CA")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "say what would be rotated, and change nothing")
+	cmd.Flags().BoolVar(&finish, "finish", false,
+		"rotate nothing: bring the bundle and talosconfig in line with a cluster whose CAs were rotated")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }
 
-// replaceBundle extracts the secrets bundle from a control plane's current
-// machine config and writes it over the configured one, in the same form --
-// encrypted or not -- keeping the old bundle beside it.
-func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string, old []byte) error {
+// extractBundle reads a control plane's running machine config and extracts
+// the secrets bundle from it, as `talman secrets generate
+// --from-controlplane-config` does, trying for up to patience: just after a
+// rotation the control planes may still be settling on the new CA.
+func extractBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
+	patience time.Duration,
+) ([]byte, *config.Node, error) {
+	deadline := time.Now().Add(patience)
+
+	for {
+		bundle, from, err := extractBundleOnce(cfg, tal, talosconfig)
+		if err == nil || !time.Now().Before(deadline) {
+			return bundle, from, err
+		}
+
+		if err := interrupt.Sleep(5 * time.Second); err != nil {
+			return nil, nil, err
+		}
+	}
+}
+
+func extractBundleOnce(cfg *config.Config, tal *talosctl.Runner, talosconfig string) ([]byte, *config.Node, error) {
 	from, err := healthNode(cfg, tal, talosconfig)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	machineConfig, err := tal.Output(append(tal.NodeArgs(talosconfig, from.IPAddress),
-		"read", "/system/state/config.yaml")...)
+	machineConfig, err := tal.MachineConfig(talosconfig, from.IPAddress)
 	if err != nil {
-		return fmt.Errorf("reading %s's machine config: %w", from.Hostname, err)
+		return nil, nil, fmt.Errorf("reading %s's machine config: %w", from.Hostname, err)
 	}
 
 	// The machine config carries every key the bundle does, so it is staged
 	// like the decrypted bundle is: private, and gone after the run.
 	stage, cleanup, err := interrupt.TempDir("", "talman-rotate-")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer cleanup()
 
 	staged := filepath.Join(stage, "controlplane.yaml")
 	if err := os.WriteFile(staged, machineConfig, 0o600); err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	bundle, err := tal.GenSecrets(talosctl.GenSecretsOptions{
 		TalosVersion:           cfg.TalosVersion,
 		FromControlPlaneConfig: staged,
 	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("extracting the bundle from %s's machine config: %w", from.Hostname, err)
+	}
+
+	return bundle, from, nil
+}
+
+// replaceBundle writes the bundle a control plane's running config holds over
+// the configured one, in the same form -- encrypted or not -- keeping the old
+// one in the output directory.
+func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string, old []byte,
+	patience time.Duration,
+) error {
+	bundle, from, err := extractBundle(cfg, tal, talosconfig, patience)
 	if err != nil {
 		return err
 	}
@@ -306,27 +349,10 @@ func partialRotation(cfg *config.Config, tc, rotated string) string {
 	}
 
 	return fmt.Sprintf("\n  talosctl wrote %s, the talosconfig for a new Talos CA, so the Talos CA has\n"+
-		"  probably been rotated and %s may no longer be accepted. Once `talosctl --talosconfig %s health`\n"+
-		"  passes, make it talman's and bring %s in line:\n"+
-		"    mv %s %s\n%s",
-		render.Rel(rotated), render.Rel(tc), render.Rel(rotated), cfg.SecretFile,
-		render.Rel(rotated), render.Rel(tc), finishByHand(cfg, tc))
-}
-
-// finishByHand spells out extracting the bundle from a control plane, which is
-// what rotate-ca does itself once a rotation has finished.
-//
-// The machine config it reads holds every key in the bundle, so it goes into
-// the output directory -- gitignored, 0700 -- and is written under a 077
-// umask, rather than into the working directory, which is usually the repo.
-func finishByHand(cfg *config.Config, talosconfig string) string {
-	cp := render.Rel(filepath.Join(cfg.OutputPath(), "cp.yaml"))
-
-	return fmt.Sprintf("  finish by hand before the next apply:\n"+
-		"    (umask 077; talosctl --talosconfig %s --nodes <control plane> read /system/state/config.yaml > %s)\n"+
-		"    talman secrets generate --force --from-controlplane-config %s    # rewrites %s, keeping the old one\n"+
-		"    rm %s    # it holds every key in the bundle",
-		render.Rel(talosconfig), cp, cp, cfg.SecretFile, cp)
+		"  probably been rotated and %s may no longer be accepted. Once\n"+
+		"  `talosctl --talosconfig %s health` passes, finish with:\n"+
+		"    talman rotate-ca --finish",
+		render.Rel(rotated), render.Rel(tc), render.Rel(rotated))
 }
 
 // completeTalosconfig gives the talosconfig talosctl rotate-ca wrote the
@@ -353,4 +379,51 @@ func completeTalosconfig(tal *talosctl.Runner, cfg *config.Config, path string) 
 	}
 
 	return tal.ConfigNode(path, all)
+}
+
+// finishRotation brings the bundle, and the talosconfig when talosctl left a
+// rotated one, in line with a cluster whose CAs were rotated.
+func finishRotation(cfg *config.Config, tal *talosctl.Runner, tc, rotated string, old []byte) error {
+	talosconfig := tc
+
+	if exists(rotated) {
+		if err := completeTalosconfig(tal, cfg, rotated); err != nil {
+			return err
+		}
+
+		talosconfig = rotated
+	}
+
+	if err := replaceBundle(cfg, tal, talosconfig, old, 0); err != nil {
+		return err
+	}
+
+	if talosconfig == rotated {
+		if err := os.Rename(rotated, tc); err != nil {
+			return fmt.Errorf("replacing %s with the rotated talosconfig at %s: %w",
+				render.Rel(tc), render.Rel(rotated), err)
+		}
+
+		fmt.Fprintf(os.Stderr, "wrote %s, signed by the new Talos CA\n", render.Rel(tc))
+	}
+
+	printRotationNext(cfg, old, true)
+
+	return nil
+}
+
+func printRotationNext(cfg *config.Config, old []byte, kubernetes bool) {
+	fmt.Fprintln(os.Stderr, "next:")
+
+	if sopsx.IsEncrypted(old) {
+		fmt.Fprintf(os.Stderr, "  commit %s\n", cfg.SecretFile)
+	} else {
+		fmt.Fprintf(os.Stderr, "  keep %s out of git: it is unencrypted\n", cfg.SecretFile)
+	}
+
+	fmt.Fprintln(os.Stderr, "  talman render       the rendered configs still carry the old CAs")
+
+	if kubernetes {
+		fmt.Fprintln(os.Stderr, "  talman kubeconfig   the old one is signed by the old Kubernetes CA")
+	}
 }
