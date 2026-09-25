@@ -55,16 +55,16 @@ value".`,
 				}{Nodes: []chainJSON{}}
 
 				for _, n := range targets {
-					node := chainJSON{Hostname: n.Hostname, Role: string(n.Role), Groups: n.Groups, Patches: []patchJSON{}}
-					if node.Groups == nil {
-						node.Groups = []string{}
+					entry := chainJSON{Hostname: n.Hostname, Role: string(n.Role), Groups: n.Groups, Patches: []patchJSON{}}
+					if entry.Groups == nil {
+						entry.Groups = []string{}
 					}
 
 					for _, ref := range cfg.PatchChain(n) {
-						node.Patches = append(node.Patches, patchJSON{Group: ref.Group, Path: ref.Rel})
+						entry.Patches = append(entry.Patches, patchJSON{Group: ref.Group, Path: ref.Rel})
 					}
 
-					report.Nodes = append(report.Nodes, node)
+					report.Nodes = append(report.Nodes, entry)
 				}
 
 				return writeJSON(out, report)
