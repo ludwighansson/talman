@@ -32,6 +32,7 @@ func newApplyCmd() *cobra.Command {
 		onlyNew    bool
 		onboard    bool
 		bootstrap  bool
+		yes        bool
 		parallel   int
 		detailed   bool
 		diff       bool
@@ -95,7 +96,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 			}
 
 			if bootstrap {
-				if err := bootstrapFlagsAllowed(cmd, dryRun, mode, onlyNew); err != nil {
+				if err := bootstrapFlagsAllowed(cmd, mode, onlyNew, wait); err != nil {
 					return err
 				}
 
@@ -171,13 +172,29 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 			// there to be none yet; every other apply configures one, and a
 			// cluster not yet bootstrapped is one whose nodes cannot finish
 			// joining it.
-			if bootstrap {
-				if err := notBootstrapped(cfg, tal, tc); err != nil {
+			states := probeControlPlanes(cfg, tal, tc)
+
+			switch {
+			case bootstrap:
+				configured, err := checkBootstrappable(cfg, states)
+				if err != nil {
 					return err
 				}
-			} else if unbootstrapped(cfg, tal, tc) {
-				return errors.New("no control plane runs etcd: this cluster is not bootstrapped yet, " +
-					"and its nodes cannot finish joining\n  talman apply --bootstrap")
+
+				if !dryRun {
+					if err := confirmConfigured(cfg, configured, yes); err != nil {
+						return err
+					}
+				}
+			case allNew(states):
+				return fmt.Errorf("every control plane is new, in maintenance mode: this cluster has not been "+
+					"built yet\n  %s", talmanCmd("apply --bootstrap"))
+			case noEtcd(states):
+				// Never bootstrapped, or etcd broken: talman cannot tell, and
+				// refusing would stand in the way of the apply that fixes a
+				// broken one.
+				fmt.Fprintf(os.Stderr, "warning: no control plane runs etcd; if this cluster was never "+
+					"bootstrapped:\n  %s\n", talmanCmd("apply --bootstrap"))
 			}
 
 			// An explicit --insecure (or --insecure=false) is an instruction,
@@ -287,7 +304,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 						if !onboard && !onlyNew {
 							return fmt.Errorf("%s (%s) is a new node: it answers only the maintenance service, "+
 								"which authenticates nothing, so it gets its config, CA keys included, only when "+
-								"asked\n  talman apply --onboard-new-nodes -n %s", n.Hostname, n.IPAddress, n.Hostname)
+								"asked\n  %s", n.Hostname, n.IPAddress, talmanCmd("apply --onboard-new-nodes -n "+n.Hostname))
 						}
 
 						maintenance = true
@@ -531,6 +548,28 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				// then everything else, into a cluster that exists.
 				first := cfg.ControlPlanes()[0]
 
+				if dryRun {
+					rest := make([]*config.Node, 0, len(targets))
+					for _, n := range targets {
+						if n != first {
+							rest = append(rest, n)
+						}
+					}
+
+					stages, _, _, err := waves.plan(cfg, rest)
+					if err != nil {
+						return err
+					}
+
+					if len(stages) == 0 && len(rest) > 0 {
+						stages = []config.Staged{{Nodes: rest}}
+					}
+
+					printBootstrapPlan(cfg, tal, tc, first, stages)
+
+					return nil
+				}
+
 				if err := bootstrapFirst(cmd, tal, tc, first, timeout, func(say func(string)) error {
 					_, err := perNode(first, false, say)
 
@@ -591,6 +630,8 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 		"configure new nodes (in maintenance mode) too, over the unauthenticated maintenance service")
 	cmd.Flags().BoolVar(&bootstrap, "bootstrap", false,
 		"build a new cluster: configure the first control plane, bootstrap etcd on it, then the rest")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false,
+		"with --bootstrap, skip the question asked when control planes are configured but run no etcd")
 	cmd.Flags().BoolVar(&onlyNew, "only-new-nodes", false,
 		"restrict the run to new nodes (in maintenance mode), and onboard them")
 
