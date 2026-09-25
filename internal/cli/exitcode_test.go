@@ -1211,3 +1211,23 @@ func TestApplyAdoptsOnlyWhenAsked(t *testing.T) {
 		}
 	}
 }
+
+// --metrics-* are on the commands that record metrics and nowhere else: on
+// the others a --metrics-file was accepted and wrote nothing.
+func TestMetricsFlagsOnlyWhereRecorded(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	file := filepath.Join(dir, "m.prom")
+
+	if got := run([]string{"validate", "--metrics-file", file}); got != 1 {
+		t.Errorf("validate --metrics-file: exit %d, want 1 (unknown flag)", got)
+	}
+
+	if got := run([]string{"reboot", "--metrics-file", file}); got != 0 {
+		t.Fatalf("reboot --metrics-file: exit %d", got)
+	}
+
+	if !exists(file) {
+		t.Error("reboot --metrics-file wrote no metrics")
+	}
+}

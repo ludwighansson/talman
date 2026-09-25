@@ -49,7 +49,7 @@
       "additionalProperties": false,
       "properties": {
         "installerURLTmpl": {
-          "description": "The installer image reference, as a Go template over .RegistryURL, .ID, .Version, .Platform and .SecureBoot.",
+          "description": "The installer image reference, as a Go template over .RegistryURL, .Protocol, .ID, .Version, .Platform (or .Mode) and .SecureBoot.",
           "type": "string"
         },
         "platform": {
