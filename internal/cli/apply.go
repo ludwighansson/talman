@@ -250,6 +250,19 @@ once, however many of these flags are passed.`,
 				changed = true
 			}
 
+			// Nodes that answered, when asked first, that the config changes
+			// nothing: all the roll-out's soak and health gate need to know,
+			// since a wave of those left nothing to watch.
+			var (
+				unchangedMu sync.Mutex
+				unchanged   = map[string]bool{}
+			)
+
+			// Asked first too when the answer decides whether to soak or
+			// gate: a dry run per node is cheap next to a ten-minute soak
+			// after a wave that changed nothing.
+			wantsAnswer := detailed || rec != nil || health || cfg.Rollout.SoakDuration() > 0
+
 			applyOne := func(n *config.Node, position int, say func(string)) error {
 				file := cfg.MachineConfigPath(n)
 
@@ -334,12 +347,18 @@ once, however many of these flags are passed.`,
 
 				// Metrics ask too: "changed" is what a CI alert most often
 				// wants to know, and without asking it is not known.
-				if askFirst(dryRun, detailed || rec != nil, diff) {
+				if askFirst(dryRun, wantsAnswer, diff) {
 					probe := append(slices.Clone(args), "--dry-run")
 
 					out, err := tal.Combined(probe...)
 					if err == nil {
 						rec.NodeChanged(n.Hostname, dryRunChanged(out))
+
+						if !dryRunChanged(out) {
+							unchangedMu.Lock()
+							unchanged[n.IPAddress] = true
+							unchangedMu.Unlock()
+						}
 					}
 
 					if detailed && (err != nil || dryRunChanged(out)) {
@@ -496,9 +515,8 @@ once, however many of these flags are passed.`,
 			// Control planes one at a time, workers up to --parallel: the
 			// unit of risk is still a node, and a batch of workers cannot
 			// take out a cluster the way two control planes rebooting
-			// together can. Every apply counts as acting for the gate: an
-			// apply that changed nothing is not known to have changed
-			// nothing unless the node was asked first.
+			// together can. A node counts as acting for the gate unless it
+			// was asked first and answered that nothing changes.
 			if err := (rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
 				verb: "apply", done: "applied",
@@ -509,7 +527,12 @@ once, however many of these flags are passed.`,
 				standDown: standDown,
 				stages:    stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
 			}).run(func(n *config.Node, _ bool, say func(string)) (bool, error) {
-				return true, applyOne(n, positions[n.IPAddress], say)
+				err := applyOne(n, positions[n.IPAddress], say)
+
+				unchangedMu.Lock()
+				defer unchangedMu.Unlock()
+
+				return !unchanged[n.IPAddress], err
 			}); err != nil {
 				return err
 			}

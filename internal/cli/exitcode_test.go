@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ludwighansson/talman/internal/sopsx"
 )
@@ -689,6 +690,9 @@ func TestApplyGatesBetweenBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A config that changes something, so there is something to gate on.
+	t.Setenv("STUB_DIFF", "+  hostname: new")
+
 	if got := run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "--health"}); got != 0 {
 		calls, _ := os.ReadFile(log)
 		t.Fatalf("exit %d\n%s", got, calls)
@@ -933,5 +937,39 @@ func TestWaveSelectionThatSelectsNothing(t *testing.T) {
 		if got := run(args); got != 1 {
 			t.Errorf("%v: exit %d, want 1", args, got)
 		}
+	}
+}
+
+// TestApplyNoChangeSkipsSoakAndGate: nodes that answer "no changes" leave a
+// wave with nothing to watch, so apply neither soaks nor gates after it.
+func TestApplyNoChangeSkipsSoakAndGate(t *testing.T) {
+	dir, log := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+rollout:
+  soak: 1h
+  waves: [controlplane]
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan int, 1)
+
+	go func() { done <- run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "--health"}) }()
+
+	select {
+	case got := <-done:
+		if got != 0 {
+			t.Fatalf("exit %d", got)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("apply soaked after a wave that changed nothing")
+	}
+
+	calls, _ := os.ReadFile(log)
+	if strings.Contains(string(calls), " health ") {
+		t.Errorf("the health gate ran after a wave that changed nothing:\n%s", calls)
 	}
 }
