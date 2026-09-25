@@ -957,7 +957,9 @@ rollout:
 
 	done := make(chan int, 1)
 
-	go func() { done <- run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "--health"}) }()
+	go func() {
+		done <- run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "--health"})
+	}()
 
 	select {
 	case got := <-done:
