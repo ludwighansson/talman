@@ -17,6 +17,10 @@ func fresh(t *testing.T) {
 
 		ctx, cancel = context.WithCancel(context.Background())
 		interruptedBy = nil
+
+		runMu.Lock()
+		killing = false
+		runMu.Unlock()
 	}
 
 	reset()

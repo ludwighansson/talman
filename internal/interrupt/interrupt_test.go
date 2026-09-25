@@ -30,9 +30,9 @@ func TestForcedExitKillsChildren(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 
 	for {
-		mu.Lock()
+		runMu.Lock()
 		n := len(running)
-		mu.Unlock()
+		runMu.Unlock()
 
 		if n > 0 {
 			break
@@ -56,8 +56,8 @@ func TestForcedExitKillsChildren(t *testing.T) {
 		t.Fatal("the child survived killRunning")
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
+	runMu.Lock()
+	defer runMu.Unlock()
 
 	if len(running) != 0 {
 		t.Errorf("%d process(es) still recorded after exiting", len(running))
@@ -137,5 +137,30 @@ func TestExitCodeFollowsTheSignal(t *testing.T) {
 
 	if got := ExitCode(); got != 143 {
 		t.Errorf("after SIGTERM: %d, want 143", got)
+	}
+}
+
+// A process that starts after a forced exit began killing the others is not
+// left running: it registers too late to be on the list, so it kills itself.
+func TestStartedDuringForcedExitIsKilled(t *testing.T) {
+	fresh(t)
+
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX sleep")
+	}
+
+	killRunning()
+
+	done := make(chan error, 1)
+
+	go func() { done <- Run(Command("sleep", "30")) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a process started during a forced exit ran to completion")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a process started during a forced exit was left running")
 	}
 }
