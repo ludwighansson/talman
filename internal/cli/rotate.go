@@ -167,6 +167,12 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 					return err
 				}
 
+				// Made whole even so: it may be the only talosconfig the
+				// cluster still accepts.
+				if exists(rotated) {
+					_ = completeTalosconfig(tal, cfg, rotated)
+				}
+
 				// talosctl stopped partway, and how far it got is not
 				// something talman can tell from outside: it rotates the
 				// Talos CA first and writes the talosconfig for the new
@@ -182,6 +188,13 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 			}
 
 			rec.SetChanged(true)
+
+			if talos {
+				if err := completeTalosconfig(tal, cfg, rotated); err != nil {
+					return fmt.Errorf("the CAs WERE rotated, and %s is the talosconfig for them, but setting its "+
+						"endpoints and nodes failed: %w", render.Rel(rotated), err)
+				}
+			}
 
 			// From here the cluster trusts the new CAs and the bundle does
 			// not, so a failure has to say how to finish by hand.
@@ -325,4 +338,29 @@ func finishByHand(cfg *config.Config, talosconfig string) string {
 		"    talman secrets generate --force --from-controlplane-config cp.yaml    # rewrites %s\n"+
 		"    rm cp.yaml    # it holds every key in the bundle",
 		render.Rel(talosconfig), cfg.SecretFile)
+}
+
+// completeTalosconfig gives the talosconfig talosctl rotate-ca wrote the
+// endpoints and default nodes render gives talman's own.
+//
+// talosctl writes it with the endpoints the rotating client had -- the one
+// control plane it was pinned to -- and no nodes at all, so once it replaced
+// talman's, plain talosctl, or `talman ctl` without -n, failed with "nodes
+// are not set" until the next render.
+func completeTalosconfig(tal *talosctl.Runner, cfg *config.Config, path string) error {
+	var cps, all []string
+
+	for i := range cfg.Nodes {
+		all = append(all, cfg.Nodes[i].IPAddress)
+
+		if cfg.Nodes[i].IsControlPlane() {
+			cps = append(cps, cfg.Nodes[i].IPAddress)
+		}
+	}
+
+	if err := tal.ConfigEndpoint(path, cps); err != nil {
+		return err
+	}
+
+	return tal.ConfigNode(path, all)
 }

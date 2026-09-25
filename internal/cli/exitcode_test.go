@@ -408,6 +408,10 @@ func TestRotateCA(t *testing.T) {
 		"rotate-ca --control-plane-nodes 10.0.0.1 --talos=true --kubernetes=false --dry-run=false",
 		"--talosconfig " + tc + ".rotated --endpoints 10.0.0.1 --nodes 10.0.0.1 read /system/state/config.yaml",
 		"gen secrets --output-file - --talos-version v1.14.1 --from-controlplane-config",
+		// The rotated talosconfig gets render's endpoints and nodes, not the
+		// one pinned control plane talosctl wrote it with.
+		"--talosconfig " + tc + ".rotated config endpoint 10.0.0.1",
+		"--talosconfig " + tc + ".rotated config node 10.0.0.1",
 	} {
 		if !strings.Contains(string(calls), want) {
 			t.Errorf("no call containing %q in:\n%s", want, calls)
