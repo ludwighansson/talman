@@ -434,7 +434,9 @@ or the repository.
 
 Generating refuses to overwrite an existing bundle: the CAs and cluster
 identity in it are what a running cluster trusts. To adopt a cluster that
-already exists, use `--from-controlplane-config`.
+already exists, use `--from-controlplane-config`. `--force` replaces the
+bundle anyway, and keeps the old one in the gitignored output directory as
+`secrets-pre-generate-<time>.yaml`, so a mistake can be undone.
 
 Rendered machine configs *do* contain secrets, so `render` writes them `0600`
 and drops a `.gitignore` that excludes the whole output directory. That is why
