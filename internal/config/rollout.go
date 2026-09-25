@@ -20,15 +20,14 @@ type Rollout struct {
 }
 
 // Wave is one step of a roll-out: the nodes in any of its groups.
+//
+// Where a roll-out stops is the operator's to say, run by run, with --until:
+// a wave never stops one by itself.
 type Wave struct {
-	Groups []string `yaml:"groups"`
-	// Pause stops the roll-out after this wave, to be carried on with
-	// --from once whoever is watching is satisfied.
-	Pause bool `yaml:"pause,omitempty"`
+	Groups []string
 }
 
-// UnmarshalYAML accepts a wave as a group name, a list of them, or the long
-// form with groups and pause.
+// UnmarshalYAML accepts a wave as a group name or a list of them.
 func (w *Wave) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
 	case yaml.ScalarNode:
@@ -42,31 +41,8 @@ func (w *Wave) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	case yaml.SequenceNode:
 		return value.Decode(&w.Groups)
-	case yaml.MappingNode:
-		// Strict, like the rest of the file: round-tripped through a decoder
-		// with KnownFields, which a yaml.Node decode does not offer.
-		raw, err := yaml.Marshal(value)
-		if err != nil {
-			return err
-		}
-
-		type plain Wave
-
-		var p plain
-
-		dec := yaml.NewDecoder(strings.NewReader(string(raw)))
-		dec.KnownFields(true)
-
-		if err := dec.Decode(&p); err != nil {
-			return fmt.Errorf("line %d: %w", value.Line, err)
-		}
-
-		*w = Wave(p)
-
-		return nil
 	default:
-		return fmt.Errorf("line %d: a wave is a group name, a list of them, or {groups: [...], pause: true}",
-			value.Line)
+		return fmt.Errorf("line %d: a wave is a group name, or a list of them", value.Line)
 	}
 }
 

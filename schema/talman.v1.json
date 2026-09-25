@@ -210,26 +210,6 @@
                 },
                 "minItems": 1,
                 "type": "array"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "groups": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "minItems": 1,
-                    "type": "array"
-                  },
-                  "pause": {
-                    "description": "Stop after this wave.",
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "groups"
-                ],
-                "type": "object"
               }
             ]
           },

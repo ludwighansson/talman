@@ -171,23 +171,12 @@ func (ro rollOut) run(do one) error {
 				continue
 			}
 
-			// Between waves, after one that changed something: stop if it
-			// asks to, else soak, then gate -- a canary is only worth
-			// anything if the gate looks after it has had time to go wrong.
-			// A wave that changed nothing -- a canary already done -- has
-			// nothing to watch, and stopping at it would hold every later
-			// run at the same place.
+			// Between waves, after one that changed something: soak, then
+			// gate -- a canary is only worth anything if the gate looks after
+			// it has had time to go wrong. A wave that changed nothing has
+			// nothing to watch.
 			if !actedInWave {
 				continue
-			}
-
-			if st.Wave != nil && st.Wave.Pause {
-				next := stages[si+1]
-
-				fmt.Fprintf(os.Stderr, "\nwave %s done; paused as rollout.waves[%d] asks\n  continue with: talman %s --from %s%s\n",
-					st.Name(), st.Index, ro.verb, next.Ref(), resumeFlags(ro.cmd))
-
-				return nil
 			}
 
 			if ro.soak > 0 {
