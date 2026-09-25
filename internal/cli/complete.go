@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/ludwighansson/talman/internal/config"
 )
@@ -51,7 +53,58 @@ func withNodeCompletion(cmd *cobra.Command) *cobra.Command {
 		_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
 	}
 
+	previous := cmd.PreRunE
+
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if err := refuseEmptySelectors(c); err != nil {
+			return err
+		}
+
+		if previous != nil {
+			return previous(c, args)
+		}
+
+		return nil
+	}
+
 	return cmd
+}
+
+// refuseEmptySelectors rejects a -n or -g that was given but names nothing.
+//
+// Omitting them means every node, so an empty one -- `-n "$NODE"` with NODE
+// unset, `--node=` -- read the same way: `talman reset -n "" --yes` wiped the
+// whole cluster. A selector that was written down has to select something.
+func refuseEmptySelectors(c *cobra.Command) error {
+	for _, name := range []string{"node", "group"} {
+		f := c.Flags().Lookup(name)
+		if f == nil || !f.Changed {
+			continue
+		}
+
+		values := []string{f.Value.String()}
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			values = sv.GetSlice()
+		}
+
+		named := false
+
+		for _, v := range values {
+			if strings.TrimSpace(v) == "" {
+				return fmt.Errorf("--%s was given an empty value: name a %s, or leave the flag out for every node",
+					name, name)
+			}
+
+			named = true
+		}
+
+		if !named {
+			return fmt.Errorf("--%s was given an empty value: name a %s, or leave the flag out for every node",
+				name, name)
+		}
+	}
+
+	return nil
 }
 
 // completeGroups offers the groups the config declares, and the two roles.
