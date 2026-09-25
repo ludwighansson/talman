@@ -206,25 +206,11 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				changed   bool
 			)
 
-			// Whether there is a cluster to join. Asked at most once, and
-			// only when the answer would change what talman does.
-			var (
-				askOnce sync.Once
-				cluster clusterState
+			var adoptedEarly atomic.Int64
 
-				adoptedEarly atomic.Int64
-			)
-
-			// Deliberately not "the probe said no": a probe that could not
-			// reach a control plane has established nothing, and what this
-			// gates -- waiting for a node, and the health check between nodes
-			// -- is what keeps one bad config from reaching a whole control
-			// plane. Silence must not switch those off.
-			noClusterYet := func() bool {
-				askOnce.Do(func() { cluster = askCluster(cfg, tal, tc) })
-
-				return cluster == clusterAbsent
-			}
+			// Whether there is a cluster to join, asked only when the answer
+			// would change what talman does.
+			noClusterYet := clusterCheck(func() clusterState { return askCluster(cfg, tal, tc) })
 
 			markChanged := func() {
 				changedMu.Lock()
