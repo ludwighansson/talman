@@ -122,17 +122,11 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 	// seconds to stream a file holding every Secret in the cluster. So it
 	// writes into a private directory beside the destination, and the file is
 	// moved into place only once it is 0600.
-	stage, err := os.MkdirTemp(filepath.Dir(path), ".talman-snapshot-")
+	stage, cleanup, err := interrupt.TempDir(filepath.Dir(path), ".talman-snapshot-")
 	if err != nil {
 		return err
 	}
-
-	unregister := interrupt.RemoveAllOnExit(stage)
-	defer func() {
-		_ = os.RemoveAll(stage)
-
-		unregister()
-	}()
+	defer cleanup()
 
 	staged := filepath.Join(stage, "snapshot.db")
 	args := append(tal.NodeArgs(tc, from.IPAddress), "etcd", "snapshot", staged)

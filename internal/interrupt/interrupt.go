@@ -127,6 +127,26 @@ func Cleanup(fn func()) (unregister func()) {
 	}
 }
 
+// TempDir makes a private 0700 directory, as os.MkdirTemp does, for staging
+// something that must not outlive the run -- a decrypted bundle, a machine
+// config, a snapshot being streamed. The returned cleanup removes it and then
+// drops it from the forced-exit list, in that order: a second signal between
+// the two still finds it on the list. Call cleanup once, typically deferred.
+func TempDir(dir, pattern string) (path string, cleanup func(), err error) {
+	path, err = os.MkdirTemp(dir, pattern)
+	if err != nil {
+		return "", nil, err
+	}
+
+	unregister := RemoveAllOnExit(path)
+
+	return path, func() {
+		_ = os.RemoveAll(path)
+
+		unregister()
+	}, nil
+}
+
 // RemoveAllOnExit registers dir for removal on a forced exit.
 func RemoveAllOnExit(dir string) (unregister func()) {
 	return Cleanup(func() { _ = os.RemoveAll(dir) })

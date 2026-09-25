@@ -138,19 +138,11 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 	// makes the location irrelevant to sops.
 	dir := filepath.Dir(abs)
 
-	stage, err := os.MkdirTemp("", "talman-secrets-")
+	stage, cleanup, err := interrupt.TempDir("", "talman-secrets-")
 	if err != nil {
 		return nil, err
 	}
-
-	// Removed, then unregistered, in that order: a forced exit between the
-	// two must still find the directory on the list.
-	unregister := interrupt.RemoveAllOnExit(stage)
-	defer func() {
-		_ = os.RemoveAll(stage)
-
-		unregister()
-	}()
+	defer cleanup()
 
 	tmpName := filepath.Join(stage, "secrets.yaml")
 
