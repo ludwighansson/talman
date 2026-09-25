@@ -1051,3 +1051,24 @@ func TestEmptySelectorIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestResetResumeKeepsGracefulForWorkers: a teardown that stops at a worker
+// resumes with workers still to go, and they leave the cluster gracefully, as
+// they would have; only a resume of control planes alone skips it.
+func TestResetResumeKeepsGracefulForWorkers(t *testing.T) {
+	exitFixtureWith(t, waveNodes)
+
+	t.Setenv("STUB_FAIL", "10.0.0.2")
+
+	_, hint := runHint(t, "reset", "--yes")
+	if hint == "" || strings.Contains(hint, "--graceful=false") {
+		t.Errorf("resuming with workers left: %q, want no --graceful=false", hint)
+	}
+
+	t.Setenv("STUB_FAIL", "10.0.0.1")
+
+	_, hint = runHint(t, "reset", "--yes")
+	if !strings.Contains(hint, "--graceful=false") {
+		t.Errorf("resuming with only the control plane left: %q, want --graceful=false", hint)
+	}
+}
