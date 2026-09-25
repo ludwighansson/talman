@@ -274,3 +274,13 @@ func nodeArgs(nodes []*config.Node, total int) string {
 
 	return b.String()
 }
+
+// configArg spells out -c for a hint, when the run named its config, so the
+// command it suggests reaches the same cluster.
+func configArg() string {
+	if opts.configFile == "" {
+		return ""
+	}
+
+	return " -c " + shellQuote(opts.configFile)
+}

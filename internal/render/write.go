@@ -281,8 +281,6 @@ func Nodes(cfg *config.Config, names []string) ([]*config.Node, error) {
 		return out, nil
 	}
 
-	var out []*config.Node
-
 	// Deduplicated: a node can be named twice, or once by hostname and once
 	// by address. These selections feed apply, upgrade and reset, where a
 	// duplicate means resetting or upgrading the same machine twice off a
@@ -296,13 +294,17 @@ func Nodes(cfg *config.Config, names []string) ([]*config.Node, error) {
 				name, Rel(cfg.Path), hostnames(cfg))
 		}
 
-		if seen[n.Hostname] {
-			continue
-		}
-
 		seen[n.Hostname] = true
+	}
 
-		out = append(out, n)
+	// In config order, not the order they were named: the order a roll-out
+	// takes is the one that was reviewed, not the one typed.
+	out := make([]*config.Node, 0, len(seen))
+
+	for i := range cfg.Nodes {
+		if seen[cfg.Nodes[i].Hostname] {
+			out = append(out, &cfg.Nodes[i])
+		}
 	}
 
 	return out, nil

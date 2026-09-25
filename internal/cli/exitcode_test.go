@@ -1126,3 +1126,31 @@ func TestSecretsForceKeepsTheOldBundle(t *testing.T) {
 		t.Error("the bundle was not replaced")
 	}
 }
+
+// -n picks nodes; the order they go in is the config's, as the help says.
+func TestNodeSelectionIsConfigOrder(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes)
+
+	if got := run([]string{"reboot", "-n", "x1", "-n", "b1", "-n", "g1"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	// g1, b1, then x1, as talman.yaml lists them.
+	if order := rebooted(t, log); order != "10.0.0.3 10.0.0.2 10.0.0.5" {
+		t.Errorf("rebooted %q, want config order", order)
+	}
+}
+
+// The staged apply's hint names the config the run used.
+func TestStagedHintKeepsTheConfig(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	stderr := captureStderr(t, func() {
+		run([]string{"-c", filepath.Join(dir, "talman.yaml"), "apply", "--no-render", "--redact-secrets=false",
+			"--mode", "staged"})
+	})
+
+	if !strings.Contains(stderr, "→ talman -c "+filepath.Join(dir, "talman.yaml")+" reboot") {
+		t.Errorf("the hint does not name the config:\n%s", stderr)
+	}
+}

@@ -554,8 +554,8 @@ once, however many of these flags are passed.`,
 			}
 
 			if mode == "staged" && !dryRun && len(targets) > 0 {
-				fmt.Fprintf(os.Stderr, "\nconfigs staged; they take effect on the next reboot → talman reboot%s\n",
-					nodeArgs(targets, len(cfg.Nodes)))
+				fmt.Fprintf(os.Stderr, "\nconfigs staged; they take effect on the next reboot → talman%s reboot%s\n",
+					configArg(), nodeArgs(targets, len(cfg.Nodes)))
 			}
 
 			if detailed && changed {
