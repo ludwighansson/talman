@@ -29,10 +29,12 @@ func newRebootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reboot",
 		Short: "Reboot nodes one at a time, waiting for each to come back",
-		Long: `Reboot is a rolling reboot: nodes go one at a time in config order, and talosctl
-waits for each to come back before the next begins. --parallel raises that for
-workers only; a control plane always reboots alone, because two rebooting
-together is how a three-node control plane loses quorum.
+		Long: `Reboot is a rolling reboot: nodes go one at a time in config order -- or wave by
+wave, with rollout.waves in the config -- and talosctl waits for each to come
+back before the next begins. --parallel raises that for workers only; a control
+plane always reboots alone, because two rebooting together is how a three-node
+control plane loses quorum. -n, -g, --wave, --from and --until select which
+nodes and waves.
 
 It is the second half of "talman apply --mode=staged", whose config lands on
 the next reboot, and the way to pick up anything else that only a reboot

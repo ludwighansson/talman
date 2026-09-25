@@ -27,11 +27,11 @@ var metricsFlags metricsOpts
 var currentRun *metrics.Run
 
 func addMetricsFlags(cmd *cobra.Command) {
-	cmd.PersistentFlags().StringVar(&metricsFlags.file, "metrics-file", "",
+	cmd.Flags().StringVar(&metricsFlags.file, "metrics-file", "",
 		"write the run's metrics to this file, in the Prometheus text format ($TALMAN_METRICS_FILE)")
-	cmd.PersistentFlags().StringVar(&metricsFlags.url, "metrics-url", "",
+	cmd.Flags().StringVar(&metricsFlags.url, "metrics-url", "",
 		"push the run's metrics to this metrics push endpoint ($TALMAN_METRICS_URL)")
-	cmd.PersistentFlags().StringArrayVar(&metricsFlags.labels, "metrics-label", nil,
+	cmd.Flags().StringArrayVar(&metricsFlags.labels, "metrics-label", nil,
 		"add a key=value label to every metric (repeatable; $TALMAN_METRICS_LABELS, comma-separated)")
 }
 
@@ -42,6 +42,10 @@ func addMetricsFlags(cmd *cobra.Command) {
 // reached changes the command's exit code -- the run did what it did, and a
 // deployment that succeeded is not made to fail by its monitoring.
 func recorded(cmd *cobra.Command) *cobra.Command {
+	// On the commands that record, and only there: on the rest a
+	// --metrics-file was accepted and silently wrote nothing.
+	addMetricsFlags(cmd)
+
 	inner := cmd.RunE
 
 	cmd.RunE = func(c *cobra.Command, args []string) error {

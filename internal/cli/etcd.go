@@ -28,7 +28,10 @@ func newEtcdCmd() *cobra.Command {
 }
 
 func newEtcdSnapshotCmd() *cobra.Command {
-	var node string
+	var (
+		node       string
+		extraFlags []string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "snapshot [path]",
@@ -70,11 +73,12 @@ they change anything.`,
 				path = args[0]
 			}
 
-			return etcdSnapshot(cfg, tal, tc, from, path)
+			return etcdSnapshot(cfg, tal, tc, from, path, extraFlags...)
 		},
 	}
 
 	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to snapshot (default: the first that answers)")
+	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
 }
@@ -82,7 +86,9 @@ they change anything.`,
 // etcdSnapshot saves a snapshot and says where it went. A nil from picks
 // the first control plane that answers; an empty path picks a name in the
 // output directory.
-func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *config.Node, path string) error {
+func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *config.Node, path string,
+	extra ...string,
+) error {
 	if from == nil {
 		n, err := healthNode(cfg, tal, tc)
 		if err != nil {
@@ -131,7 +137,7 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 	defer cleanup()
 
 	staged := filepath.Join(stage, "snapshot.db")
-	args := append(tal.NodeArgs(tc, from.IPAddress), "etcd", "snapshot", staged)
+	args := append(append(tal.NodeArgs(tc, from.IPAddress), "etcd", "snapshot", staged), extra...)
 
 	if out, err := tal.Combined(args...); err != nil {
 		return fmt.Errorf("%w\n%s", err, indent(out))

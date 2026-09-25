@@ -38,10 +38,13 @@ func newUpgradeCmd() *cobra.Command {
 node's schematic and talosVersion resolve to -- the same reference talman
 passes to gen config, so an upgrade cannot drift from what render produced.
 
-Nodes are upgraded one at a time in config order, and talosctl waits for each
-to come back on its new version before the next begins. Restrict the set with
---node, and see what would happen first with --dry-run: it asks every node what
-it runs and names the ones an upgrade would reach, without upgrading any.
+Nodes are upgraded in config order -- or wave by wave, with rollout.waves in
+the config -- one at a time, and talosctl waits for each to come back on its
+new version before the next begins. --parallel raises that for workers only; a
+control plane always goes alone. Restrict the set with -n, -g, or the wave
+flags --wave, --from and --until, and see what would happen first with
+--dry-run: it asks every node what it runs and names the ones an upgrade would
+reach, without upgrading any.
 
 --health adds a cluster health check between nodes, and stops the roll-out if
 the cluster is unhealthy. As with apply, it is off by default.
@@ -329,7 +332,8 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 
 	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to drive the upgrade from")
 	cmd.Flags().StringVar(&to, "to", "", "target Kubernetes version (default: kubernetesVersion from the config)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the upgrade plan without running it")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
+		"say whether an upgrade is needed, without running one (with --force: talosctl's own plan)")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"upgrade even when every node already runs the target version")
 	cmd.Flags().BoolVar(&snapshot, "snapshot", false,

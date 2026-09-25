@@ -120,7 +120,6 @@ release.`,
 		"path to the talman config (default $"+config.EnvConfig+", else "+config.DefaultFileName+")")
 	cmd.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false,
 		"echo each talosctl invocation")
-	addMetricsFlags(cmd)
 
 	for _, sub := range []*cobra.Command{
 		newInitCmd(),

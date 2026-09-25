@@ -102,7 +102,7 @@ var schemaDescriptions = map[string]string{
 	"Config.registryURL":       "The Image Factory host. Default: factory.talos.dev.",
 	"Config.protocol":          "The protocol schematics are submitted over. Default: https.",
 	"Config.schematicEndpoint": "The path schematics are submitted to. Default: /schematics.",
-	"Config.installerURLTmpl":  "The installer image reference, as a Go template over .RegistryURL, .ID, .Version, .Platform and .SecureBoot.",
+	"Config.installerURLTmpl":  "The installer image reference, as a Go template over .RegistryURL, .Protocol, .ID, .Version, .Platform (or .Mode) and .SecureBoot.",
 	"Config.platform":          "The installer's platform: metal, openstack, aws, …. Default: metal.",
 	"Config.secureBoot":        "Use the secure boot installer. Default: false.",
 }

@@ -1,8 +1,8 @@
 ---
 # Replace this recipient with your own before running `talman secrets generate`.
 # Get one with `age-keygen`, or use any key type SOPS supports (age, PGP, or a
-# cloud KMS) -- talman embeds the SOPS library, so anything the sops CLI can do
-# works here unchanged.
+# cloud KMS) -- talman runs the sops CLI itself, so anything sops can do works
+# here unchanged.
 creation_rules:
   - path_regex: \.sops\.yaml$
     age: age1replacemeplacemeplacemeplacemeplacemeplacemeplacemeplacemzzzzzz

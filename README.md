@@ -105,7 +105,9 @@ rather than as the job image itself.
 ```yaml
 # .gitlab-ci.yml
 drift:
-  image: ghcr.io/ludwighansson/talman:1.0.0
+  image:
+    name: ghcr.io/ludwighansson/talman:1.0.0
+    entrypoint: [""]   # the image's entrypoint is talman; GitLab runs the script with a shell
   script:
     - talman apply --dry-run --detailed-exit-code
 ```
@@ -499,8 +501,9 @@ Ctrl-C, a CI runner's SIGTERM, or a SIGHUP from a terminal closing or an ssh
 session dropping stops a run in order rather than on the spot. The talosctl process in flight is signalled too, the decrypted secrets
 are removed, metrics are written and a stopped roll-out names the nodes it did
 not reach, as it does for any failure; talman then exits 128 plus the signal,
-as a shell would report it: 130 for Ctrl-C, 143 for SIGTERM, 129 for SIGHUP. A second signal exits at once,
-killing any talosctl still running and still removing the decrypted secrets.
+as a shell would report it: 130 for Ctrl-C, 143 for SIGTERM, 129 for SIGHUP. A
+second signal exits at once, killing any talosctl still running and still
+removing the decrypted secrets.
 
 ### Adopting nodes
 
@@ -623,12 +626,12 @@ the roll-out it exists for.
 
 ```console
 $ talman status
-HOSTNAME    ADDRESS       ROLE           STATUS             TALOS               KUBERNETES          SCHEMATIC
-talos-c01   10.164.0.27   controlplane   running            v1.14.0             v1.37.0             079113ce0508
-talos-c03   10.164.0.30   controlplane   running            v1.13.5 → v1.14.0   v1.36.2 → v1.37.0   079113ce0508
-talos-w01   10.164.0.32   worker         maintenance mode   -                   -                   -
-talos-w02   10.164.0.29   worker         unreachable        -                   -                   -
-3 node(s): 2 running, 1 in maintenance mode, 1 unreachable; 1 not on the configured version
+HOSTNAME    ADDRESS       ROLE           STATUS             TALOS               KUBERNETES          GROUPS   PATCHES
+talos-c01   10.164.0.27   controlplane   running            v1.14.0             v1.37.0             -        5
+talos-c03   10.164.0.30   controlplane   running            v1.13.5 → v1.14.0   v1.36.2 → v1.37.0   -        5
+talos-w01   10.164.0.32   worker         maintenance mode   -                   -                   db       6
+talos-w02   10.164.0.29   worker         unreachable        -                   -                   -        4
+4 node(s): 2 running, 1 in maintenance mode, 1 unreachable; 1 not on the configured version
 ```
 
 An arrow is drift: what is running on the left, what the config resolves to on
@@ -681,7 +684,7 @@ $ talman ctl -n talos-c01 -n talos-c02 etcd members
 $ talman ctl -- service
 ```
 
-talman's own `-n`, `-c` and `-v` come first; everything from the first argument
+talman's own `-n`, `-g`, `-c` and `-v` come first; everything from the first argument
 that is not one of them is talosctl's, its own flags included — `talman ctl -e
 10.0.0.2 version` reaches talosctl whole. `--` is accepted and not needed. Without `-n`,
 talosctl uses the talosconfig's default nodes, which are every node in the
@@ -717,9 +720,10 @@ it twice would fail without `--force`. `--merge` set explicitly wins either way.
 
 ### The talosconfig
 
-`apply`, `bootstrap`, `kubeconfig`, `upgrade`, `upgrade-k8s`, `health`
-and `reset` all authenticate with `clusterconfig/talosconfig`, and generate it
-when it is not there:
+Every command that reaches the cluster — `apply`, `bootstrap`, `kubeconfig`,
+`upgrade`, `upgrade-k8s`, `reboot`, `health`, `reset`, `rotate-ca`,
+`etcd snapshot`, `status` and `ctl` — authenticates with
+`clusterconfig/talosconfig`, and generates it when it is not there:
 
 ```console
 $ talman kubeconfig
@@ -946,8 +950,10 @@ EPHEMERAL and STATE talman already asked for, rather than instead of them. To
 change something talman sets, use talman's own flag for it, here
 `--wipe-labels`. Use `-v` to see the full command.
 
-`validate`, `patches`, `schematic id` and `image url` have no such
-flag: none of them invokes `talosctl`. Neither does `status`, for the opposite
+`validate`, `patches`, `schematic id`, `image url` and `init` have no such
+flag: none of them drives a `talosctl` operation. `ctl` has no need of one,
+since everything after its own flags goes to talosctl already. Neither does
+`status`, for the opposite
 reason — it composes several calls per node rather than driving one, so there
 is no single invocation for a forwarded flag to land on.
 
@@ -1258,9 +1264,10 @@ tests shell out to a real `talosctl` and skip without one.
 
 `hack/e2e.sh` drives a real cluster. It builds one with `talosctl`'s docker
 provisioner, adopts its secrets, and then runs talman against it: render,
-validate, status, kubeconfig, health, an apply with its wait, and the decisions
-`upgrade` and `upgrade-k8s` make about whether there is anything to do. CI runs
-it on every pull request.
+validate, status and its JSON, kubeconfig, health, an apply with its wait, the
+decisions `upgrade` and `upgrade-k8s` make about whether there is anything to
+do, `ctl` by hostname, an `etcd snapshot`, and a `rotate-ca` with the render,
+kubeconfig and apply that follow it. CI runs it on every pull request.
 
 What it cannot cover is what a docker node cannot do: it has no disk, so
 nothing installs, nothing reboots, nothing sits in maintenance mode and Talos
@@ -1268,9 +1275,9 @@ cannot be upgraded.
 
 `hack/e2e-qemu.sh` covers exactly those, on real virtual machines, and needs
 KVM — which hosted runners do not reliably offer. It builds a cluster one patch
-release behind, has talman upgrade a worker and then the control plane, resets
-the worker back to maintenance mode, and adopts it into the cluster it just
-left. On a fresh Ubuntu 24.04 machine:
+release behind, has talman upgrade a worker and then the control plane, stages
+an apply and lands it with a rolling `reboot`, resets the worker back to
+maintenance mode, and adopts it into the cluster it just left. On a fresh Ubuntu 24.04 machine:
 
 ```console
 $ sudo ./hack/e2e-qemu.sh --install-deps   # qemu, the CNI plugins, talosctl
@@ -1295,8 +1302,9 @@ request.
 ## Upgrading from a 1.0.0 prerelease
 
 1.0.0 settled the schema and the command line, so a cluster directory written
-for an alpha or a beta may need these changes. Every one of them is refused
-with a message saying what to do, rather than read differently:
+for an alpha or a beta may need these changes. None of them is read
+differently: a renamed key is refused with an error naming its new spelling,
+and a removed flag is refused as an unknown flag.
 
 | before | 1.0.0 |
 | --- | --- |
