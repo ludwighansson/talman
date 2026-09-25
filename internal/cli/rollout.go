@@ -171,20 +171,23 @@ func (ro rollOut) run(do one) error {
 				continue
 			}
 
-			// Between waves: stop if this one asks to, then soak, then gate
-			// -- a canary is only worth anything if the gate looks after it
-			// has had time to go wrong.
+			// Between waves, after one that changed something: stop if it
+			// asks to, else soak, then gate -- a canary is only worth
+			// anything if the gate looks after it has had time to go wrong.
+			// A wave that changed nothing -- a canary already done -- has
+			// nothing to watch, and stopping at it would hold every later
+			// run at the same place.
+			if !actedInWave {
+				continue
+			}
+
 			if st.Wave != nil && st.Wave.Pause {
 				next := stages[si+1]
 
 				fmt.Fprintf(os.Stderr, "\nwave %s done; paused as rollout.waves[%d] asks\n  continue with: talman %s --from %s%s\n",
-					st.Name(), st.Index, ro.verb, next.Name(), resumeFlags(ro.cmd))
+					st.Name(), st.Index, ro.verb, next.Ref(), resumeFlags(ro.cmd))
 
 				return nil
-			}
-
-			if !actedInWave {
-				continue
 			}
 
 			if ro.soak > 0 {
@@ -206,16 +209,17 @@ func (ro rollOut) run(do one) error {
 
 	if ro.thenFrom != "" {
 		fmt.Fprintf(os.Stderr, "\nstopped before wave %s, as --until asked\n  continue with: talman %s --from %s%s\n",
-			ro.thenFrom, ro.verb, ro.thenFrom, resumeFlags(ro.cmd))
+			ro.thenFrom, ro.verb, ro.thenFrom, resumeFlags(ro.cmd, "until"))
 	}
 
 	return nil
 }
 
 // resumeFlags is the command's flags for a hint that carries on with --from:
-// the node selection kept as it was, the wave selection replaced.
-func resumeFlags(cmd *cobra.Command) string {
-	flags := replayFlags(cmd, "from", "until", "wave")
+// everything kept as it was -- the node selection, --wave, --until -- but the
+// --from the hint replaces, and whatever else drop names.
+func resumeFlags(cmd *cobra.Command, drop ...string) string {
+	flags := replayFlags(cmd, append([]string{"from"}, drop...)...)
 	if len(flags) == 0 {
 		return ""
 	}
@@ -353,6 +357,11 @@ func (w waveFlags) plan(cfg *config.Config, targets []*config.Node) ([]config.St
 		until = i
 	}
 
+	if from > until {
+		return nil, nil, "", fmt.Errorf("--from %s comes after --until %s in rollout.waves, "+
+			"which leaves nothing between them", w.from, w.until)
+	}
+
 	var (
 		kept     []config.Staged
 		left     []*config.Node
@@ -365,7 +374,7 @@ func (w waveFlags) plan(cfg *config.Config, targets []*config.Node) ([]config.St
 			continue
 		case st.Index > until:
 			if thenFrom == "" {
-				thenFrom = st.Name()
+				thenFrom = st.Ref()
 			}
 
 			continue
@@ -373,6 +382,12 @@ func (w waveFlags) plan(cfg *config.Config, targets []*config.Node) ([]config.St
 
 		kept = append(kept, st)
 		left = append(left, st.Nodes...)
+	}
+
+	// A selection that reaches no node is a mistake to report, not a run
+	// that did nothing and succeeded.
+	if len(left) == 0 && len(targets) > 0 {
+		return nil, nil, "", errors.New("the selected waves hold none of the selected nodes")
 	}
 
 	return kept, left, thenFrom, nil

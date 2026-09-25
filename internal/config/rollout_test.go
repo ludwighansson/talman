@@ -98,6 +98,7 @@ func TestRolloutValidation(t *testing.T) {
 		"bad soak":           {"soak: ten minutes\n  waves: [blue]", "rollout.soak"},
 		"no waves":           {"waves: []", "rollout.waves is empty"},
 		"unknown long field": {"waves: [{groups: [blue], wait: true}]", "wait"},
+		"rest as a wave":     {"waves: [blue, rest]", `"rest" is the nodes no wave names`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(write(t, validBase+"rollout:\n  "+tt.rollout+"\n"+rolloutNodes))
@@ -105,5 +106,18 @@ func TestRolloutValidation(t *testing.T) {
 				t.Errorf("Load() = %v, want an error containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// "rest" names the nodes no wave names, so no node may claim it as a group.
+func TestRestIsReserved(t *testing.T) {
+	_, err := Load(write(t, validBase+`nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.1
+    role: controlplane
+    groups: [rest]
+`))
+	if err == nil || !strings.Contains(err.Error(), `group "rest" is reserved`) {
+		t.Errorf("Load() = %v", err)
 	}
 }

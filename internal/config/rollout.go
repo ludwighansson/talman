@@ -117,6 +117,16 @@ type Staged struct {
 // RestWave names the nodes no wave names, which go last.
 const RestWave = "rest"
 
+// Ref is how a command line names the wave: its first group, which --wave,
+// --from and --until all resolve back to it, or "rest".
+func (s Staged) Ref() string {
+	if s.Wave == nil {
+		return RestWave
+	}
+
+	return s.Wave.Groups[0]
+}
+
 // Name is the wave's name, or "rest".
 func (s Staged) Name() string {
 	if s.Wave == nil {
@@ -188,7 +198,6 @@ func (c *Config) validateRollout(add func(string, ...any)) {
 		add("rollout.waves is empty: list the groups to roll out, in order")
 	}
 
-	declared := c.DeclaredGroups()
 	seen := map[string]int{}
 
 	for i, w := range r.Waves {
@@ -203,7 +212,9 @@ func (c *Config) validateRollout(add func(string, ...any)) {
 			case g == GroupAll:
 				add("%s: %q is every node, which leaves nothing for the other waves; "+
 					"nodes no wave names go last anyway", where, g)
-			case g != GroupControlPlane && g != GroupWorker && !declared[g]:
+			case g == RestWave:
+				add("%s: %q is the nodes no wave names, which go last without being listed", where, g)
+			case !c.IsGroup(g):
 				add("%s: no node declares the group %q", where, g)
 			}
 

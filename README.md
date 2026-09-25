@@ -1162,9 +1162,12 @@ wave blue done; paused as rollout.waves[1] asks
 ```
 
 From the command line, `--until <group>` stops after the wave holding it,
-`--from <group>` starts at it, and `--wave <group>` runs only that one. They
-select from the config's waves and never reorder them, so the order is the one
-that was reviewed:
+`--from <group>` starts at it, and `--wave <group>` runs only that one; `rest`
+names the last wave, so no node may call a group that. They select from the
+config's waves and never reorder them, so the order is the one that was
+reviewed, and a selection that reaches no node is an error rather than a run
+that quietly did nothing. A wave that changed nothing does not pause: a canary
+already done lets a later run straight through.
 
 ```console
 $ talman upgrade --until blue      # the canary, and everything before it
