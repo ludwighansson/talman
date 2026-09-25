@@ -21,6 +21,29 @@ import (
 const stubTalosctl = `#!/bin/sh
 echo "$*" >> "$STUB_LOG"
 
+# The nodes in STUB_MAINTENANCE answer only the maintenance service, until an
+# apply-config --insecure adopts them; after that they answer as configured.
+nodes=
+prev=
+for a in "$@"; do
+	[ "$prev" = "--nodes" ] && nodes=$a
+	prev=$a
+done
+
+in_maintenance() {
+	for m in $STUB_MAINTENANCE; do
+		[ "$m" = "$nodes" ] || continue
+		grep -qx "$m" "$STUB_LOG.adopted" 2>/dev/null && return 1
+		return 0
+	done
+	return 1
+}
+
+case " $* " in
+*" apply-config "*" --insecure"*) [ -n "$nodes" ] && echo "$nodes" >> "$STUB_LOG.adopted" ;;
+*" bootstrap"*) touch "$STUB_LOG.bootstrapped" ;;
+esac
+
 # STUB_DEAD_ENDPOINTS: the talosconfig's endpoints are down, so only a call
 # pinned to a node with --endpoints gets through.
 # STUB_DEAD_DIRECT: nodes are only reachable through the talosconfig's
@@ -82,7 +105,11 @@ case " $* " in
 *" apply-config "*"--dry-run"*) printf 'Dry run summary:\nConfig diff:\n\n%s\n' "$STUB_DIFF" ;;
 *" apply-config "*) echo "Applied configuration without a reboot" ;;
 *" upgrade "*) echo "upgraded" ;;
-*" get services etcd "*) printf 'spec:\n    running: %s\n    healthy: %s\n' "${STUB_ETCD:-true}" "${STUB_ETCD:-true}" ;;
+*" get services etcd "*)
+	in_maintenance && exit 1
+	running=${STUB_ETCD:-true}
+	[ -f "$STUB_LOG.bootstrapped" ] && running=true
+	printf 'spec:\n    running: %s\n    healthy: %s\n' "$running" "$running" ;;
 *" reboot "*) echo "rebooted" ;;
 *" rotate-ca "*"--dry-run=false"*)
 	echo "context: rotated" > "$output"
@@ -100,9 +127,9 @@ case " $* " in
 	umask 022
 	echo "snapshot" > "$out" ;;
 *" version --insecure "*)
-	case " $* " in *" $STUB_MAINTENANCE "*) echo "maintenance" ;; *) exit 1 ;; esac ;;
+	if in_maintenance; then echo "maintenance"; else exit 1; fi ;;
 *" version "*)
-	case " $* " in *" $STUB_MAINTENANCE "*) exit 1 ;; esac
+	in_maintenance && exit 1
 	running=v1.14.1
 	case " $* " in *" $STUB_STALE "*) running=v1.13.0 ;; esac
 	printf 'Client:\n\tTag: v1.14.1\nServer:\n\tTag: %s\n' "$running" ;;
@@ -1049,7 +1076,6 @@ func TestEmptySelectorIsRefused(t *testing.T) {
 		{"reset", "--node=", "--yes"},
 		{"upgrade", "-g", "", "--force"},
 		{"reboot", "-n", " "},
-		{"bootstrap", "-n", ""},
 		{"status", "--offline", "-g="},
 	} {
 		if got := run(args); got != 1 {
@@ -1058,7 +1084,7 @@ func TestEmptySelectorIsRefused(t *testing.T) {
 	}
 
 	calls, _ := os.ReadFile(log)
-	for _, verb := range []string{" reset ", " upgrade --nodes", " reboot --nodes", " bootstrap"} {
+	for _, verb := range []string{" reset ", " upgrade --nodes", " reboot --nodes"} {
 		if strings.Contains(string(calls), verb) {
 			t.Errorf("%q reached talosctl:\n%s", verb, calls)
 		}
@@ -1200,6 +1226,7 @@ func TestApplyAdoptsOnlyWhenAsked(t *testing.T) {
 
 	for _, extra := range []string{"--adopt", "--only-new"} {
 		_ = os.WriteFile(log, nil, 0o644)
+		_ = os.Remove(log + ".adopted") // each run starts with the node in maintenance mode
 
 		if got := run(append(slices.Clone(apply), extra)); got != 0 {
 			calls, _ := os.ReadFile(log)
@@ -1283,5 +1310,98 @@ func TestRotateCAFinish(t *testing.T) {
 
 	if b, _ := os.ReadFile(tc); string(b) != "context: rotated\n" || exists(tc+".rotated") {
 		t.Errorf("talosconfig = %q, want the rotated one moved into place", b)
+	}
+}
+
+// bootstrapFixture is a fresh cluster: one control plane and one worker, both
+// in maintenance mode, nothing bootstrapped.
+func bootstrapFixture(t *testing.T) (dir, log string) {
+	t.Helper()
+
+	dir, log = exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_MAINTENANCE", "10.0.0.1 10.0.0.2")
+	t.Setenv("STUB_ETCD", "false")
+
+	return dir, log
+}
+
+// TestApplyBootstrap: --bootstrap builds the cluster in the one order that
+// works -- the first control plane, etcd on it, then everything else into a
+// cluster that exists -- and waits for each node as any apply does.
+func TestApplyBootstrap(t *testing.T) {
+	_, log := bootstrapFixture(t)
+
+	if got := run([]string{"apply", "--bootstrap", "--no-render", "--redact-secrets=false",
+		"--stabilize=0s", "--timeout=20s"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d\n%s", got, calls)
+	}
+
+	calls, _ := os.ReadFile(log)
+	c := string(calls)
+
+	first := strings.Index(c, "apply-config --nodes 10.0.0.1")
+	boot := strings.Index(c, "--nodes 10.0.0.1 bootstrap")
+	worker := strings.Index(c, "apply-config --nodes 10.0.0.2")
+
+	if first < 0 || boot < 0 || worker < 0 || first > boot || boot > worker {
+		t.Errorf("want the control plane, then bootstrap, then the worker:\n%s", c)
+	}
+
+	if strings.Count(c, " bootstrap") != 1 {
+		t.Errorf("etcd was bootstrapped %d times, want once", strings.Count(c, " bootstrap"))
+	}
+}
+
+// A cluster that is bootstrapped already is not bootstrapped again: that
+// would split it in two.
+func TestApplyBootstrapRefusesABootstrappedCluster(t *testing.T) {
+	_, log := exitFixture(t) // c1 configured, etcd running
+
+	if got := run([]string{"apply", "--bootstrap", "--no-render"}); got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), " bootstrap") ||
+		strings.Contains(string(calls), "apply-config") {
+		t.Errorf("a bootstrapped cluster was touched:\n%s", calls)
+	}
+}
+
+// Plain apply on a cluster that is not bootstrapped stops and says what to
+// run, rather than configuring nodes that cannot finish joining.
+func TestApplyOnAnUnbootstrappedClusterPointsAtBootstrap(t *testing.T) {
+	_, log := bootstrapFixture(t)
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"apply", "--adopt", "--no-render", "--redact-secrets=false"}) })
+
+	if got != 1 || !strings.Contains(stderr, "talman apply --bootstrap") {
+		t.Errorf("exit %d, want 1 and a pointer at --bootstrap:\n%s", got, stderr)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "apply-config") {
+		t.Errorf("a config was sent:\n%s", calls)
+	}
+}
+
+// --bootstrap builds the whole cluster, so what would leave part of it out is
+// refused.
+func TestApplyBootstrapTakesNoSelection(t *testing.T) {
+	bootstrapFixture(t)
+
+	for _, extra := range [][]string{{"-n", "w1"}, {"-g", "worker"}, {"--dry-run"}, {"--mode", "staged"}} {
+		if got := run(append([]string{"apply", "--bootstrap", "--no-render"}, extra...)); got != 1 {
+			t.Errorf("--bootstrap %v: exit %d, want 1", extra, got)
+		}
 	}
 }

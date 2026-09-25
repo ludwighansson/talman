@@ -31,6 +31,7 @@ func newApplyCmd() *cobra.Command {
 		insecure   bool
 		onlyNew    bool
 		adopt      bool
+		bootstrap  bool
 		parallel   int
 		detailed   bool
 		diff       bool
@@ -53,6 +54,8 @@ alone; --parallel batches workers.
 
 Nodes in maintenance mode are only configured with --adopt or --only-new: the
 maintenance service authenticates nothing, and a config carries the CA keys.
+--bootstrap builds a new cluster: the first control plane, etcd on it, then
+the rest.
 
 --dry-run asks each node what would change, --diff prints that before
 applying, and --detailed-exit-code turns it into an exit code (2 changed, 0
@@ -89,6 +92,16 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
+			}
+
+			if bootstrap {
+				if err := bootstrapFlagsAllowed(cmd, dryRun, mode, onlyNew); err != nil {
+					return err
+				}
+
+				// A cluster being built is made of nodes in maintenance
+				// mode: adopting them is the point.
+				adopt = true
 			}
 
 			// The waves first, so a mistyped --from fails before the bundle
@@ -154,6 +167,19 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 
 			tal := runner(cfg)
 
+			// Whether there is a cluster: --bootstrap builds one, and needs
+			// there to be none yet; every other apply configures one, and a
+			// cluster not yet bootstrapped is one whose nodes cannot finish
+			// joining it.
+			if bootstrap {
+				if err := notBootstrapped(cfg, tal, tc); err != nil {
+					return err
+				}
+			} else if unbootstrapped(cfg, tal, tc) {
+				return errors.New("no control plane runs etcd: this cluster is not bootstrapped yet, " +
+					"and its nodes cannot finish joining\n  talman apply --bootstrap")
+			}
+
 			// An explicit --insecure (or --insecure=false) is an instruction,
 			// not a hint: honour it for every node and skip the probing.
 			forced := cmd.Flags().Changed("insecure")
@@ -206,11 +232,10 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				changed   bool
 			)
 
-			var adoptedEarly atomic.Int64
-
-			// Whether there is a cluster to join, asked only when the answer
-			// would change what talman does.
-			noClusterYet := clusterCheck(func() clusterState { return askCluster(cfg, tal, tc) })
+			// Set once etcd has been bootstrapped by this run: a node that
+			// already had its config sat quiet with no cluster to join, and
+			// is waited for now that there is one.
+			var bootstrapped atomic.Bool
 
 			markChanged := func() {
 				changedMu.Lock()
@@ -269,19 +294,29 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 					case talosctl.ModeRunning:
 						maintenance = false
 					case talosctl.ModeUnreachable:
-						// A node that has its config but no cluster to join
-						// goes quiet in exactly this way, and after a reset
-						// and a fresh apply that is most of them. Say so when
-						// it is the likely answer, rather than leaving an
-						// operator to wonder which machine died.
-						if noClusterYet() {
-							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance "+
-								"service\n  the cluster is not bootstrapped, and a node with a config but no "+
-								"cluster to join stays quiet: run `talman bootstrap`", n.Hostname, n.IPAddress)
+						// A node that was given its config before the cluster
+						// existed sits quiet until there is one to join. Once
+						// this run has bootstrapped it, that node is on its
+						// way, and is waited for rather than given up on.
+						if !bootstrapped.Load() {
+							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
+								n.Hostname, n.IPAddress)
 						}
 
-						return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
-							n.Hostname, n.IPAddress)
+						say(fmt.Sprintf("== %s (%s) has its config; waiting for it to join the cluster\n",
+							n.Hostname, n.IPAddress))
+
+						logf := func(format string, args ...any) {
+							say(detail + strings.TrimLeft(fmt.Sprintf(format+"\n", args...), " "))
+						}
+
+						if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
+							return err
+						}
+
+						modesMu.Lock()
+						modes[n.IPAddress] = talosctl.ModeRunning
+						modesMu.Unlock()
 					}
 				}
 
@@ -395,29 +430,6 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				}
 
 				if wait {
-					// A node adopted out of maintenance mode installs Talos,
-					// reboots, and then waits for a cluster to join. Before
-					// `talman bootstrap` there is no cluster and no etcd, so
-					// its API never comes back and waiting for it is a timeout
-					// with extra steps -- ten silent minutes per node, on the
-					// one path where every node is in that state.
-					//
-					// Bootstrap runs after the configs are applied, by design,
-					// so this is the ordinary shape of building a cluster
-					// rather than a mistake to report.
-					if maintenance && noClusterYet() {
-						adoptedEarly.Add(1)
-
-						// Its state is whatever the install makes of it, which
-						// talman did not watch: forget the reading rather than
-						// leave a stale one for the health gate.
-						modesMu.Lock()
-						delete(modes, n.IPAddress)
-						modesMu.Unlock()
-
-						return nil
-					}
-
 					logf := func(format string, args ...any) {
 						say(detail + strings.TrimLeft(fmt.Sprintf(format+"\n", args...), " "))
 					}
@@ -489,12 +501,21 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				return true
 			}
 
+			perNode := func(n *config.Node, _ bool, say func(string)) (bool, error) {
+				err := applyOne(n, positions[n.IPAddress], say)
+
+				unchangedMu.Lock()
+				defer unchangedMu.Unlock()
+
+				return !unchanged[n.IPAddress], err
+			}
+
 			// Control planes one at a time, workers up to --parallel: the
 			// unit of risk is still a node, and a batch of workers cannot
 			// take out a cluster the way two control planes rebooting
 			// together can. A node counts as acting for the gate unless it
 			// was asked first and answered that nothing changes.
-			if err := (rollOut{
+			ro := rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
 				verb: "apply", done: "applied",
 				targets: targets, parallel: parallel, inert: inert,
@@ -503,25 +524,48 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 				waits:     wait || mode != "auto",
 				standDown: standDown,
 				stages:    stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
-			}).run(func(n *config.Node, _ bool, say func(string)) (bool, error) {
-				err := applyOne(n, positions[n.IPAddress], say)
-
-				unchangedMu.Lock()
-				defer unchangedMu.Unlock()
-
-				return !unchanged[n.IPAddress], err
-			}); err != nil {
-				return err
 			}
 
-			adopted := adoptedEarly.Load()
+			if bootstrap {
+				// The first control plane first, alone, then etcd on it;
+				// then everything else, into a cluster that exists.
+				first := cfg.ControlPlanes()[0]
 
-			if summary := gateSummary(adopted, ungated, gated); summary != "" {
+				if err := bootstrapFirst(cmd, tal, tc, first, timeout, func(say func(string)) error {
+					_, err := perNode(first, false, say)
+
+					return err
+				}); err != nil {
+					return err
+				}
+
+				bootstrapped.Store(true)
+
+				rest := make([]*config.Node, 0, len(targets)-1)
+				for _, n := range targets {
+					if n != first {
+						rest = append(rest, n)
+					}
+				}
+
+				// A resume carries on in the cluster this run made: it is
+				// not a second bootstrap, and its nodes are still adopted.
+				if ro.stages, ro.targets, ro.thenFrom, err = waves.plan(cfg, rest); err != nil {
+					return err
+				}
+
+				ro.hintDrop = []string{"bootstrap"}
+				ro.hintAdd = []string{"--adopt"}
+			}
+
+			if len(ro.targets) > 0 {
+				if err := ro.run(perNode); err != nil {
+					return err
+				}
+			}
+
+			if summary := gateSummary(ungated, gated); summary != "" {
 				fmt.Fprintf(os.Stderr, "\n%s\n", summary)
-			}
-
-			if adopted > 0 {
-				fmt.Fprintf(os.Stderr, "%d node(s) adopted → talman bootstrap\n", adopted)
 			}
 
 			if mode == "staged" && !dryRun && len(targets) > 0 {
@@ -545,6 +589,8 @@ More in the README: "Adopting nodes", "Rolling changes out safely" and
 		"force the maintenance service for every node (default: ask each node which API it answers)")
 	cmd.Flags().BoolVar(&adopt, "adopt", false,
 		"send configs to nodes in maintenance mode, over the unauthenticated maintenance service")
+	cmd.Flags().BoolVar(&bootstrap, "bootstrap", false,
+		"build a new cluster: configure the first control plane, bootstrap etcd on it, then the rest")
 	cmd.Flags().BoolVar(&onlyNew, "only-new", false,
 		"restrict the run to nodes that are in maintenance mode")
 
@@ -660,12 +706,8 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 // first step and ran for the rest is not a run that skipped the gate, and a
 // summary claiming otherwise is worse than no summary. Empty when there is
 // nothing to report.
-func gateSummary(adopted int64, ungated, gated int) string {
+func gateSummary(ungated, gated int) string {
 	switch {
-	case adopted > 0 && ungated > 0 && gated == 0:
-		return "not waiting, and not gating on health: no cluster to join yet"
-	case adopted > 0:
-		return "not waiting: nothing to join until `talman bootstrap` runs"
 	case ungated > 0 && gated == 0:
 		return "not gating on health: nodes not in the cluster yet"
 	case ungated > 0:
