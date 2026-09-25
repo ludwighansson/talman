@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -302,11 +303,13 @@ func (r *Renderer) Context(n *config.Node) (template.Context, error) {
 			Hostname:     n.Hostname,
 			IPAddress:    n.IPAddress,
 			Role:         string(n.Role),
-			Groups:       n.Groups,
-			Values:       n.Values,
+			Groups:       slices.Clone(n.Groups),
+			Values:       config.CopyValues(n.Values),
 			TalosVersion: n.EffectiveTalosVersion(r.Cfg),
 		},
-		Values: r.Cfg.Values,
+		// Copies, for each node: a template can change what it is handed,
+		// and nodes render in parallel from the same config.
+		Values: config.CopyValues(r.Cfg.Values),
 	}
 
 	id, err := r.schematicID(n, base)

@@ -643,3 +643,45 @@ func TestRejectionHidesSecrets(t *testing.T) {
 		t.Errorf("the rejection no longer says what was wrong:\n%v", err)
 	}
 }
+
+// TestTemplatesGetTheirOwnValues: sprig's set, unset, merge and
+// mergeOverwrite change a map in place, so a template handed the cluster's
+// .Values could write into every node's -- and nodes render in parallel.
+func TestTemplatesGetTheirOwnValues(t *testing.T) {
+	cfg := &config.Config{
+		Values: map[string]any{"region": "eu", "nested": map[string]any{"a": 1}},
+		Nodes: []config.Node{
+			{Hostname: "a", Values: map[string]any{"only_a": "yes"}},
+			{Hostname: "b"},
+		},
+	}
+	r := &Renderer{Cfg: cfg}
+
+	ctxA, err := r.Context(&cfg.Nodes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// What `{{ $_ := mergeOverwrite .Values .Node.Values }}` and a nested
+	// `set` do.
+	ctxA.Values["only_a"] = "yes"
+	ctxA.Values["nested"].(map[string]any)["b"] = 2
+	ctxA.Node.Values["only_a"] = "changed"
+
+	ctxB, err := r.Context(&cfg.Nodes[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, leaked := ctxB.Values["only_a"]; leaked {
+		t.Error("node a's template changed node b's .Values")
+	}
+
+	if _, leaked := ctxB.Values["nested"].(map[string]any)["b"]; leaked {
+		t.Error("node a's template changed a nested map node b sees")
+	}
+
+	if cfg.Nodes[0].Values["only_a"] != "yes" || len(cfg.Values) != 2 {
+		t.Errorf("a template changed the config itself: %v, %v", cfg.Values, cfg.Nodes[0].Values)
+	}
+}

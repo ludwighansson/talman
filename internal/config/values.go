@@ -135,3 +135,45 @@ func merge(dst, src any) any {
 		return src
 	}
 }
+
+// CopyValues is a deep copy of a values map: maps and lists all the way down,
+// so a template that changes its copy -- sprig's set, unset, merge and
+// mergeOverwrite all work in place -- changes nothing another node, or the
+// config, will see.
+func CopyValues(v map[string]any) map[string]any {
+	if v == nil {
+		return nil
+	}
+
+	out, _ := copyValue(v).(map[string]any)
+
+	return out
+}
+
+func copyValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[k] = copyValue(x)
+		}
+
+		return out
+	case map[any]any:
+		out := make(map[any]any, len(t))
+		for k, x := range t {
+			out[k] = copyValue(x)
+		}
+
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = copyValue(x)
+		}
+
+		return out
+	default:
+		return v
+	}
+}
