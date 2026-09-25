@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -288,18 +287,9 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		}
 	}
 
-	// Into the output directory, gitignored: a plaintext bundle's copy still
-	// holds every key rotate-ca does not change -- etcd's, the service
-	// account's, the cluster secret -- and beside the bundle it would be one
-	// `git add .` from a commit.
-	if err := render.PrepareOutput(cfg, os.Stderr); err != nil {
+	backup, err := keepBundle(cfg, old, "pre-rotate")
+	if err != nil {
 		return err
-	}
-
-	backup := filepath.Join(cfg.OutputPath(),
-		fmt.Sprintf("secrets-pre-rotate-%s.yaml", time.Now().UTC().Format("20060102T150405Z")))
-	if err := render.WriteAtomic(backup, old); err != nil {
-		return fmt.Errorf("keeping the old bundle: %w", err)
 	}
 
 	if err := render.WriteAtomic(dest, bundle); err != nil {
@@ -332,12 +322,18 @@ func partialRotation(cfg *config.Config, tc, rotated string) string {
 
 // finishByHand spells out extracting the bundle from a control plane, which is
 // what rotate-ca does itself once a rotation has finished.
+//
+// The machine config it reads holds every key in the bundle, so it goes into
+// the output directory -- gitignored, 0700 -- and is written under a 077
+// umask, rather than into the working directory, which is usually the repo.
 func finishByHand(cfg *config.Config, talosconfig string) string {
+	cp := render.Rel(filepath.Join(cfg.OutputPath(), "cp.yaml"))
+
 	return fmt.Sprintf("  finish by hand before the next apply:\n"+
-		"    talosctl --talosconfig %s --nodes <control plane> read /system/state/config.yaml > cp.yaml\n"+
-		"    talman secrets generate --force --from-controlplane-config cp.yaml    # rewrites %s\n"+
-		"    rm cp.yaml    # it holds every key in the bundle",
-		render.Rel(talosconfig), cfg.SecretFile)
+		"    (umask 077; talosctl --talosconfig %s --nodes <control plane> read /system/state/config.yaml > %s)\n"+
+		"    talman secrets generate --force --from-controlplane-config %s    # rewrites %s, keeping the old one\n"+
+		"    rm %s    # it holds every key in the bundle",
+		render.Rel(talosconfig), cp, cp, cfg.SecretFile, cp)
 }
 
 // completeTalosconfig gives the talosconfig talosctl rotate-ca wrote the

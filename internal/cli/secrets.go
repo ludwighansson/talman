@@ -3,9 +3,12 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/sopsx"
 	"github.com/ludwighansson/talman/internal/talosctl"
@@ -86,6 +89,18 @@ cluster that already exists.`,
 				}
 			}
 
+			// --force replaces the one bundle a running cluster trusts: the
+			// old one is kept, so a mistaken --from-controlplane-config can
+			// be undone.
+			if old, err := os.ReadFile(dest); err == nil && !toStdout {
+				backup, err := keepBundle(cfg, old, "pre-generate")
+				if err != nil {
+					return err
+				}
+
+				fmt.Fprintf(cmd.OutOrStdout(), "kept the old bundle as %s\n", render.Rel(backup))
+			}
+
 			// Atomically: os.WriteFile truncates first, so an interrupted
 			// write leaves a half-written bundle where the working one was --
 			// and a cluster whose secrets bundle is gone cannot be rendered
@@ -113,4 +128,30 @@ cluster that already exists.`,
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
+}
+
+// keepBundle copies the bundle about to be replaced into the output directory
+// as secrets-<why>-<UTC time>.yaml, and says where.
+//
+// Into the output directory, gitignored and 0700: a plaintext bundle's copy
+// holds every key the cluster has, and beside the bundle it would be one
+// `git add .` from a commit. An encrypted one is kept the same way, for
+// symmetry and because it costs nothing.
+func keepBundle(cfg *config.Config, old []byte, why string) (string, error) {
+	if err := render.PrepareOutput(cfg, os.Stderr); err != nil {
+		return "", err
+	}
+
+	backup := filepath.Join(cfg.OutputPath(),
+		fmt.Sprintf("secrets-%s-%s.yaml", why, time.Now().UTC().Format("20060102T150405Z")))
+
+	if exists(backup) {
+		return "", fmt.Errorf("keeping the old bundle: %s already exists", render.Rel(backup))
+	}
+
+	if err := render.WriteAtomic(backup, old); err != nil {
+		return "", fmt.Errorf("keeping the old bundle: %w", err)
+	}
+
+	return backup, nil
 }

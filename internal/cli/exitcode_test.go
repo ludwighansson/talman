@@ -1098,3 +1098,31 @@ func TestCtlSingleNodeCommandHint(t *testing.T) {
 		t.Errorf("no hint:\n%s", stderr)
 	}
 }
+
+// secrets generate --force replaces the bundle a running cluster trusts, so
+// it keeps the old one where rotate-ca keeps its: in the output directory.
+func TestSecretsForceKeepsTheOldBundle(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	bundle := filepath.Join(dir, "secrets.sops.yaml")
+	if err := os.WriteFile(bundle, []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run([]string{"secrets", "generate", "--force", "--plaintext"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	kept, _ := filepath.Glob(filepath.Join(dir, "clusterconfig", "secrets-pre-generate-*.yaml"))
+	if len(kept) != 1 {
+		t.Fatalf("old bundles kept: %v", kept)
+	}
+
+	if b, _ := os.ReadFile(kept[0]); string(b) != "bundle: old\n" {
+		t.Errorf("kept %q", b)
+	}
+
+	if b, _ := os.ReadFile(bundle); string(b) == "bundle: old\n" {
+		t.Error("the bundle was not replaced")
+	}
+}
