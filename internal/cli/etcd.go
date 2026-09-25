@@ -88,6 +88,12 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 		}
 
 		from = n
+	} else if !tal.Reachable(tc, from.IPAddress) {
+		// Asked, as healthNode asks, so the snapshot goes whichever way the
+		// node answered: pinned to it, or through the talosconfig's
+		// endpoints when the node is only reachable behind them.
+		return fmt.Errorf("%s (%s) does not answer the Talos API, directly or through the talosconfig's endpoints",
+			from.Hostname, from.IPAddress)
 	}
 
 	if path == "" {

@@ -22,6 +22,14 @@ echo "$*" >> "$STUB_LOG"
 
 # STUB_DEAD_ENDPOINTS: the talosconfig's endpoints are down, so only a call
 # pinned to a node with --endpoints gets through.
+# STUB_DEAD_DIRECT: nodes are only reachable through the talosconfig's
+# endpoints, so a call pinned to one with --endpoints fails.
+if [ -n "$STUB_DEAD_DIRECT" ]; then
+	case " $* " in
+	*" --endpoints "*) echo "stub: no route to the node" >&2; exit 1 ;;
+	esac
+fi
+
 if [ -n "$STUB_DEAD_ENDPOINTS" ]; then
 	case " $* " in
 	*" --endpoints "*|*" version --client "*) ;;
@@ -128,6 +136,7 @@ nodes:
 	t.Setenv("STUB_STALE", "")
 	t.Setenv("STUB_KILL", "")
 	t.Setenv("STUB_DEAD_ENDPOINTS", "")
+	t.Setenv("STUB_DEAD_DIRECT", "")
 	t.Setenv("STUB_ROTATE_PARTWAY", "")
 	t.Setenv("STUB_ETCD", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
@@ -994,5 +1003,18 @@ func TestApplyChecksWavesFirst(t *testing.T) {
 
 	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "gen ") {
 		t.Errorf("apply rendered before rejecting --from:\n%s", calls)
+	}
+}
+
+// A control plane named with -n is reached the way it answers, as one talman
+// found for itself is: here only through the talosconfig's endpoints.
+func TestSnapshotOfANamedNodeBehindEndpoints(t *testing.T) {
+	_, log := exitFixture(t)
+
+	t.Setenv("STUB_DEAD_DIRECT", "1")
+
+	if got := run([]string{"etcd", "snapshot", "-n", "c1"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Errorf("exit %d\n%s", got, calls)
 	}
 }
