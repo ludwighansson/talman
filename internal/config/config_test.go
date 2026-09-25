@@ -885,3 +885,30 @@ nodes:
 		t.Errorf("a values file with two documents gave %v", err)
 	}
 }
+
+// The rename hints come from reading the file, so they hold whatever wording
+// the YAML library's own error takes.
+func TestRenameHints(t *testing.T) {
+	for want, body := range map[string]string{
+		"renamed validationMode": validBase + "talosMode: metal\n" + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+		"renamed secureBoot": validBase + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    imageFactory:
+      secureboot: true
+`,
+	} {
+		if _, err := Load(write(t, body)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() = %v, want it to say %q", err, want)
+		}
+	}
+
+	if hint := renameHint([]byte("clusterName: x\n")); hint != "" {
+		t.Errorf("a config with no old keys got a hint: %q", hint)
+	}
+}
