@@ -452,8 +452,7 @@ once, however many of these flags are passed.`,
 					}
 
 					if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
-						return fmt.Errorf("%w\n  re-run once it recovers, "+
-							"or pass --wait=false to roll on regardless", err)
+						return fmt.Errorf("%w\n  %s", err, waitFailedHint(targets))
 					}
 
 					// It answered on the secure API, so whatever it was
@@ -842,4 +841,15 @@ func redaction(hide, diff, dryRun, noRender bool, secrets func() (*redact.Redact
 	fmt.Fprintf(os.Stderr, "%v\n  diffs are not shown\n", err)
 
 	return nil, true, nil
+}
+
+// waitFailedHint is what to do about a node that did not come back. Rolling
+// on without the wait is only offered where talman would allow it: not for a
+// run reaching more than one control plane, where it is refused.
+func waitFailedHint(targets []*config.Node) string {
+	if waitsForControlPlanes(targets) != nil {
+		return "re-run once it recovers, or pass --timeout to wait longer"
+	}
+
+	return "re-run once it recovers, or pass --wait=false to roll on regardless"
 }
