@@ -1467,3 +1467,30 @@ func TestConfiguredWithoutEtcd(t *testing.T) {
 		t.Errorf("--bootstrap -y: exit %d\n%s", got, calls)
 	}
 }
+
+// New nodes are found before anything is sent: a run that stopped at the
+// seventh node would have applied and rebooted six first.
+func TestNewNodesRefusedBeforeAnythingIsSent(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes)
+
+	t.Setenv("STUB_MAINTENANCE", "10.0.0.4 10.0.0.5")
+
+	var got int
+
+	stderr := captureStderr(t, func() {
+		got = run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false"})
+	})
+
+	if got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+
+	if !strings.Contains(stderr, "2 new node(s), in maintenance mode: p1, x1") ||
+		!strings.Contains(stderr, "apply --onboard-new-nodes -n p1 -n x1") {
+		t.Errorf("the refusal does not name every new node and the command:\n%s", stderr)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "apply-config") {
+		t.Errorf("configs were sent before the refusal:\n%s", calls)
+	}
+}

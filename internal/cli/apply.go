@@ -201,6 +201,15 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 			// not a hint: honour it for every node and skip the probing.
 			forced := cmd.Flags().Changed("insecure")
 
+			// New nodes found before anything is sent, not when the roll-out
+			// reaches them: by then the nodes before them have been applied
+			// and rebooted, and the run stops halfway.
+			if !onboard && !onlyNew && !forced {
+				if err := refuseNewNodes(tal, tc, targets, states); err != nil {
+					return err
+				}
+			}
+
 			// What each node answered, so the health gate can tell a cluster
 			// that is still being built from one that is misbehaving.
 			modes := map[string]talosctl.Mode{}
