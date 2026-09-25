@@ -79,6 +79,22 @@ More in the README: "Rotating the CAs".`,
 			// The second half alone, for a rotation that finished on the
 			// nodes but not here: the bundle still holds the old CAs.
 			if finish {
+				// It replaces the bundle and the talosconfig, so it is
+				// asked about like a rotation, and has no dry run to offer:
+				// what it does is read and write, nothing to preview.
+				if dryRun {
+					return errors.New("--finish replaces the bundle with the one the cluster runs, and has " +
+						"no dry run: `talman status` shows the cluster, and the bundle's old copy is kept")
+				}
+
+				if !yes {
+					if err := typeClusterName("rotate-ca --finish", cfg.ClusterName, fmt.Sprintf(
+						"About to replace %s with the bundle cluster %q runs, and the talosconfig with %s if "+
+							"there is one.", cfg.SecretFile, cfg.ClusterName, render.Rel(rotated))); err != nil {
+						return err
+					}
+				}
+
 				return finishRotation(cfg, tal, tc, rotated, old)
 			}
 
@@ -219,7 +235,8 @@ More in the README: "Rotating the CAs".`,
 
 			if err := replaceBundle(cfg, tal, talosconfig, old, 2*time.Minute); err != nil {
 				return fmt.Errorf("%w\n  the cluster's CAs WERE rotated, but %s still holds the old ones; "+
-					"once the cluster answers again, finish with:\n    talman rotate-ca --finish", err, cfg.SecretFile)
+					"once the cluster answers again, finish with:\n    %s", err, cfg.SecretFile,
+					talmanCmd("rotate-ca --finish"))
 			}
 
 			if talos {
@@ -344,14 +361,14 @@ func partialRotation(cfg *config.Config, tc, rotated string) string {
 	if !exists(rotated) {
 		return fmt.Sprintf("\n  talosctl wrote no talosconfig for a new Talos CA, so %s is still the one to use,\n"+
 			"  and %s still matches the Talos CA. Check the cluster with `talman health`, then run\n"+
-			"  `talman rotate-ca` again; if the Kubernetes CA got partway, the rerun carries it through.",
-			render.Rel(tc), cfg.SecretFile)
+			"  `%s` again; if the Kubernetes CA got partway, the rerun carries it through.",
+			render.Rel(tc), cfg.SecretFile, talmanCmd("rotate-ca"))
 	}
 
 	return fmt.Sprintf("\n  talosctl wrote %s, the talosconfig for a new Talos CA, so the Talos CA has\n"+
 		"  probably been rotated and %s may no longer be accepted. Once\n"+
 		"  `talosctl --talosconfig %s health` passes, finish with:\n"+
-		"    talman rotate-ca --finish",
+		"    "+talmanCmd("rotate-ca --finish"),
 		render.Rel(rotated), render.Rel(tc), render.Rel(rotated))
 }
 
