@@ -185,36 +185,69 @@ It refuses to overwrite a talman.yaml or a .sops.yaml that is already there.`,
 				}
 			}
 
+			var sops bytes.Buffer
+
+			if age != "" {
+				if err := initSopsTemplate.Execute(&sops, age); err != nil {
+					return err
+				}
+			}
+
+			// All or nothing: a half-written directory is one the next
+			// init refuses to touch, so whatever this run made goes again
+			// if any of it fails -- the directory too, if it made that.
+			var written []string
+
+			created := !exists(abs)
+
+			undo := func() {
+				for _, p := range written {
+					_ = os.Remove(p)
+				}
+
+				if created {
+					_ = os.Remove(abs) // only if empty, which it is unless someone else wrote there
+				}
+			}
+
 			if err := os.MkdirAll(abs, 0o755); err != nil {
 				return err
 			}
 
-			if err := os.WriteFile(path, body.Bytes(), 0o644); err != nil {
+			write := func(p string, b []byte) error {
+				if err := os.WriteFile(p, b, 0o644); err != nil {
+					undo()
+
+					return err
+				}
+
+				written = append(written, p)
+
+				return nil
+			}
+
+			if err := write(path, body.Bytes()); err != nil {
 				return err
 			}
 
 			// Checked as any config is, so a hostname or an endpoint init
 			// was handed is refused here rather than at the next command.
 			if _, err := config.Load(path); err != nil {
-				_ = os.Remove(path)
+				undo()
 
 				return err
 			}
 
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "wrote %s\n", render.Rel(path))
-
 			if age != "" {
-				var sops bytes.Buffer
-				if err := initSopsTemplate.Execute(&sops, age); err != nil {
+				if err := write(sopsPath, sops.Bytes()); err != nil {
 					return err
 				}
+			}
 
-				if err := os.WriteFile(sopsPath, sops.Bytes(), 0o644); err != nil {
-					return err
-				}
+			out := cmd.OutOrStdout()
 
-				fmt.Fprintf(out, "wrote %s\n", render.Rel(sopsPath))
+			for _, p := range written {
+				fmt.Fprintf(out, "wrote %s\n", render.Rel(p))
 			}
 
 			fmt.Fprintln(out, "next:")

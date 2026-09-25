@@ -52,8 +52,8 @@ func TestInit(t *testing.T) {
 		t.Errorf("an invalid hostname gave exit %d, want 1", got)
 	}
 
-	if exists(filepath.Join(bad, config.DefaultFileName)) {
-		t.Error("a config that failed validation was left behind")
+	if exists(bad) {
+		t.Error("a failed init left its directory behind")
 	}
 
 	if got := run([]string{"init", bad, "--talos-version", "v1.14.1", "--kubernetes-version", "1.37.0"}); got != 1 {
@@ -108,5 +108,41 @@ func TestInitQuotes(t *testing.T) {
 	if got := run([]string{"init", dir, "--cluster-name", "prod", "--talos-version", "Client:\n\tTag: x",
 		"--kubernetes-version", "1.37.0", "--controlplane", "cp=10.0.0.1"}); got != 1 {
 		t.Errorf("a version that is not one: exit %d, want 1", got)
+	}
+}
+
+// A refused init leaves nothing it made, and nothing it did not make is
+// removed: the directory was there before, so it stays.
+func TestInitIsAllOrNothing(t *testing.T) {
+	t.Setenv("TALMAN_CONFIG", "")
+
+	dir := filepath.Join(t.TempDir(), "c")
+
+	// Something in the way of .sops.yaml: init refuses before writing.
+	if err := os.MkdirAll(filepath.Join(dir, ".sops.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{"init", dir, "--talos-version", "v1.14.1", "--kubernetes-version", "1.37.0",
+		"--controlplane", "cp=10.0.0.1"}
+
+	if got := run(append(args, "--age", "age1x")); got != 1 {
+		t.Fatalf("exit %d, want 1", got)
+	}
+
+	if exists(filepath.Join(dir, config.DefaultFileName)) {
+		t.Error("talman.yaml was left behind by a refused init")
+	}
+
+	if !exists(dir) {
+		t.Error("init removed a directory it did not create")
+	}
+
+	if err := os.Remove(filepath.Join(dir, ".sops.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run(append(args, "--age", "age1x")); got != 0 {
+		t.Errorf("init after the failed one: exit %d, want 0", got)
 	}
 }
