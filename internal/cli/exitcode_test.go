@@ -67,6 +67,8 @@ case " $* " in
 *" gen secrets "*) echo "bundle: rotated" ;;
 *" etcd snapshot "*)
 	eval "out=\${$#}"
+	# Another run landing a snapshot on the same name mid-stream.
+	[ -n "$STUB_RACE" ] && echo "someone else's" > "$STUB_RACE"
 	# What another user on the host would see while the stream runs.
 	ls -ld "$(dirname "$out")" | cut -c1-10 >> "$STUB_LOG.dirmode"
 	umask 022
@@ -137,6 +139,7 @@ nodes:
 	t.Setenv("STUB_KILL", "")
 	t.Setenv("STUB_DEAD_ENDPOINTS", "")
 	t.Setenv("STUB_DEAD_DIRECT", "")
+	t.Setenv("STUB_RACE", "")
 	t.Setenv("STUB_ROTATE_PARTWAY", "")
 	t.Setenv("STUB_ETCD", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
@@ -1037,5 +1040,23 @@ func TestGroupSelectingNothingIsAnError(t *testing.T) {
 	calls, _ := os.ReadFile(log)
 	if strings.Contains(string(calls), "reboot") {
 		t.Errorf("a reboot reached talosctl:\n%s", calls)
+	}
+}
+
+// A snapshot landing on the same name while this one streams is not
+// replaced. (The last gap, between a check and a rename, is closed by placing
+// the file with a link, which no stub can race; this holds the behaviour.)
+func TestSnapshotNeverReplacesOneThatAppeared(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	path := filepath.Join(dir, "snap.db")
+	t.Setenv("STUB_RACE", path)
+
+	if got := run([]string{"etcd", "snapshot", path}); got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+
+	if b, _ := os.ReadFile(path); string(b) != "someone else's\n" {
+		t.Errorf("the snapshot that appeared was replaced with %q", b)
 	}
 }
