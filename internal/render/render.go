@@ -203,7 +203,7 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 	for i, ref := range chain {
 		rendered, err := r.renderPatch(ref, ctx)
 		if err != nil {
-			return nil, fmt.Errorf("node %s: %w", n.Hostname, err)
+			return nil, r.redacted(fmt.Errorf("node %s: %w", n.Hostname, err))
 		}
 
 		// Skip files that render to nothing: a patch wrapped entirely in a
@@ -244,7 +244,10 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 
 	content, err := gen(paths)
 	if err != nil {
-		return nil, fmt.Errorf("node %s: %s", n.Hostname, r.blame(err, gen, chain, paths))
+		// talosctl's rejection quotes the offending document, values and
+		// all, and they may be the secrets this pass decrypted or read from
+		// the environment.
+		return nil, r.redacted(fmt.Errorf("node %s: %s", n.Hostname, r.blame(err, gen, chain, paths)))
 	}
 
 	return &Result{
@@ -583,4 +586,24 @@ func ordinal(n int) string {
 	default:
 		return "th"
 	}
+}
+
+// redactedError is an error whose message had this pass's secrets taken out.
+// It still unwraps to the original, for errors.Is and errors.As; only what it
+// says is changed.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
+// redacted takes every secret the pass knows so far out of err's message.
+func (r *Renderer) redacted(err error) error {
+	if err == nil || r.secrets == nil {
+		return err
+	}
+
+	return &redactedError{msg: r.secrets.Redactor().String(err.Error()), err: err}
 }

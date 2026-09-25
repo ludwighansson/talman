@@ -601,3 +601,45 @@ func TestSubmitReachesEveryFactory(t *testing.T) {
 		t.Errorf("submissions per factory = %v, want one each", hits)
 	}
 }
+
+// TestRejectionHidesSecrets: talosctl's rejection quotes the offending
+// document, values and all, and those values may be secrets the pass knows --
+// here one read from the environment. The error talman passes on has them
+// redacted, as a diff would.
+func TestRejectionHidesSecrets(t *testing.T) {
+	path := fixture(t)
+
+	t.Setenv("TALMAN_TEST_REGISTRY_PASSWORD", "hunter2-registry")
+
+	bad := filepath.Join(filepath.Dir(path), "patches", "db", "sysctl.yaml")
+	patch := "apiVersion: v1alpha1\nkind: SysctlConfig\npasswrod: \"{{ env \"TALMAN_TEST_REGISTRY_PASSWORD\" }}\"\n"
+
+	if err := os.WriteFile(bad, []byte(patch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Renderer{Cfg: cfg, Tal: talosctl.New(cfg.Talosctl)}
+
+	if err := r.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	_, err = r.Node(&cfg.Nodes[1])
+	if err == nil {
+		t.Fatal("expected the worker render to fail")
+	}
+
+	if strings.Contains(err.Error(), "hunter2-registry") {
+		t.Errorf("the rejection printed a secret:\n%v", err)
+	}
+
+	if !strings.Contains(err.Error(), "passwrod") {
+		t.Errorf("the rejection no longer says what was wrong:\n%v", err)
+	}
+}

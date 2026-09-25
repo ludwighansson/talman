@@ -3,8 +3,12 @@
 package redact
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -87,27 +91,57 @@ func (s *Set) AddBundle(plaintext []byte) error {
 // Only the values that were encrypted: a patch encrypted with an
 // encrypted_regex holds plain registry hostnames beside the password, and
 // those are not secrets. Everything, if it was encrypted whole.
+//
+// Every document, side by side: sops writes its metadata into each document of
+// a multi-document file, and a patch's second document -- a RegistryAuthConfig
+// after the node's own -- holds its own secrets.
 func (s *Set) AddEncrypted(ciphertext, plaintext []byte) error {
-	var enc, dec any
-
-	if err := yaml.Unmarshal(ciphertext, &enc); err != nil {
+	encDocs, err := documents(ciphertext)
+	if err != nil {
 		return err
 	}
 
-	if err := yaml.Unmarshal(plaintext, &dec); err != nil {
+	decDocs, err := documents(plaintext)
+	if err != nil {
 		return err
 	}
 
-	pair(enc, dec, func(v string) { s.addLong(v, minDeclared) })
+	for i := range min(len(encDocs), len(decDocs)) {
+		pair(encDocs[i], decDocs[i], func(v string) { s.addLong(v, minDeclared) })
+	}
 
 	return nil
 }
 
+// documents decodes every YAML document in data.
+func documents(data []byte) ([]any, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+
+	var out []any
+
+	for {
+		var doc any
+
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return out, nil
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, doc)
+	}
+}
+
 // Add adds values that came from somewhere a secret plausibly does, such as
-// the environment a template read.
+// the environment a template read. They count from minDeclared, as values an
+// operator encrypted do: the environment is where a CI job keeps what it would
+// not commit, and a registry password there is often short.
 func (s *Set) Add(values ...string) {
 	for _, v := range values {
-		s.addLong(v, minSecret)
+		s.addLong(v, minDeclared)
 	}
 }
 
@@ -139,12 +173,40 @@ func (s *Set) Redactor() *Redactor {
 		return values[i] < values[j]
 	})
 
+	// With their base64 forms: a secret written into an inline manifest's
+	// Secret, or anywhere a template piped it through b64enc, appears only
+	// encoded. The encodings are no shorter than the value, so the order
+	// above still holds for them.
+	var encoded []string
+
+	// Count is of secrets; their encodings are only more ways to find them.
+	count := len(values)
+
+	for _, v := range values {
+		for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+			if e := enc.EncodeToString([]byte(v)); !s.seen[e] {
+				encoded = append(encoded, e)
+			}
+		}
+	}
+
+	values = append(values, encoded...)
+	sort.Slice(values, func(i, j int) bool {
+		if len(values[i]) != len(values[j]) {
+			return len(values[i]) > len(values[j])
+		}
+
+		return values[i] < values[j]
+	})
+
+	values = slices.Compact(values)
+
 	pairs := make([]string, 0, len(values)*2)
 	for _, v := range values {
 		pairs = append(pairs, v, Marker)
 	}
 
-	return &Redactor{replacer: strings.NewReplacer(pairs...), count: len(values)}
+	return &Redactor{replacer: strings.NewReplacer(pairs...), count: count}
 }
 
 func (s *Set) addLong(v string, least int) {
@@ -266,8 +328,17 @@ func walk(node any, fn func(string)) {
 func pair(enc, dec any, fn func(string)) {
 	switch e := enc.(type) {
 	case string:
-		if s, ok := dec.(string); ok && strings.HasPrefix(e, "ENC[") {
-			fn(s)
+		if !strings.HasPrefix(e, "ENC[") {
+			return
+		}
+
+		// Whatever type sops recorded: a port or a PIN encrypted as an int
+		// is as much a secret as a string.
+		switch d := dec.(type) {
+		case string:
+			fn(d)
+		case int, int64, uint64, float64, bool:
+			fn(fmt.Sprint(d))
 		}
 	case map[string]any:
 		d, _ := dec.(map[string]any)

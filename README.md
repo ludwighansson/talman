@@ -813,9 +813,13 @@ replaced before anything is printed —
 those values and rendered them into the config it is sending, so it knows
 exactly what to look for, wherever it appears: the secrets bundle, in both the
 base64 form it stores and the PEM blocks some of it is written out as; the
-values SOPS encrypted in any patch; and anything a patch read from the
-environment with `env` or `expandenv`. `--redact-secrets=false` prints them as
-they are.
+values SOPS encrypted in any patch, in every document of it; and anything of
+six characters or more a patch read from the environment with `env` or
+`expandenv`. Each is also found in its base64 forms, since a template that
+writes a secret into an inline manifest usually pipes it through `b64enc`.
+The same goes for a rejection: when talosctl refuses a config and quotes the
+offending document, talman takes the secrets out of that too.
+`--redact-secrets=false` prints diffs as they are.
 
 Two things follow from being exact. Secrets talman has never seen cannot be
 found this way — a node still holding a previous cluster's keys would show them

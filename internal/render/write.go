@@ -250,7 +250,8 @@ func (r *Renderer) Validate(res *Result, mode string) error {
 	}
 
 	if err := r.Tal.Validate(staging, mode); err != nil {
-		return fmt.Errorf("node %s: %w", res.Node.Hostname, err)
+		// Validation quotes the config it rejects, as generation does.
+		return r.redacted(fmt.Errorf("node %s: %w", res.Node.Hostname, err))
 	}
 
 	return nil
