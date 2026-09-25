@@ -3,8 +3,10 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/ludwighansson/talman/internal/factory"
@@ -145,7 +147,9 @@ func (g *schemaGen) schema(t reflect.Type) any {
 	case reflect.Pointer:
 		return g.schema(t.Elem())
 	case reflect.String:
-		return map[string]any{"type": "string"}
+		// A number too: `kubernetesVersion: 1.37` is read as the text it
+		// was written as, and an editor must not flag what talman loads.
+		return map[string]any{"type": []string{"string", "number"}}
 	case reflect.Bool:
 		return map[string]any{"type": "boolean"}
 	case reflect.Uint8:
@@ -161,7 +165,8 @@ func (g *schemaGen) schema(t reflect.Type) any {
 			return map[string]any{"type": "object"}
 		}
 
-		return map[string]any{"type": "object", "additionalProperties": g.schema(t.Elem())}
+		// A value left empty -- `patches: {all: }` -- loads as nothing.
+		return map[string]any{"type": "object", "additionalProperties": nullable(g.schema(t.Elem()))}
 	case reflect.Interface:
 		return map[string]any{}
 	case reflect.Struct:
@@ -200,8 +205,38 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 
 		s := g.schema(f.Type)
 
+		// Validate's own rules, where a pattern or an enum can say them.
+		if rule, ok := schemaRules[t.Name()+"."+name]; ok {
+			m, _ := s.(map[string]any)
+
+			out := map[string]any{"type": "string"}
+			for k, v := range m {
+				if k != "type" {
+					out[k] = v
+				}
+			}
+
+			for k, v := range rule {
+				out[k] = v
+			}
+
+			s = out
+		}
+
+		if n, ok := schemaMinItems[t.Name()+"."+name]; ok {
+			if m, isMap := s.(map[string]any); isMap {
+				m["minItems"] = n
+			}
+		}
+
 		if d, ok := schemaDescriptions[t.Name()+"."+name]; ok {
 			s = withDescription(s, d)
+		}
+
+		// An optional key left empty is YAML's null, which Load reads as the
+		// key's zero value: accepted, so allowed here too.
+		if !slices.Contains(schemaRequired[t], name) {
+			s = nullable(s)
 		}
 
 		props[name] = s
@@ -222,7 +257,55 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 		obj["required"] = req
 	}
 
+	// schematic and schematicID are two ways of saying one thing, and Validate
+	// refuses both at once, at the cluster level and on a node.
+	if t == reflect.TypeFor[Config]() || t == reflect.TypeFor[Node]() {
+		obj["not"] = map[string]any{"required": []string{"schematic", "schematicID"}}
+	}
+
 	return obj
+}
+
+// schemaRules are Validate's checks that a schema can express, by type and
+// key, so that an editor refuses what talman would.
+var schemaRules = map[string]map[string]any{
+	"Config.endpoint":       {"pattern": `^https://[^/]+:[0-9]+(/.*)?$`},
+	"Config.clusterName":    {"pattern": clusterNamePattern.String(), "maxLength": 253},
+	"Config.validationMode": {"enum": validValidationModes},
+	"Node.hostname": {
+		"pattern":   `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`,
+		"maxLength": 253,
+	},
+	"Rollout.soak": {"pattern": `^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`},
+}
+
+// schemaMinItems are the lists Validate refuses empty.
+var schemaMinItems = map[string]int{
+	"Config.nodes":  1,
+	"Rollout.waves": 1,
+}
+
+// nullable lets s also be null.
+func nullable(s any) any {
+	m, ok := s.(map[string]any)
+	if !ok {
+		return s
+	}
+
+	switch t := m["type"].(type) {
+	case string:
+		out := maps.Clone(m)
+		out["type"] = []string{t, "null"}
+
+		return out
+	case []string:
+		out := maps.Clone(m)
+		out["type"] = append(slices.Clone(t), "null")
+
+		return out
+	}
+
+	return map[string]any{"anyOf": []any{s, map[string]any{"type": "null"}}}
 }
 
 // withDescription attaches a description. A $ref cannot carry siblings in

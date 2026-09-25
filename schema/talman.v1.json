@@ -6,31 +6,68 @@
         "bootloader": {
           "description": "none, dual-boot, sd-boot or grub, in any case.",
           "pattern": "^([nN][oO][nN][eE]|[dD][uU][aA][lL]-[bB][oO][oO][tT]|[sS][dD]-[bB][oO][oO][tT]|[gG][rR][uU][bB])$",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "diskImage": {
-          "$ref": "#/$defs/diskImage"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/diskImage"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "embeddedMachineConfiguration": {
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "extraKernelArgs": {
           "items": {
-            "type": "string"
+            "type": [
+              "string",
+              "number"
+            ]
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "meta": {
           "items": {
             "$ref": "#/$defs/metaValue"
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "secureboot": {
-          "$ref": "#/$defs/schematicSecureBoot"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/schematicSecureBoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "systemExtensions": {
-          "$ref": "#/$defs/systemExtensions"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/systemExtensions"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "type": "object"
@@ -40,7 +77,10 @@
       "properties": {
         "sectorSize": {
           "minimum": 0,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -50,27 +90,50 @@
       "properties": {
         "installerURLTmpl": {
           "description": "The installer image reference, as a Go template over .RegistryURL, .Protocol, .ID, .Version, .Platform (or .Mode) and .SecureBoot.",
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "platform": {
           "description": "The installer's platform: metal, openstack, aws, …. Default: metal.",
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "protocol": {
           "description": "The protocol schematics are submitted over. Default: https.",
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "registryURL": {
           "description": "The Image Factory host. Default: factory.talos.dev.",
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "schematicEndpoint": {
           "description": "The path schematics are submitted to. Default: /schematics.",
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "secureBoot": {
           "description": "Use the secure boot installer. Default: false.",
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -84,7 +147,10 @@
           "type": "integer"
         },
         "value": {
-          "type": "string"
+          "type": [
+            "string",
+            "number"
+          ]
         }
       },
       "required": [
@@ -95,36 +161,66 @@
     },
     "node": {
       "additionalProperties": false,
+      "not": {
+        "required": [
+          "schematic",
+          "schematicID"
+        ]
+      },
       "properties": {
         "groups": {
           "description": "Groups whose patches this node receives, applied in this order after its role's.",
           "items": {
-            "type": "string"
+            "type": [
+              "string",
+              "number"
+            ]
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "hostname": {
           "description": "An RFC 1123 host name: the Kubernetes node name, and the rendered file's name.",
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
           "type": "string"
         },
         "imageFactory": {
-          "allOf": [
+          "anyOf": [
             {
-              "$ref": "#/$defs/imageFactory"
+              "allOf": [
+                {
+                  "$ref": "#/$defs/imageFactory"
+                }
+              ],
+              "description": "Overrides the cluster's imageFactory key by key for this node."
+            },
+            {
+              "type": "null"
             }
-          ],
-          "description": "Overrides the cluster's imageFactory key by key for this node."
+          ]
         },
         "ipAddress": {
           "description": "The address talman reaches the node at.",
-          "type": "string"
+          "type": [
+            "string",
+            "number"
+          ]
         },
         "patches": {
           "description": "This node's own patches, applied last.",
           "items": {
-            "type": "string"
+            "type": [
+              "string",
+              "number"
+            ]
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "role": {
           "description": "controlplane or worker.",
@@ -134,36 +230,60 @@
           ]
         },
         "schematic": {
-          "description": "Overrides the cluster's schematic for this node.",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "A path to a schematic file.",
-              "minLength": 1,
-              "type": "string"
+              "description": "Overrides the cluster's schematic for this node.",
+              "oneOf": [
+                {
+                  "description": "A path to a schematic file.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/schematic"
+                }
+              ]
             },
             {
-              "$ref": "#/$defs/schematic"
+              "type": "null"
             }
           ]
         },
         "schematicID": {
           "description": "Overrides the cluster's schematic with an ID for this node.",
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "talosVersion": {
           "description": "Overrides the cluster's talosVersion for this node.",
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "values": {
           "description": "Free-form data, available to this node's patch templates as .Node.Values.",
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         },
         "valuesFiles": {
           "description": "YAML files merged into this node's values, in order and beneath its inline map.",
           "items": {
-            "type": "string"
+            "type": [
+              "string",
+              "number"
+            ]
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "required": [
@@ -177,13 +297,24 @@
       "additionalProperties": false,
       "properties": {
         "image": {
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "name": {
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "options": {
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -193,7 +324,11 @@
       "properties": {
         "soak": {
           "description": "How long to wait after each wave before the next, e.g. 10m.",
-          "type": "string"
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "waves": {
           "description": "Waves in order. A node goes in the first that names its role or a group of its; the rest go last.",
@@ -213,6 +348,7 @@
               }
             ]
           },
+          "minItems": 1,
           "type": "array"
         }
       },
@@ -225,13 +361,31 @@
       "additionalProperties": false,
       "properties": {
         "customization": {
-          "$ref": "#/$defs/customization"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/customization"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "overlay": {
-          "$ref": "#/$defs/overlay"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/overlay"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "owner": {
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -240,10 +394,17 @@
       "additionalProperties": false,
       "properties": {
         "enrollKeys": {
-          "type": "string"
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
         },
         "includeWellKnownCertificates": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -253,9 +414,15 @@
       "properties": {
         "officialExtensions": {
           "items": {
-            "type": "string"
+            "type": [
+              "string",
+              "number"
+            ]
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -265,6 +432,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "A talman cluster config, schema talman.dev/v1.",
+  "not": {
+    "required": [
+      "schematic",
+      "schematicID"
+    ]
+  },
   "properties": {
     "apiVersion": {
       "const": "talman.dev/v1",
@@ -272,96 +445,169 @@
     },
     "clusterName": {
       "description": "The cluster's name, as talosctl gen config takes it.",
+      "maxLength": 253,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$",
       "type": "string"
     },
     "endpoint": {
       "description": "The Kubernetes API URL: https, with a port.",
+      "pattern": "^https://[^/]+:[0-9]+(/.*)?$",
       "type": "string"
     },
     "imageFactory": {
-      "allOf": [
+      "anyOf": [
         {
-          "$ref": "#/$defs/imageFactory"
+          "allOf": [
+            {
+              "$ref": "#/$defs/imageFactory"
+            }
+          ],
+          "description": "Where installer images come from and how their references are spelled."
+        },
+        {
+          "type": "null"
         }
-      ],
-      "description": "Where installer images come from and how their references are spelled."
+      ]
     },
     "kubernetesVersion": {
       "description": "The Kubernetes version configs are rendered for, and upgrade-k8s upgrades to.",
-      "type": "string"
+      "type": [
+        "string",
+        "number"
+      ]
     },
     "nodes": {
       "description": "Every machine in the cluster.",
       "items": {
         "$ref": "#/$defs/node"
       },
+      "minItems": 1,
       "type": "array"
     },
     "outputDir": {
       "description": "Where rendered configs, the talosconfig and the kubeconfig are written. Default: clusterconfig.",
-      "type": "string"
+      "type": [
+        "string",
+        "number",
+        "null"
+      ]
     },
     "patches": {
       "additionalProperties": {
         "items": {
-          "type": "string"
+          "type": [
+            "string",
+            "number"
+          ]
         },
-        "type": "array"
+        "type": [
+          "array",
+          "null"
+        ]
       },
       "description": "Patch files by group: all, controlplane, worker, or a group some node declares. Applied in that order.",
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "rollout": {
-      "allOf": [
+      "anyOf": [
         {
-          "$ref": "#/$defs/rollout"
-        }
-      ],
-      "description": "The order upgrade, reboot and apply take through the cluster, in waves of groups."
-    },
-    "schematic": {
-      "description": "The Image Factory schematic: inline, or a path to a (templated) file.",
-      "oneOf": [
-        {
-          "description": "A path to a schematic file.",
-          "minLength": 1,
-          "type": "string"
+          "allOf": [
+            {
+              "$ref": "#/$defs/rollout"
+            }
+          ],
+          "description": "The order upgrade, reboot and apply take through the cluster, in waves of groups."
         },
         {
-          "$ref": "#/$defs/schematic"
+          "type": "null"
+        }
+      ]
+    },
+    "schematic": {
+      "anyOf": [
+        {
+          "description": "The Image Factory schematic: inline, or a path to a (templated) file.",
+          "oneOf": [
+            {
+              "description": "A path to a schematic file.",
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/schematic"
+            }
+          ]
+        },
+        {
+          "type": "null"
         }
       ]
     },
     "schematicID": {
       "description": "A schematic ID to use as is, instead of a schematic.",
-      "type": "string"
+      "type": [
+        "string",
+        "number",
+        "null"
+      ]
     },
     "secretFile": {
       "description": "The (usually SOPS-encrypted) Talos secrets bundle. Default: secrets.sops.yaml.",
-      "type": "string"
+      "type": [
+        "string",
+        "number",
+        "null"
+      ]
     },
     "talosVersion": {
       "description": "The Talos version contract configs are rendered for. Pinning it makes renders reproducible.",
-      "type": "string"
+      "type": [
+        "string",
+        "number"
+      ]
     },
     "talosctl": {
       "description": "The talosctl binary talman drives. Default: talosctl on PATH.",
-      "type": "string"
+      "type": [
+        "string",
+        "number",
+        "null"
+      ]
     },
     "validationMode": {
       "description": "The talosctl validate --mode. Default: metal for the metal platform, cloud otherwise.",
-      "type": "string"
+      "enum": [
+        "metal",
+        "cloud",
+        "container"
+      ],
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "values": {
       "description": "Free-form data, available to every patch template as .Values.",
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "valuesFiles": {
       "description": "YAML files merged into values, in order and beneath the inline map. Plaintext only.",
       "items": {
-        "type": "string"
+        "type": [
+          "string",
+          "number"
+        ]
       },
-      "type": "array"
+      "type": [
+        "array",
+        "null"
+      ]
     }
   },
   "required": [
