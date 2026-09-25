@@ -975,3 +975,24 @@ rollout:
 		t.Errorf("the health gate ran after a wave that changed nothing:\n%s", calls)
 	}
 }
+
+// A mistyped wave is refused before apply renders anything: rendering
+// decrypts the bundle, which may be a KMS call or a hardware-key touch.
+func TestApplyChecksWavesFirst(t *testing.T) {
+	dir, log := exitFixtureWith(t, waveNodes+`rollout:
+  waves: [blue]
+`)
+
+	// A bundle, so that rendering would get as far as talosctl.
+	if err := os.WriteFile(filepath.Join(dir, "secrets.sops.yaml"), []byte("cluster: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run([]string{"apply", "--from", "gren"}); got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "gen ") {
+		t.Errorf("apply rendered before rejecting --from:\n%s", calls)
+	}
+}

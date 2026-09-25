@@ -115,6 +115,13 @@ once, however many of these flags are passed.`,
 				return err
 			}
 
+			// The waves first, so a mistyped --from fails before the bundle
+			// is decrypted, and only the nodes in the selected waves are
+			// rendered. Planned again after --only-new, below.
+			if _, targets, _, err = waves.plan(cfg, targets); err != nil {
+				return err
+			}
+
 			// Render first, every time.
 			//
 			// Applying whatever happens to be sitting in the output directory
