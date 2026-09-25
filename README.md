@@ -1231,7 +1231,8 @@ missing `sops`, or a `.sops.yaml` rule that no longer matches refuses the run
 instead of stranding it halfway.
 
 If a rotation does stop after the nodes have changed, one command finishes
-it, reading the bundle back and putting the rotated talosconfig in place:
+it, reading the bundle back and putting the rotated talosconfig in place. It
+asks for the cluster name first, as a rotation does (`-y` skips it):
 
 ```console
 $ talman rotate-ca --finish

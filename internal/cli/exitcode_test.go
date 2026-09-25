@@ -1296,7 +1296,20 @@ func TestRotateCAFinish(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := run([]string{"rotate-ca", "--finish"}); got != 0 {
+	// Asked, like a rotation: no answer is no.
+	if got := run([]string{"rotate-ca", "--finish"}); got != 1 {
+		t.Errorf("--finish without confirmation: exit %d, want 1", got)
+	}
+
+	if got := run([]string{"rotate-ca", "--finish", "--dry-run", "-y"}); got != 1 {
+		t.Errorf("--finish --dry-run: exit %d, want 1", got)
+	}
+
+	if b, _ := os.ReadFile(secrets); string(b) != "bundle: old\n" {
+		t.Fatalf("a refused --finish changed the bundle to %q", b)
+	}
+
+	if got := run([]string{"rotate-ca", "--finish", "-y"}); got != 0 {
 		calls, _ := os.ReadFile(log)
 		t.Fatalf("exit %d\n%s", got, calls)
 	}
