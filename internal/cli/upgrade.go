@@ -34,24 +34,15 @@ func newUpgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Upgrade Talos on nodes to their configured installer image",
-		Long: `Upgrade runs "talosctl upgrade" against each node with the installer image that
-node's schematic and talosVersion resolve to -- the same reference talman
-passes to gen config, so an upgrade cannot drift from what render produced.
+		Long: `Upgrade moves each node to the installer image its schematic and talosVersion
+resolve to, skipping nodes that already run it. Nodes go one at a time, in
+config order or rollout waves; control planes always alone, --parallel batches
+workers. --dry-run names the nodes an upgrade would reach, --health gates
+between nodes, --snapshot takes an etcd snapshot first.
 
-Nodes are upgraded in config order -- or wave by wave, with rollout.waves in
-the config -- one at a time, and talosctl waits for each to come back on its
-new version before the next begins. --parallel raises that for workers only; a
-control plane always goes alone. Restrict the set with -n, -g, or the wave
-flags --wave, --from and --until, and see what would happen first with
---dry-run: it asks every node what it runs and names the ones an upgrade would
-reach, without upgrading any.
+--detailed-exit-code: 2 if a node was upgraded, 0 if none needed it, 1 on error.
 
---health adds a cluster health check between nodes, and stops the roll-out if
-the cluster is unhealthy. As with apply, it is off by default.
-
---detailed-exit-code reports whether anything was upgraded: 2 when at least one
-node was, 0 when every selected node already ran its configured version and
-schematic, 1 on error.`,
+More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun

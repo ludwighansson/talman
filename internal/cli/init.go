@@ -82,22 +82,14 @@ func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [directory]",
 		Short: "Start a cluster directory",
-		Long: `Init writes a talman.yaml for a new cluster into the directory, the current one
-by default, with the nodes named on the command line:
+		Long: `Init writes a talman.yaml for a new cluster, into the current directory or the
+one named:
 
   talman init prod --controlplane cp-01=10.0.0.11 --worker w-01=10.0.0.21
 
-The cluster is named after the directory unless --cluster-name says otherwise,
-and the endpoint is the first control plane's address unless --endpoint names
-a VIP or a load balancer, which a cluster of more than one control plane
-wants. The Talos and Kubernetes versions default to the ones the talosctl on
-PATH generates.
-
-With --age it also writes a .sops.yaml that encrypts the secrets bundle, and
-any patch named *.sops.yaml, to that age recipient.
-
-It writes no secrets and touches no machine; "talman secrets generate" is next.
-It refuses to overwrite a talman.yaml or a .sops.yaml that is already there.`,
+--age also writes a .sops.yaml encrypting to that recipient. Versions default
+to the local talosctl's. It writes no secrets and never overwrites a file;
+"talman secrets generate" is next.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."

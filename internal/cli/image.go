@@ -34,20 +34,12 @@ func newImageURLCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "url",
 		Short: "Print the installer image, or a boot medium's URL, for each node",
-		Long: `Print the installer image reference talman passes to talosctl for each node,
-rendered from imageFactory.installerURLTmpl -- the same value patches see as
-.Node.InstallerImage.
+		Long: `Print each node's installer image -- what patches see as .Node.InstallerImage
+-- or, with --kind iso, disk or pxe, the Image Factory URL of a boot medium for
+the same schematic and version. --arch picks amd64 or arm64; --format
+overrides a disk image's extension.
 
---kind names a boot medium for the same schematic and Talos version instead,
-for bringing up a machine that has no Talos on it yet:
-
-  iso    the ISO to boot from
-  disk   the platform's disk image (--format overrides its extension)
-  pxe    the iPXE script that netboots it
-
-They come from the Image Factory the config names, for the node's platform,
-with the secure boot variant when secureBoot is set. --arch picks the machine
-architecture, amd64 by default.`,
+More in the README: "The Image Factory".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			field := "installerImage"

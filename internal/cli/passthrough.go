@@ -22,22 +22,15 @@ func newTalosctlCmd() *cobra.Command {
 		Use:     "talosctl [-n node]... [--] <talosctl args>...",
 		Aliases: []string{"ctl"},
 		Short:   "Run any talosctl command against this cluster's nodes, by hostname",
-		Long: `Talosctl runs talosctl with this cluster's talosconfig, and with --nodes set to
-the addresses of the nodes named with -n -- by hostname or address, as
-everywhere else in talman. Everything else is passed to talosctl as it is:
+		Long: `Talosctl (or ctl) runs any talosctl command with this cluster's talosconfig,
+and --nodes set from -n and -g by hostname:
 
-  talman talosctl -n worker-01 logs kubelet -f
-  talman talosctl -n control-01 -n control-02 get members
-  talman ctl -- service
+  talman ctl -n worker-01 logs kubelet -f
 
-It is for everything talman does not wrap: logs, dmesg, get, service, edit and
-the rest. Without -n, talosctl reaches the talosconfig's default nodes, which
-render sets to every node in the config.
+talman's own -n, -g, -c and -v come first; everything after is talosctl's.
+talosctl's exit status is talman's.
 
-talman's own flags -- -n, -g, -c and -v -- come first; everything from the first
-argument that is not one of them belongs to talosctl, its flags included and
-"--" optional, so "talman ctl -e 10.0.0.2 version" reaches talosctl whole.
-talosctl's exit status is talman's.`,
+More in the README: "Everything else talosctl does".`,
 		DisableFlagsInUseLine: true,
 		// Parsed here rather than by cobra, which rejects a flag it does
 		// not know even when it comes before the first argument that is

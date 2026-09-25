@@ -24,31 +24,15 @@ func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "List the nodes, and what each one is running",
-		Long: `Status lists every node the config names, and asks each one what it is:
-whether it answers at all, the Talos version and schematic it is running, and
-the Kubernetes version its kubelet runs. Each is shown against what the config
-resolves to, with an arrow marking the drift that "talman upgrade" or "talman
-upgrade-k8s" would close.
+		Long: `Status lists every node and asks each what it runs -- whether it answers, its
+Talos and Kubernetes versions and schematic -- beside what the config wants.
+An arrow marks drift; "-" is something talman could not read, never the
+configured value. It always succeeds; "talman health" is the one that fails.
 
---offline asks nothing. The table keeps its shape -- the same columns, in the
-same order -- with a dash wherever the answer could only have come from a node.
-It needs no cluster, no secrets bundle and no talosconfig, which is what makes
-it the way to read a config while writing one.
+--offline asks nothing, and needs no cluster, secrets or talosconfig.
+-o json prints the same report for scripts.
 
-A node that has not been adopted answers on the maintenance service and is
-reported as such rather than as a failure; one that answers nothing is
-unreachable. Anything talman could not read is shown as "-", never as the
-configured value, because this command exists to say what is actually there.
-
--o json prints the same report for a script: every node, with what it is
-running and what the config wants side by side, and full schematic IDs.
-
-It reports and always succeeds. "talman health" is the one that passes or
-fails.
-
-There is no --extra-flags here: this command composes several talosctl calls
-per node rather than driving one, so there is no single invocation for flags to
-be forwarded to.`,
+More in the README: "Seeing what is out there".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()

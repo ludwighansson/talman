@@ -29,19 +29,12 @@ func newRebootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reboot",
 		Short: "Reboot nodes one at a time, waiting for each to come back",
-		Long: `Reboot is a rolling reboot: nodes go one at a time in config order -- or wave by
-wave, with rollout.waves in the config -- and talosctl waits for each to come
-back before the next begins. --parallel raises that for workers only; a control
-plane always reboots alone, because two rebooting together is how a three-node
-control plane loses quorum. -n, -g, --wave, --from and --until select which
-nodes and waves.
+		Long: `Reboot restarts nodes one at a time, in config order or rollout waves, waiting
+for each to come back; control planes always alone, --parallel batches
+workers. It lands a "talman apply --mode=staged". --health gates between
+nodes.
 
-It is the second half of "talman apply --mode=staged", whose config lands on
-the next reboot, and the way to pick up anything else that only a reboot
-applies.
-
---health adds a cluster health check between nodes, and stops the roll-out if
-the cluster is unhealthy. As with apply and upgrade, it is off by default.`,
+More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 		Args: cobra.NoArgs,
 		PreRunE: func(_ *cobra.Command, _ []string) error {
 			if !slices.Contains(rebootModes, mode) {
