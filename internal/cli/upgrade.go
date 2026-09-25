@@ -22,7 +22,6 @@ func newUpgradeCmd() *cobra.Command {
 		submit     bool
 		force      bool
 		dryRun     bool
-		wait       bool
 		health     bool
 		timeout    time.Duration
 		snapshot   bool
@@ -172,7 +171,6 @@ schematic, 1 on error.`,
 					"upgrade",
 					"--nodes", n.IPAddress,
 					"--image", ctx.Node.InstallerImage,
-					fmt.Sprintf("--wait=%t", wait),
 					"--timeout", timeout.String(),
 				}, extraFlags...)
 
@@ -192,7 +190,9 @@ schematic, 1 on error.`,
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
 				verb: "upgrade", done: "upgraded",
 				targets: targets, parallel: parallel, inert: dryRun,
-				health: health, timeout: timeout, waits: wait,
+				// talosctl waits for every upgrade: it drains the node first,
+				// and a drain always waits.
+				health: health, timeout: timeout, waits: true,
 				stages: stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
 			}).run(upgradeOne); err != nil {
 				return err
@@ -217,8 +217,6 @@ schematic, 1 on error.`,
 		"upgrade even when the node already runs the configured version and schematic")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"say which nodes would be upgraded, without upgrading any")
-	cmd.Flags().BoolVar(&wait, "wait", true,
-		"wait for each node to come back on its new version before moving on")
 	cmd.Flags().BoolVar(&health, "health", false,
 		"run a cluster health check between nodes, and stop if it fails")
 	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Minute,

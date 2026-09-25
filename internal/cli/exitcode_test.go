@@ -637,7 +637,6 @@ func TestNoWaitKeepsControlPlanesApart(t *testing.T) {
 	_, log := exitFixtureWith(t, cps)
 
 	for _, args := range [][]string{
-		{"upgrade", "--force", "--wait=false"},
 		{"reboot", "--wait=false"},
 		{"apply", "--no-render", "--redact-secrets=false", "--wait=false"},
 	} {
@@ -647,7 +646,7 @@ func TestNoWaitKeepsControlPlanesApart(t *testing.T) {
 	}
 
 	calls, _ := os.ReadFile(log)
-	for _, verb := range []string{" upgrade --nodes", " reboot --nodes", " apply-config "} {
+	for _, verb := range []string{" reboot --nodes", " apply-config "} {
 		if strings.Contains(string(calls), verb) {
 			t.Errorf("%q ran anyway:\n%s", verb, calls)
 		}
