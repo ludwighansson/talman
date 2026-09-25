@@ -326,3 +326,16 @@ func TestRedaction(t *testing.T) {
 		t.Errorf("a plain --no-render apply asked for the secrets (err %v)", err)
 	}
 }
+
+func TestWaitFailedHintOffersOnlyWhatRuns(t *testing.T) {
+	cp := func(h string) *config.Node { return &config.Node{Hostname: h, Role: config.RoleControlPlane} }
+	w := &config.Node{Hostname: "w1", Role: config.RoleWorker}
+
+	if hint := waitFailedHint([]*config.Node{cp("c1"), cp("c2")}); strings.Contains(hint, "--wait=false") {
+		t.Errorf("offered --wait=false across two control planes, which is refused: %q", hint)
+	}
+
+	if hint := waitFailedHint([]*config.Node{cp("c1"), w}); !strings.Contains(hint, "--wait=false") {
+		t.Errorf("did not offer --wait=false where it is allowed: %q", hint)
+	}
+}
