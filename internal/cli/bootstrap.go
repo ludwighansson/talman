@@ -107,7 +107,7 @@ func noEtcd(states []cpState) bool {
 // Every control plane has to answer, and none may run etcd: bootstrapping a
 // second time splits a cluster, and a control plane talman cannot ask might
 // be the one running it.
-func checkBootstrappable(cfg *config.Config, states []cpState) ([]*config.Node, error) {
+func checkBootstrappable(states []cpState) ([]*config.Node, error) {
 	if len(states) == 0 {
 		return nil, errors.New("--bootstrap needs a control plane in the config")
 	}
@@ -176,7 +176,7 @@ func talmanCmd(rest string) string {
 // printBootstrapPlan is --bootstrap --dry-run: the order the build would
 // take, and which nodes are new, without sending anything -- a dry run to a
 // node in maintenance mode would ship it the config, unauthenticated.
-func printBootstrapPlan(cfg *config.Config, tal *talosctl.Runner, tc string, first *config.Node,
+func printBootstrapPlan(tal *talosctl.Runner, tc string, first *config.Node,
 	stages []config.Staged,
 ) {
 	status := func(n *config.Node) string {

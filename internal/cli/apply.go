@@ -176,7 +176,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 
 			switch {
 			case bootstrap:
-				configured, err := checkBootstrappable(cfg, states)
+				configured, err := checkBootstrappable(states)
 				if err != nil {
 					return err
 				}
@@ -565,7 +565,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 						stages = []config.Staged{{Nodes: rest}}
 					}
 
-					printBootstrapPlan(cfg, tal, tc, first, stages)
+					printBootstrapPlan(tal, tc, first, stages)
 
 					return nil
 				}
