@@ -458,7 +458,6 @@ and drops a `.gitignore` that excludes the whole output directory.
 | `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` (a noop when every node is already there) |
 | `talman health` | cluster health |
 | `talman etcd snapshot [path]` | save an etcd snapshot, by default into the output directory |
-| `talman dashboard <node>` | the Talos text UI for one node |
 | `talman talosctl -n <node> …` | any other talosctl command, with the talosconfig and node addresses filled in |
 | `talman rotate-ca` | rotate the Talos and Kubernetes API CAs, and the secrets bundle with them |
 | `talman reset` | wipe nodes (requires typing the cluster name) |
@@ -483,8 +482,7 @@ $ talman status -o json | jq -r '.nodes[] | select(.talos.running and .talos.run
 ```
 
 Shell completion comes from `talman completion bash|zsh|fish|powershell`, and
-completes node names for `-n` and for `dashboard` from the config in the
-working directory:
+completes node names for `-n` from the config in the working directory:
 
 ```console
 $ source <(talman completion zsh)
@@ -655,17 +653,6 @@ it the way to read a config while writing one — and the way to see the table
 when the machines are off. `--wide` adds the schematic column.
 
 `status` reports and always succeeds; `health` is the one that passes or fails.
-
-`talman dashboard <node>` opens `talosctl`'s text UI — overview, logs and live
-metrics — for exactly one machine, named as a hostname or an address:
-
-```console
-$ talman dashboard talos-c01
-```
-
-The node is reached at its own address rather than through the talosconfig
-endpoints: a dashboard is most wanted when the cluster is unhappy, which is
-when a control plane proxying for the node is least able to serve it.
 
 ### Everything else talosctl does
 
