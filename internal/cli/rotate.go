@@ -348,7 +348,8 @@ func finishByHand(cfg *config.Config, talosconfig string) string {
 // talman's, plain talosctl, or `talman ctl` without -n, failed with "nodes
 // are not set" until the next render.
 func completeTalosconfig(tal *talosctl.Runner, cfg *config.Config, path string) error {
-	var cps, all []string
+	cps := make([]string, 0, len(cfg.Nodes))
+	all := make([]string, 0, len(cfg.Nodes))
 
 	for i := range cfg.Nodes {
 		all = append(all, cfg.Nodes[i].IPAddress)
