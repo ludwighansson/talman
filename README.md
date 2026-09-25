@@ -1124,12 +1124,11 @@ orders them by group instead, so a canary goes first and the rest follow it:
 
 ```yaml
 rollout:
-  soak: 10m                          # wait after each wave, then gate on health
+  soak: 10m               # wait after each wave, then gate on health
   waves:
-    - controlplane                   # a role or a group
-    - blue                           # the canary
-    - [green, pink]                  # several groups make one wave
-    - {groups: [red], pause: true}   # stop after this wave
+    - controlplane        # a role or a group
+    - blue                # the canary
+    - [green, pink]       # several groups make one wave
 ```
 
 `upgrade`, `reboot` and `apply` go wave by wave, and inside a wave by the
@@ -1138,33 +1137,29 @@ to the first wave that names its role or one of its groups, and nodes no wave
 names form a last wave, `rest`, so a list that leaves someone out still
 reaches them — after everything it does name.
 
-Between waves talman soaks for `soak`, if one is set, and then runs the health
-gate if `--health` asked for it. A canary is only worth something if the gate
-looks after it has had time to go wrong. A wave marked `pause` stops the run
-there and says how to carry on:
+Between waves that changed something, talman soaks for `soak`, if one is set,
+and then runs the health gate if `--health` asked for it. A canary is only
+worth something if the gate looks after it has had time to go wrong.
+
+A run never stops at a wave by itself: where to stop is the operator's call,
+made run by run. `--until <group>` stops after the wave holding it and prints
+the command that carries on, `--from <group>` starts at it, and `--wave
+<group>` runs only that one; `rest` names the last wave, so no node may call a
+group that.
 
 ```console
-$ talman upgrade --health
+$ talman upgrade --health --until blue     # the canary, and everything before it
 == wave 1/3: controlplane, 1 node(s)
 ...
 == wave 2/3: blue, 3 node(s)
 ...
-wave blue done; paused as rollout.waves[1] asks
+stopped before wave green, as --until asked
   continue with: talman upgrade --from green --health
 ```
 
-From the command line, `--until <group>` stops after the wave holding it,
-`--from <group>` starts at it, and `--wave <group>` runs only that one; `rest`
-names the last wave, so no node may call a group that. They select from the
-config's waves and never reorder them, so the order is the one that was
-reviewed, and a selection that reaches no node is an error rather than a run
-that quietly did nothing. A wave that changed nothing does not pause: a canary
-already done lets a later run straight through.
-
-```console
-$ talman upgrade --until blue      # the canary, and everything before it
-$ talman upgrade --from green      # the rest, once blue has proved itself
-```
+These select from the config's waves and never reorder them, so the order is
+the one that was reviewed, and a selection that reaches no node is an error
+rather than a run that quietly did nothing.
 
 Carrying on is safe to repeat: `upgrade` skips a node already on its target,
 and `apply` to a node that already has its config changes nothing.

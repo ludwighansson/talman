@@ -34,7 +34,7 @@ func TestRolloutStages(t *testing.T) {
     - controlplane
     - blue
     - [green, pink]
-    - {groups: [red], pause: true}
+    - red
 `+rolloutNodes+`  - hostname: r1
     ipAddress: 10.0.0.6
     role: worker
@@ -70,10 +70,6 @@ func TestRolloutStages(t *testing.T) {
 	if strings.Join(got, " | ") != want {
 		t.Errorf("stages:\n  got  %s\n  want %s", strings.Join(got, " | "), want)
 	}
-
-	if !cfg.Rollout.Waves[3].Pause {
-		t.Error("the long form's pause was not read")
-	}
 }
 
 func TestRolloutWithoutWavesIsConfigOrder(t *testing.T) {
@@ -92,13 +88,13 @@ func TestRolloutWithoutWavesIsConfigOrder(t *testing.T) {
 
 func TestRolloutValidation(t *testing.T) {
 	for name, tt := range map[string]struct{ rollout, want string }{
-		"unknown group":      {"waves: [blue, purple]", `no node declares the group "purple"`},
-		"all":                {"waves: [all]", `"all" is every node`},
-		"group twice":        {"waves: [blue, [green, blue]]", `already rollout.waves[0]'s`},
-		"bad soak":           {"soak: ten minutes\n  waves: [blue]", "rollout.soak"},
-		"no waves":           {"waves: []", "rollout.waves is empty"},
-		"unknown long field": {"waves: [{groups: [blue], wait: true}]", "wait"},
-		"rest as a wave":     {"waves: [blue, rest]", `"rest" is the nodes no wave names`},
+		"unknown group":  {"waves: [blue, purple]", `no node declares the group "purple"`},
+		"all":            {"waves: [all]", `"all" is every node`},
+		"group twice":    {"waves: [blue, [green, blue]]", `already rollout.waves[0]'s`},
+		"bad soak":       {"soak: ten minutes\n  waves: [blue]", "rollout.soak"},
+		"no waves":       {"waves: []", "rollout.waves is empty"},
+		"a mapping":      {"waves: [{groups: [blue]}]", "a wave is a group name, or a list of them"},
+		"rest as a wave": {"waves: [blue, rest]", `"rest" is the nodes no wave names`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(write(t, validBase+"rollout:\n  "+tt.rollout+"\n"+rolloutNodes))

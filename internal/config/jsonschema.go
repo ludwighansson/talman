@@ -132,15 +132,6 @@ func (g *schemaGen) schema(t reflect.Type) any {
 		return map[string]any{"oneOf": []any{
 			map[string]any{"type": "string", "description": "One group, or a role."},
 			withDescription(groups, "Several groups, rolled out together."),
-			map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"required":             []string{"groups"},
-				"properties": map[string]any{
-					"groups": groups,
-					"pause":  map[string]any{"type": "boolean", "description": "Stop after this wave."},
-				},
-			},
 		}}
 	case reflect.TypeFor[SchematicRef]():
 		return map[string]any{"oneOf": []any{

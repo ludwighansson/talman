@@ -829,31 +829,6 @@ func TestRolloutWaves(t *testing.T) {
 	}
 }
 
-// TestRolloutPause: a wave marked pause stops the roll-out after it, and says
-// how to carry on.
-func TestRolloutPause(t *testing.T) {
-	_, log := exitFixtureWith(t, waveNodes+`rollout:
-  waves:
-    - {groups: [blue], pause: true}
-    - green
-`)
-
-	var got int
-
-	stderr := captureStderr(t, func() { got = run([]string{"reboot", "-g", "worker"}) })
-	if got != 0 {
-		t.Fatalf("exit %d\n%s", got, stderr)
-	}
-
-	if order := rebooted(t, log); order != "10.0.0.2" {
-		t.Errorf("rebooted %q before pausing, want only blue's 10.0.0.2", order)
-	}
-
-	if !strings.Contains(stderr, "continue with: talman reboot --from green --group=worker") {
-		t.Errorf("the pause did not say how to carry on:\n%s", stderr)
-	}
-}
-
 // Without rollout in the config, the wave flags have nothing to select from.
 func TestWaveFlagsNeedARollout(t *testing.T) {
 	exitFixture(t)
@@ -900,12 +875,12 @@ func runHint(t *testing.T, args ...string) (int, string) {
 	return got, hint
 }
 
-// TestRolloutHintsCarryOn: the command a pause or --until prints has to run,
-// and has to keep the selection the operator made.
+// TestRolloutHintsCarryOn: the command --until prints has to run, and has to
+// keep the selection the operator made.
 func TestRolloutHintsCarryOn(t *testing.T) {
 	_, log := exitFixtureWith(t, waveNodes+`rollout:
   waves:
-    - {groups: [blue], pause: true}
+    - blue
     - [green, pink]
 `)
 
@@ -923,36 +898,6 @@ func TestRolloutHintsCarryOn(t *testing.T) {
 
 	if order := rebooted(t, log); order != "10.0.0.3 10.0.0.4 10.0.0.5" {
 		t.Errorf("the hint rebooted %q, want the waves after blue", order)
-	}
-
-	// --until survives a pause before it.
-	_, hint = runHint(t, "reboot", "-g", "worker", "--until", "green")
-	if !strings.Contains(hint, "--until=green") {
-		t.Errorf("the pause hint %q dropped --until", hint)
-	}
-}
-
-// TestRolloutPauseOnlyAfterChange: a canary wave that is already done does
-// not stop every later run at itself.
-func TestRolloutPauseOnlyAfterChange(t *testing.T) {
-	_, log := exitFixtureWith(t, waveNodes+`rollout:
-  waves:
-    - {groups: [blue], pause: true}
-`)
-
-	// Every node already runs the configured version: nothing to do in
-	// blue, so no reason to stop there.
-	if got := run([]string{"upgrade", "--detailed-exit-code"}); got != 0 {
-		t.Fatalf("exit %d", got)
-	}
-
-	t.Setenv("STUB_STALE", "10.0.0.5")
-
-	_ = os.WriteFile(log, nil, 0o644)
-
-	if got := run([]string{"upgrade", "--detailed-exit-code"}); got != 2 {
-		calls, _ := os.ReadFile(log)
-		t.Errorf("exit %d, want 2: the stale node after the done canary was not reached\n%s", got, calls)
 	}
 }
 
