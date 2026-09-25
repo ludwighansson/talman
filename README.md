@@ -458,7 +458,7 @@ alone and the render stops, rather than being replaced.
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
 | `talman image url` | the installer image per node, or with `--kind` its ISO, disk image or iPXE script |
-| `talman apply` | re-render, then apply; `--adopt` also configures nodes in maintenance mode, `--bootstrap` builds a new cluster |
+| `talman apply` | re-render, then apply; `--onboard-new-nodes` also configures new nodes, `--bootstrap` builds a new cluster |
 | `talman kubeconfig` | fetch the kubeconfig into the output directory |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
 | `talman reboot` | a rolling reboot, one node at a time |
@@ -504,7 +504,7 @@ as a shell would report it: 130 for Ctrl-C, 143 for SIGTERM, 129 for SIGHUP. A
 second signal exits at once, killing any talosctl still running and still
 removing the decrypted secrets.
 
-### Adopting nodes
+### Onboarding new nodes
 
 A node that has never been configured — or that has just been `reset` — answers
 only the maintenance service, while nodes already in the cluster answer with
@@ -515,16 +515,16 @@ The maintenance service authenticates nothing. Whatever answers at a node's
 address gets its whole config, and a control plane's includes the cluster's CA
 keys — so a reused address, a spoofed host, or a real node whose secure API
 failed for a moment would be handed them. `apply` therefore sends a config
-that way only when asked to adopt:
+that way only when asked to onboard it:
 
 ```console
 $ talman apply
 == [1/2] talos-c01 (10.164.0.27)
      Applied configuration without a reboot
-error: talos-w01 (10.164.0.32) answers only the maintenance service, which authenticates nothing: it gets its config, CA keys included, only when asked
-  talman apply --adopt -n talos-w01
-$ talman apply --adopt -n talos-w01
-== [1/1] talos-w01 (10.164.0.32) · adopting
+error: talos-w01 (10.164.0.32) is a new node: it answers only the maintenance service, which authenticates nothing, so it gets its config, CA keys included, only when asked
+  talman apply --onboard-new-nodes -n talos-w01
+$ talman apply --onboard-new-nodes -n talos-w01
+== [1/1] talos-w01 (10.164.0.32) · onboarding
      Applied configuration without a reboot
 ```
 
@@ -551,13 +551,13 @@ A new cluster is built with one command:
 
 ```console
 $ talman apply --bootstrap
-== [1/6] talos-c01 (10.164.0.27) · adopting
+== [1/6] talos-c01 (10.164.0.27) · onboarding
      Applied configuration without a reboot
      waiting for 10.164.0.27 to come back, up to 10m0s
      ...
 == bootstrapping etcd on talos-c01 (10.164.0.27)
      etcd is running on talos-c01 after 38s
-== [2/6] talos-c02 (10.164.0.28) · adopting
+== [2/6] talos-c02 (10.164.0.28) · onboarding
 ...
 ```
 
@@ -576,15 +576,16 @@ the whole cluster, so it takes no `-n`, `-g` or wave flags.
 A plain `apply` on a cluster that is not bootstrapped stops and says to use
 `--bootstrap`, rather than configuring nodes that cannot finish joining.
 
-Adding a machine to a live cluster is `talman apply --adopt -n <new node>`,
-and re-adopting one after `reset` is the same command. `--only-new` does the
+Adding a machine to a live cluster is `talman apply --onboard-new-nodes -n
+<new node>`, and bringing one back after `reset` is the same command.
+`--only-new-nodes` does the
 whole lot at once: it restricts the run to the nodes currently in maintenance
-mode, and adopts them.
+mode, and onboards them.
 
 ```console
-$ talman apply --only-new
+$ talman apply --only-new-nodes
    talos-c01 (10.164.0.27) is running; not new, skipping
-== [1/1] talos-w01 (10.164.0.32) · adopting
+== [1/1] talos-w01 (10.164.0.32) · onboarding
 ```
 
 `talman status` is the view of the same question, and of every other question
@@ -611,7 +612,7 @@ not gating on health: nodes not in the cluster yet
 ```
 
 The check covers the cluster the config describes, so during a build-out it
-checks machines that have not joined yet — and an unadopted node answers with a
+checks machines that have not joined yet — and a node not onboarded yet answers with a
 self-signed maintenance certificate, which `talosctl` reports as `certificate
 signed by unknown authority`. That is a build-out step, not a broken cluster.
 Once every node has joined, the gate runs between nodes as it should, which is
@@ -991,7 +992,7 @@ for the first time is away for minutes, and silence is indistinguishable from
 a hang — and the health gate is bounded by the same `--timeout`, because
 `talosctl` otherwise takes twenty minutes to report that a gate will not pass.
 The health gate also stands down while any configured node is still outside
-the cluster — see below — which covers a node being adopted.
+the cluster — see below — which covers a node being onboarded.
 
 Both `apply`'s gate and `talman health` run the check from one control plane —
 the first in the config that answers the Talos API, or `--node` — and report on
@@ -1123,7 +1124,7 @@ needs one waits: containerd, the CRI, and any extension service behind them.
 `iscsi-tools` parks on `waiting for file /etc/iscsi/initiatorname.iscsi to
 exist` — the initiator name is derived from the node identity, which lives in
 STATE — and a console showing that looks like a boot that never finishes. It is
-not: the node is in maintenance mode, and `talman apply --adopt -n <node>` adopts it
+not: the node is in maintenance mode, and `talman apply --onboard-new-nodes -n <node>` onboards it
 and clears the wait.
 
 A reset still stops at the first failure, and names what it did not get to:
@@ -1282,7 +1283,7 @@ cannot be upgraded.
 KVM — which hosted runners do not reliably offer. It builds a cluster one patch
 release behind, has talman upgrade a worker and then the control plane, stages
 an apply and lands it with a rolling `reboot`, resets the worker back to
-maintenance mode, and adopts it into the cluster it just left. On a fresh Ubuntu 24.04 machine:
+maintenance mode, and onboards it into the cluster it just left. On a fresh Ubuntu 24.04 machine:
 
 ```console
 $ sudo ./hack/e2e-qemu.sh --install-deps   # qemu, the CNI plugins, talosctl
@@ -1320,7 +1321,8 @@ and a removed flag is refused as an unknown flag.
 | `endpoint` without a port | `https://…:6443` |
 | `upgrade --stage`, `--skip-etcd-check` | removed: Talos 1.14's upgrade API ignores both; `--extra-flags` reaches them on a legacy node |
 | `upgrade --wait=false` | removed: talosctl waits whenever it drains, which is by default |
-| `apply` adopting a node in maintenance mode by itself | `apply --adopt`, or `--only-new`: the maintenance service authenticates nothing |
+| `apply` configuring a node in maintenance mode by itself | `apply --onboard-new-nodes`, or `--only-new-nodes`: the maintenance service authenticates nothing |
+| `apply --only-new` | `apply --only-new-nodes` |
 | `talman bootstrap`, and `apply` on a cluster not bootstrapped | `talman apply --bootstrap` builds a new cluster in one run |
 
 ## Migrating from talhelper

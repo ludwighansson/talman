@@ -43,7 +43,7 @@ type rollOut struct {
 
 	// standDown, when set, is asked before each health gate, and a true
 	// answer skips it: apply's gate means nothing while nodes it has not
-	// adopted yet are still outside the cluster.
+	// onboarded yet are still outside the cluster.
 	standDown func() bool
 
 	// stages are the targets in the config's rollout waves; nil is one
@@ -57,7 +57,7 @@ type rollOut struct {
 
 	// hintDrop and hintAdd adjust the flags a resume hint repeats: after
 	// apply --bootstrap has built the cluster, carrying on is not a second
-	// bootstrap, and the nodes left still need adopting.
+	// bootstrap, and the nodes left still need onboarding.
 	hintDrop, hintAdd []string
 }
 

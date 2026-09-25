@@ -48,7 +48,7 @@ func targetsOf(addrs ...string) []*config.Node {
 	return out
 }
 
-// --only-new is the adoption filter: what is already in the cluster must not
+// --only-new-nodes is the onboarding filter: what is already in the cluster must not
 // be touched, and what talman cannot classify must not be guessed at.
 func TestNewNodes(t *testing.T) {
 	tal := fakeCluster(t, []string{"10.0.0.11"}, []string{"10.0.0.21", "10.0.0.22"})
@@ -82,7 +82,7 @@ func TestNewNodesRefusesToGuessAboutADeadNode(t *testing.T) {
 }
 
 // The health gate checks the cluster the config describes, so it only means
-// something once that cluster exists. A node that has not been adopted answers
+// something once that cluster exists. A node that has not been onboarded answers
 // with a self-signed maintenance certificate, which the check reports as
 // "certificate signed by unknown authority" -- a build-out step read as a
 // broken cluster.
@@ -191,7 +191,7 @@ func TestGateSummary(t *testing.T) {
 			name: "an ordinary run says nothing",
 		},
 		{
-			name:    "gate stood down throughout, nothing adopted",
+			name:    "gate stood down throughout, nothing onboarded",
 			ungated: 2,
 			want:    "not gating on health: nodes not in the cluster yet",
 		},

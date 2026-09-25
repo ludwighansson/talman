@@ -31,7 +31,7 @@ func bootstrapFlagsAllowed(cmd *cobra.Command, dryRun bool, mode string, onlyNew
 	case mode != "auto":
 		return fmt.Errorf("--bootstrap applies configs as they are, so it takes no --mode=%s", mode)
 	case onlyNew:
-		return errors.New("--bootstrap adopts every node already; --only-new has nothing to add")
+		return errors.New("--bootstrap onboards every node already; --only-new-nodes has nothing to add")
 	}
 
 	return nil
@@ -133,7 +133,7 @@ func bootstrapFirst(cmd *cobra.Command, tal *talosctl.Runner, tc string, first *
 
 	if err := waitForEtcd(tal, tc, first, timeout); err != nil {
 		return fmt.Errorf("%w\n  etcd was bootstrapped on %s: do not bootstrap again; once it runs, "+
-			"carry on with:\n    talman apply --adopt", err, first.Hostname)
+			"carry on with:\n    talman apply --onboard-new-nodes", err, first.Hostname)
 	}
 
 	return nil

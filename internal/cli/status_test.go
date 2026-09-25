@@ -147,7 +147,7 @@ func TestSummarise(t *testing.T) {
 			want:    "2 node(s): 2 running; 1 not on the configured version",
 		},
 		{
-			name: "a cluster mid-adoption",
+			name: "a cluster mid-onboarding",
 			reports: []nodeReport{
 				current,
 				{asked: true, Mode: talosctl.ModeMaintenance},
