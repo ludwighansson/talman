@@ -44,6 +44,22 @@ for a in "$@"; do
 	esac
 done
 
+# rotate-ca, as talosctl's, runs through exactly one node: none falls back to
+# the talosconfig's every node, and more than one is refused.
+case " $* " in
+*" rotate-ca "*)
+	nodes=
+	prev=
+	for a in "$@"; do
+		[ "$prev" = "--nodes" ] && nodes=$a
+		[ "$a" = "rotate-ca" ] && break
+		prev=$a
+	done
+	case "$nodes" in
+	""|*,*) echo 'command "rotate-ca" requires exactly one node' >&2; exit 1 ;;
+	esac ;;
+esac
+
 output=
 prev=
 for a in "$@"; do

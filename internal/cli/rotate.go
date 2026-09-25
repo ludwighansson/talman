@@ -132,8 +132,20 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 				output = filepath.Join(stage, "talosconfig")
 			}
 
-			args := []string{
-				"--talosconfig", tc,
+			tal := runner(cfg)
+
+			// talosctl rotate-ca talks to the cluster through exactly one
+			// node, and reaches the rest by the two lists below. Left to
+			// itself it takes the talosconfig's default nodes -- every node,
+			// as render writes it -- and refuses to start. So one control
+			// plane is picked the way the health check picks one: the first
+			// that answers, reached the way it answered.
+			from, err := healthNode(cfg, tal, tc)
+			if err != nil {
+				return err
+			}
+
+			args := append(tal.NodeArgs(tc, from.IPAddress),
 				"rotate-ca",
 				"--control-plane-nodes", strings.Join(cps, ","),
 				fmt.Sprintf("--talos=%t", talos),
@@ -144,13 +156,11 @@ Afterwards, commit the new bundle, run "talman render", and fetch a new
 				// only take them out again.
 				"--with-docs=false",
 				"--with-examples=false",
-			}
+			)
 
 			if len(workers) > 0 {
 				args = append(args, "--worker-nodes", strings.Join(workers, ","))
 			}
-
-			tal := runner(cfg)
 
 			if err := tal.Stream(append(args, extraFlags...)...); err != nil {
 				if dryRun {
