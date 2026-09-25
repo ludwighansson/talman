@@ -14,6 +14,7 @@ package interrupt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,6 +56,10 @@ var (
 	runMu   sync.Mutex
 	running = map[*os.Process]bool{}
 	killing bool
+	// starting counts processes between the decision to start and being on
+	// running: a forced exit waits for it to drain, or a child forked in
+	// that gap would outlive talman.
+	starting int
 
 	// interruptedBy is the first signal, for ExitCode.
 	interruptedBy os.Signal
@@ -185,13 +190,30 @@ func Command(name string, args ...string) *exec.Cmd {
 // leave a talosctl that ignored SIGTERM carrying on against the cluster after
 // talman is gone.
 func Run(cmd *exec.Cmd) error {
-	if err := cmd.Start(); err != nil {
+	runMu.Lock()
+
+	if killing {
+		runMu.Unlock()
+
+		return errors.New("not started: talman is exiting")
+	}
+
+	starting++
+	runMu.Unlock()
+
+	// Outside the lock, so starts do not queue behind one another.
+	err := cmd.Start()
+
+	runMu.Lock()
+	starting--
+
+	if err != nil {
+		runMu.Unlock()
+
 		return err
 	}
 
 	proc := cmd.Process
-
-	runMu.Lock()
 
 	// Started while a forced exit was already killing the others: it would
 	// have been missed, so it goes the same way.
@@ -211,16 +233,38 @@ func Run(cmd *exec.Cmd) error {
 	return cmd.Wait()
 }
 
+// killRunning kills every child, and returns once no start is still in
+// flight -- each of those kills its own on the way out -- or after
+// startDrain, whichever is first.
 func killRunning() {
 	runMu.Lock()
-	defer runMu.Unlock()
-
 	killing = true
 
 	for proc := range running {
 		_ = proc.Kill()
 	}
+
+	runMu.Unlock()
+
+	deadline := time.Now().Add(startDrain)
+
+	for time.Now().Before(deadline) {
+		runMu.Lock()
+		left := starting
+		runMu.Unlock()
+
+		if left == 0 {
+			return
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
 }
+
+// startDrain bounds how long a forced exit waits for starts in flight: a
+// fork and an exec take milliseconds, and a second Ctrl-C is a request to
+// be gone now.
+const startDrain = 2 * time.Second
 
 // Sleep waits for d, or until the run is interrupted, whichever is first.
 func Sleep(d time.Duration) error {
