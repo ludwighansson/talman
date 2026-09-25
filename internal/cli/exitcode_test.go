@@ -826,3 +826,22 @@ func TestWaveFlagsNeedARollout(t *testing.T) {
 		t.Errorf("exit %d, want 1", got)
 	}
 }
+
+// TestTalosctlGroup: -g on ctl names the nodes talosctl reaches. Without it
+// honoured, talosctl falls back to the talosconfig's default -- every node.
+func TestTalosctlGroup(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes)
+
+	if got := run([]string{"ctl", "-g", "blue", "get", "members"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "--nodes 10.0.0.2 get members") {
+		t.Errorf("ctl -g blue did not reach blue's node alone:\n%s", calls)
+	}
+
+	if got := run([]string{"ctl", "-g", "purple", "get", "members"}); got != 1 {
+		t.Errorf("an unknown group: exit %d, want 1", got)
+	}
+}
