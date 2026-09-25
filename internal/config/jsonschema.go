@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/ludwighansson/talman/internal/factory"
@@ -111,7 +112,20 @@ func (g *schemaGen) schema(t reflect.Type) any {
 	case reflect.TypeFor[Role]():
 		return map[string]any{"enum": []string{string(RoleControlPlane), string(RoleWorker)}}
 	case reflect.TypeFor[factory.Bootloader]():
-		return map[string]any{"enum": []string{"none", "dual-boot", "sd-boot", "grub"}}
+		// Any case, as Load reads it: a pattern, since an enum matches
+		// exactly and JSON Schema's regular expressions have no flag for it.
+		names := []string{"none", "dual-boot", "sd-boot", "grub"}
+
+		alts := make([]string, 0, len(names))
+		for _, n := range names {
+			alts = append(alts, anyCase(n))
+		}
+
+		return map[string]any{
+			"type":        "string",
+			"pattern":     "^(" + strings.Join(alts, "|") + ")$",
+			"description": "none, dual-boot, sd-boot or grub, in any case.",
+		}
 	case reflect.TypeFor[Wave]():
 		groups := map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1}
 
@@ -239,4 +253,23 @@ func withDescription(s any, d string) any {
 	out["description"] = d
 
 	return out
+}
+
+// anyCase spells s as a regular expression matching it in any case: "sd"
+// becomes "[sS][dD]".
+func anyCase(s string) string {
+	var b strings.Builder
+
+	for _, r := range s {
+		lo, up := strings.ToLower(string(r)), strings.ToUpper(string(r))
+		if lo == up {
+			b.WriteString(regexp.QuoteMeta(string(r)))
+
+			continue
+		}
+
+		b.WriteString("[" + lo + up + "]")
+	}
+
+	return b.String()
 }
