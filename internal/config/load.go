@@ -86,7 +86,7 @@ func LoadNoValidate(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s is empty", path)
 		}
 
-		return nil, fmt.Errorf("parsing %s: %w%s", path, err, renameHint(err))
+		return nil, fmt.Errorf("parsing %s: %w%s", path, err, renameHint(data))
 	}
 
 	// A second document would be ignored, and whatever it says with it: two
@@ -175,26 +175,48 @@ func FindConfig(explicit string) string {
 	return DefaultFileName
 }
 
-// renamed are keys a prerelease config may still spell the old way, by the
-// strict decoder's words for them.
-var renamed = []struct{ field, hint string }{
-	{"field talosMode not found in type config.Config",
-		"talosMode was renamed validationMode in 1.0, and can usually be dropped: it follows imageFactory.platform"},
-	{"field secureboot not found in type factory.Config",
-		"imageFactory.secureboot was renamed secureBoot in 1.0"},
-}
-
-// renameHint turns an unknown-key error for a renamed key into the fix.
-func renameHint(err error) string {
-	var hints []string
-
-	for _, r := range renamed {
-		if strings.Contains(err.Error(), r.field) {
-			hints = append(hints, "\n  "+r.hint)
-		}
+// renameHint names the keys 1.0 renamed that a config still spells the old
+// way, for the error a strict decode gives.
+//
+// Read from the file, loosely, rather than out of the decoder's error: that
+// wording is the YAML library's, and a new release of it rewording the error
+// would drop the hint without a word.
+func renameHint(data []byte) string {
+	var raw struct {
+		TalosMode    any            `yaml:"talosMode"`
+		ImageFactory map[string]any `yaml:"imageFactory"`
+		Nodes        []struct {
+			ImageFactory map[string]any `yaml:"imageFactory"`
+		} `yaml:"nodes"`
 	}
 
-	return strings.Join(hints, "")
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return ""
+	}
+
+	var hints []string
+
+	if raw.TalosMode != nil {
+		hints = append(hints, "talosMode was renamed validationMode in 1.0, and can usually be dropped: "+
+			"it follows imageFactory.platform")
+	}
+
+	secureboot := func(m map[string]any) bool { _, ok := m["secureboot"]; return ok }
+
+	old := secureboot(raw.ImageFactory)
+	for _, n := range raw.Nodes {
+		old = old || secureboot(n.ImageFactory)
+	}
+
+	if old {
+		hints = append(hints, "imageFactory.secureboot was renamed secureBoot in 1.0")
+	}
+
+	if len(hints) == 0 {
+		return ""
+	}
+
+	return "\n  " + strings.Join(hints, "\n  ")
 }
 
 // moreDocuments reports whether the decoder holds another document with
