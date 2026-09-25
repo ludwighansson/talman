@@ -414,7 +414,7 @@ main() {
 
 	step "apply adopts it back into the cluster it just left"
 	expect_exit 0 "apply -n worker" \
-		"$talman" apply -n "$cluster-worker-1" --timeout=10m
+		"$talman" apply --adopt -n "$cluster-worker-1" --timeout=10m
 
 	await 600 "the worker is running again" settled "$cluster-worker-1"
 	expect_exit 0 "health after the adoption" "$talman" health
