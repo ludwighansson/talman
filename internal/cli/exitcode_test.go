@@ -1076,3 +1076,29 @@ func TestSnapshotNeverReplacesOneThatAppeared(t *testing.T) {
 		t.Errorf("the snapshot that appeared was replaced with %q", b)
 	}
 }
+
+// An empty -n or -g -- `-n "$NODE"` with NODE unset -- is a mistake, not a
+// request for every node: reset -n "" --yes wiped a whole cluster.
+func TestEmptySelectorIsRefused(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes)
+
+	for _, args := range [][]string{
+		{"reset", "-n", "", "--yes"},
+		{"reset", "--node=", "--yes"},
+		{"upgrade", "-g", "", "--force"},
+		{"reboot", "-n", " "},
+		{"bootstrap", "-n", ""},
+		{"status", "--offline", "-g="},
+	} {
+		if got := run(args); got != 1 {
+			t.Errorf("%q: exit %d, want 1", args, got)
+		}
+	}
+
+	calls, _ := os.ReadFile(log)
+	for _, verb := range []string{" reset ", " upgrade --nodes", " reboot --nodes", " bootstrap"} {
+		if strings.Contains(string(calls), verb) {
+			t.Errorf("%q reached talosctl:\n%s", verb, calls)
+		}
+	}
+}
