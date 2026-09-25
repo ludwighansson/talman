@@ -450,5 +450,12 @@ func selectNodes(cfg *config.Config, names []string) ([]*config.Node, error) {
 		}
 	}
 
+	// A selection of nothing is refused rather than passed on: a command
+	// handed no nodes may fall back to all of them, as talosctl does with
+	// no --nodes, and a role no node has is still a valid name.
+	if len(out) == 0 {
+		return nil, fmt.Errorf("-g %s: no node is in it", strings.Join(opts.groups, ", -g "))
+	}
+
 	return out, nil
 }

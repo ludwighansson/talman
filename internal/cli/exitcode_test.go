@@ -1018,3 +1018,24 @@ func TestSnapshotOfANamedNodeBehindEndpoints(t *testing.T) {
 		t.Errorf("exit %d\n%s", got, calls)
 	}
 }
+
+// A -g that matches no node -- a role nobody has -- selects nothing, and must
+// say so: passed through to ctl as "no --nodes" it would reach every node.
+func TestGroupSelectingNothingIsAnError(t *testing.T) {
+	_, log := exitFixture(t) // a control plane, and no workers
+
+	for _, args := range [][]string{
+		{"ctl", "-g", "worker", "reboot"},
+		{"reboot", "-g", "worker"},
+		{"status", "--offline", "-g", "worker"},
+	} {
+		if got := run(args); got != 1 {
+			t.Errorf("%v: exit %d, want 1", args, got)
+		}
+	}
+
+	calls, _ := os.ReadFile(log)
+	if strings.Contains(string(calls), "reboot") {
+		t.Errorf("a reboot reached talosctl:\n%s", calls)
+	}
+}
