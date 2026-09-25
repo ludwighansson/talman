@@ -1400,9 +1400,70 @@ func TestApplyOnAnUnbootstrappedClusterPointsAtBootstrap(t *testing.T) {
 func TestApplyBootstrapTakesNoSelection(t *testing.T) {
 	bootstrapFixture(t)
 
-	for _, extra := range [][]string{{"-n", "w1"}, {"-g", "worker"}, {"--dry-run"}, {"--mode", "staged"}} {
+	for _, extra := range [][]string{{"-n", "w1"}, {"-g", "worker"}, {"--mode", "staged"}, {"--wait=false"}, {"-i"}} {
 		if got := run(append([]string{"apply", "--bootstrap", "--no-render"}, extra...)); got != 1 {
 			t.Errorf("--bootstrap %v: exit %d, want 1", extra, got)
 		}
+	}
+}
+
+// --bootstrap --dry-run is the plan: the order the build would take and which
+// nodes are new, with nothing sent -- not even a dry run, which would ship a
+// new node its config over the unauthenticated maintenance service.
+func TestApplyBootstrapDryRunIsAPlan(t *testing.T) {
+	_, log := bootstrapFixture(t)
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"apply", "--bootstrap", "--dry-run", "--no-render"}) })
+
+	if got != 0 {
+		t.Fatalf("exit %d\n%s", got, stderr)
+	}
+
+	for _, want := range []string{"would configure c1 (new), bootstrap etcd on it", "w1 (new)", "nothing was sent"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the plan does not say %q:\n%s", want, stderr)
+		}
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "apply-config") ||
+		strings.Contains(string(calls), " bootstrap") {
+		t.Errorf("a dry run sent something:\n%s", calls)
+	}
+}
+
+// Control planes configured but running no etcd are either a cluster never
+// bootstrapped or one whose etcd is broken, and talman cannot tell which.
+// Plain apply warns and goes on, so a broken cluster can still be fixed;
+// --bootstrap asks first, since bootstrapping a broken one stops its etcd.
+func TestConfiguredWithoutEtcd(t *testing.T) {
+	_, log := exitFixture(t) // c1 configured
+
+	t.Setenv("STUB_ETCD", "false")
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false"}) })
+
+	if got != 0 || !strings.Contains(stderr, "warning: no control plane runs etcd") {
+		t.Errorf("plain apply: exit %d, want 0 with a warning:\n%s", got, stderr)
+	}
+
+	_ = os.WriteFile(log, nil, 0o644)
+
+	// No answer to the question -- stdin is empty -- is no.
+	if got := run([]string{"apply", "--bootstrap", "--no-render", "--redact-secrets=false"}); got != 1 {
+		t.Errorf("--bootstrap without confirmation: exit %d, want 1", got)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), " bootstrap") {
+		t.Errorf("bootstrapped without asking:\n%s", calls)
+	}
+
+	if got := run([]string{"apply", "--bootstrap", "-y", "--no-render", "--redact-secrets=false",
+		"--stabilize=0s", "--timeout=20s"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Errorf("--bootstrap -y: exit %d\n%s", got, calls)
 	}
 }

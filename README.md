@@ -566,13 +566,20 @@ waiting for it just times out. From the second node on it is an ordinary
 apply, with its waits, its health gate, `--parallel` and the config's waves.
 
 Before it touches anything, it checks there is nothing to bootstrap yet:
-every control plane has to answer, in maintenance mode or configured and
-waiting for etcd, and none may run etcd — bootstrapping twice would split the
-cluster. So it also finishes a cluster half built by an earlier run. It builds
-the whole cluster, so it takes no `-n`, `-g` or wave flags.
+every control plane has to answer and none may run etcd, since bootstrapping
+twice splits a cluster. Control planes in maintenance mode are certainly new.
+Ones that are configured but run no etcd are either a cluster an earlier run
+half built or one whose etcd is broken — talman cannot tell which, and a
+bootstrap sent to a broken one stops its etcd — so it asks for the cluster
+name first (`-y` skips the question). It builds the whole cluster, so it takes
+no `-n`, `-g` or wave flags, and no `--wait=false`. `--bootstrap --dry-run`
+prints the plan — which node is bootstrapped, the order the rest follow in,
+which nodes are new — and sends nothing.
 
-A plain `apply` on a cluster that is not bootstrapped stops and says to use
-`--bootstrap`, rather than configuring nodes that cannot finish joining.
+A plain `apply` on a cluster whose control planes are all new stops and says
+to use `--bootstrap`. One whose control planes are configured but run no etcd
+gets a warning and goes ahead, since that is also what a broken cluster looks
+like, and refusing would stand in the way of the apply that fixes it.
 
 Adding a machine to a live cluster is `talman apply --onboard-new-nodes -n
 <new node>`, and bringing one back after `reset` is the same command.
