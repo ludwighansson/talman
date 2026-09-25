@@ -149,8 +149,32 @@ func TestStartedDuringForcedExitIsKilled(t *testing.T) {
 		t.Skip("needs a POSIX sleep")
 	}
 
-	killRunning()
+	// A start already in flight when the kill begins: the forced exit waits
+	// for it, and it kills its own process on landing.
+	runMu.Lock()
+	starting++
+	runMu.Unlock()
 
+	drained := make(chan struct{})
+
+	go func() {
+		killRunning()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		t.Fatal("killRunning returned with a start still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	runMu.Lock()
+	starting--
+	runMu.Unlock()
+
+	<-drained
+
+	// And one asked for after the kill began is not started at all.
 	done := make(chan error, 1)
 
 	go func() { done <- Run(Command("sleep", "30")) }()

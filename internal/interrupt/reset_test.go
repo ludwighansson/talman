@@ -20,6 +20,7 @@ func fresh(t *testing.T) {
 
 		runMu.Lock()
 		killing = false
+		starting = 0
 		runMu.Unlock()
 	}
 
