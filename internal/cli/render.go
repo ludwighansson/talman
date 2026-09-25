@@ -38,7 +38,7 @@ output directory or the repository.`,
 				return err
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
 			}
@@ -63,7 +63,7 @@ output directory or the repository.`,
 				}
 
 				if !noValidate {
-					if err := r.Validate(res, cfg.TalosMode); err != nil {
+					if err := r.Validate(res, cfg.ValidationModeFor(res.Node)); err != nil {
 						return nil, err
 					}
 				}

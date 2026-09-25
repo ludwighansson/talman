@@ -62,15 +62,14 @@ func (r *Role) UnmarshalYAML(value *yaml.Node) error {
 //
 // It exists so a later, incompatible schema can be told apart from this one
 // rather than misread: without it, the choice when the shape has to change is
-// between breaking every config silently and never changing it. A config that
-// does not name a version is read as this one, with a note -- there are
-// configs in the world written before the field existed.
+// between breaking every config silently and never changing it. It is
+// required, so that no config is left for a later talman to guess about.
 const APIVersion = "talman.dev/v1"
 
 // Config is the whole of talman.yaml.
 type Config struct {
-	// APIVersion names the schema. Empty means this one.
-	APIVersion string `yaml:"apiVersion,omitempty"`
+	// APIVersion names the schema. Required.
+	APIVersion string `yaml:"apiVersion"`
 
 	ClusterName       string `yaml:"clusterName"`
 	Endpoint          string `yaml:"endpoint"`
@@ -84,12 +83,18 @@ type Config struct {
 	OutputDir string `yaml:"outputDir,omitempty"`
 	// SecretFile is the (usually SOPS-encrypted) Talos secrets bundle.
 	SecretFile string `yaml:"secretFile,omitempty"`
-	// TalosMode is the validation mode passed to `talosctl validate`.
-	TalosMode string `yaml:"talosMode,omitempty"`
+	// ValidationMode is the --mode `talosctl validate` checks rendered
+	// configs against. Unset, it follows the node's image platform: metal for
+	// metal, cloud for everything else. Only a container cluster -- the
+	// docker provisioner's -- has to say so.
+	ValidationMode string `yaml:"validationMode,omitempty"`
 
 	// Values is cluster-wide free-form data, exposed to every patch template
 	// as .Values. Node.Values is the per-node counterpart.
 	Values map[string]any `yaml:"values,omitempty"`
+	// ValuesFiles are YAML files merged into Values, in order and beneath the
+	// inline map, so values several clusters share can live in one place.
+	ValuesFiles []string `yaml:"valuesFiles,omitempty"`
 
 	ImageFactory factory.Config `yaml:"imageFactory,omitempty"`
 	Schematic    *SchematicRef  `yaml:"schematic,omitempty"`
@@ -100,6 +105,10 @@ type Config struct {
 	Patches map[string][]string `yaml:"patches,omitempty"`
 
 	Nodes []Node `yaml:"nodes"`
+
+	// Rollout orders the nodes a roll-out reaches -- upgrade, reboot, a
+	// real apply -- in waves of groups. Without it, config order.
+	Rollout *Rollout `yaml:"rollout,omitempty"`
 
 	// Dir is the directory holding the config file; every relative patch path
 	// resolves against it. Not settable from YAML.
@@ -117,14 +126,19 @@ type Node struct {
 	Groups    []string `yaml:"groups,omitempty"`
 	// Values is per-node free-form data, exposed to that node's patch
 	// templates as .Node.Values.
-	Values  map[string]any `yaml:"values,omitempty"`
-	Patches []string       `yaml:"patches,omitempty"`
+	Values map[string]any `yaml:"values,omitempty"`
+	// ValuesFiles are merged into Values the way the cluster's are.
+	ValuesFiles []string `yaml:"valuesFiles,omitempty"`
+	Patches     []string `yaml:"patches,omitempty"`
 
 	// TalosVersion overrides the cluster version for this node, for staged
 	// upgrades across a mixed-version cluster.
 	TalosVersion string        `yaml:"talosVersion,omitempty"`
 	Schematic    *SchematicRef `yaml:"schematic,omitempty"`
 	SchematicID  string        `yaml:"schematicID,omitempty"`
+	// ImageFactory overrides the cluster's imageFactory field by field, for a
+	// cluster whose machines do not all boot the same platform's image.
+	ImageFactory *factory.Config `yaml:"imageFactory,omitempty"`
 }
 
 // SchematicRef is either an inline schematic or a path to a schematic file.
@@ -190,6 +204,26 @@ func (n *Node) EffectiveTalosVersion(c *Config) string {
 	return c.TalosVersion
 }
 
+// ImageFactoryFor is the cluster's imageFactory with the node's overrides
+// applied.
+func (c *Config) ImageFactoryFor(n *Node) factory.Config {
+	return c.ImageFactory.Override(n.ImageFactory).WithDefaults()
+}
+
+// ValidationModeFor is the `talosctl validate --mode` a node's config is
+// checked against.
+func (c *Config) ValidationModeFor(n *Node) string {
+	if c.ValidationMode != "" {
+		return c.ValidationMode
+	}
+
+	if c.ImageFactoryFor(n).Platform == "metal" {
+		return "metal"
+	}
+
+	return "cloud"
+}
+
 // ControlPlanes returns the control plane nodes in declaration order.
 func (c *Config) ControlPlanes() []*Node {
 	var out []*Node
@@ -218,6 +252,12 @@ func (c *Config) Node(name string) (*Node, bool) {
 	}
 
 	return nil, false
+}
+
+// IsGroup reports whether name selects nodes: a role, or a group some node
+// declares. -g and rollout.waves both take one.
+func (c *Config) IsGroup(name string) bool {
+	return name == GroupControlPlane || name == GroupWorker || c.DeclaredGroups()[name]
 }
 
 // DeclaredGroups is the set of every group named by any node.

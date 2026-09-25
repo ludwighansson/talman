@@ -213,3 +213,66 @@ func TestAddedValuesAreHidden(t *testing.T) {
 		t.Errorf("a short word was treated as a secret:\n%s", got)
 	}
 }
+
+// Every document of an encrypted patch is paired, not only the first: sops
+// writes its metadata into each, and a multi-document patch keeps a second
+// document's secret in the second.
+func TestEveryEncryptedDocumentIsRead(t *testing.T) {
+	ciphertext := `apiVersion: v1alpha1
+kind: KubeNodeConfig
+name: ENC[AES256_GCM,data:a,iv:x,tag:y,type:str]
+sops:
+    version: 3.13.3
+---
+apiVersion: v1alpha1
+kind: RegistryAuthConfig
+password: ENC[AES256_GCM,data:b,iv:x,tag:y,type:str]
+port: ENC[AES256_GCM,data:c,iv:x,tag:y,type:int]
+sops:
+    version: 3.13.3
+`
+	plaintext := `apiVersion: v1alpha1
+kind: KubeNodeConfig
+name: firstsecret
+---
+apiVersion: v1alpha1
+kind: RegistryAuthConfig
+password: secondsecret
+port: 5443217
+`
+
+	s := NewSet()
+
+	if err := s.AddEncrypted([]byte(ciphertext), []byte(plaintext)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := s.Redactor().String(plaintext)
+
+	for _, secret := range []string{"firstsecret", "secondsecret", "5443217"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("%q survived:\n%s", secret, got)
+		}
+	}
+}
+
+// A value from the environment is a secret at six characters, as a declared
+// one is, and so are its base64 forms -- the usual way one is written into an
+// inline manifest's Secret.
+func TestEnvironmentValuesAndTheirEncodings(t *testing.T) {
+	s := NewSet()
+	s.Add("shortpass123", "a-token-of-some-length")
+
+	r := s.Redactor()
+
+	for _, v := range []string{
+		"shortpass123",
+		base64.StdEncoding.EncodeToString([]byte("a-token-of-some-length")),
+		base64.URLEncoding.EncodeToString([]byte("a-token-of-some-length")),
+		base64.RawStdEncoding.EncodeToString([]byte("shortpass123")),
+	} {
+		if got := r.String("value: " + v); strings.Contains(got, v) {
+			t.Errorf("%q survived: %s", v, got)
+		}
+	}
+}

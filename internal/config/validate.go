@@ -5,13 +5,39 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
 )
 
-// validTalosModes are the modes `talosctl validate --mode` accepts.
-var validTalosModes = []string{"metal", "cloud", "container"}
+// validValidationModes are the modes `talosctl validate --mode` accepts.
+var validValidationModes = []string{"metal", "cloud", "container"}
+
+// clusterNamePattern is what a cluster name may be: something that is safe
+// inside a file name.
+var clusterNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
+
+// hostnameLabel is one RFC 1123 label, lower case: what Kubernetes accepts as
+// a node name, and safe as the file name the rendered config is written to.
+var hostnameLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// validHostname reports whether h is an RFC 1123 host name: dot-separated
+// labels, 253 characters at most.
+func validHostname(h string) bool {
+	if len(h) > 253 {
+		return false
+	}
+
+	for label := range strings.SplitSeq(h, ".") {
+		if !hostnameLabel.MatchString(label) {
+			return false
+		}
+	}
+
+	return true
+}
 
 // Validate checks the whole config and reports every problem at once.
 //
@@ -27,11 +53,18 @@ func (c *Config) Validate() error {
 
 	c.normalize()
 
-	if c.ClusterName == "" {
+	switch {
+	case c.ClusterName == "":
 		add("clusterName is required")
+	case !clusterNamePattern.MatchString(c.ClusterName) || strings.Contains(c.ClusterName, ".."):
+		// It names files -- an etcd snapshot, a kubeconfig context -- so a
+		// slash or a ".." would put one outside the output directory.
+		add("clusterName %q may hold only letters, digits, '.', '_' and '-', starting with a "+
+			"letter or digit", c.ClusterName)
 	}
 
 	c.validateEndpoint(add)
+	c.validateOutputDir(add)
 
 	if c.TalosVersion == "" {
 		add("talosVersion is required: pinning it is what makes renders reproducible " +
@@ -42,7 +75,11 @@ func (c *Config) Validate() error {
 	// read hopefully: the fields it does recognise may mean something else
 	// there, and guessing at a machine configuration is how a cluster gets a
 	// setting nobody wrote.
-	if c.APIVersion != "" && c.APIVersion != APIVersion {
+	switch c.APIVersion {
+	case APIVersion:
+	case "":
+		add("apiVersion is required: add `apiVersion: %s` as the first line", APIVersion)
+	default:
 		add("apiVersion %q is not one this talman understands: it speaks %q", c.APIVersion, APIVersion)
 	}
 
@@ -50,8 +87,9 @@ func (c *Config) Validate() error {
 		add("kubernetesVersion is required")
 	}
 
-	if !slices.Contains(validTalosModes, c.TalosMode) {
-		add("talosMode %q is invalid: must be one of %s", c.TalosMode, strings.Join(validTalosModes, ", "))
+	if c.ValidationMode != "" && !slices.Contains(validValidationModes, c.ValidationMode) {
+		add("validationMode %q is invalid: must be one of %s",
+			c.ValidationMode, strings.Join(validValidationModes, ", "))
 	}
 
 	if c.Schematic != nil && c.SchematicID != "" {
@@ -61,6 +99,8 @@ func (c *Config) Validate() error {
 	c.validateNodes(add)
 	c.validatePatchKeys(add)
 	c.validatePatchFiles(add)
+	c.validateValuesFiles(add)
+	c.validateRollout(add)
 
 	return errors.Join(errs...)
 }
@@ -92,8 +132,8 @@ func (c *Config) validateEndpoint(add func(string, ...any)) {
 	// URL cannot contain colon", which tells the operator nothing. Both the
 	// parse failure and a scheme-less parse mean the same fix.
 	u, err := url.Parse(c.Endpoint)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		add("endpoint %q must be a full URL including scheme and port, e.g. https://10.0.0.1:6443", c.Endpoint)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.Port() == "" {
+		add("endpoint %q must be a full https URL including the port, e.g. https://10.0.0.1:6443", c.Endpoint)
 	}
 }
 
@@ -119,6 +159,14 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 		case "":
 			add("%s: hostname is required", where)
 		default:
+			// The hostname names the file the node's config is written to,
+			// so anything with a slash or a ".." in it would put a file full
+			// of secrets outside the gitignored output directory.
+			if !validHostname(n.Hostname) {
+				add("%s: hostname %q is not a valid RFC 1123 host name: lower-case letters, "+
+					"digits and '-', in dot-separated labels of at most 63", where, n.Hostname)
+			}
+
 			if prev, dup := seenHost[n.Hostname]; dup {
 				add("%s: duplicate hostname %q (also nodes[%d])", where, n.Hostname, prev)
 			}
@@ -139,7 +187,19 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 			add("%s: role is required: %s or %s", where, RoleControlPlane, RoleWorker)
 		}
 
+		seenGroup := map[string]bool{}
+
 		for _, g := range n.Groups {
+			if seenGroup[g] {
+				add("%s: group %q is listed twice; its patches would be applied twice", where, g)
+			}
+
+			seenGroup[g] = true
+
+			if g == RestWave {
+				add("%s: group %q is reserved: it names the nodes no rollout wave names", where, g)
+			}
+
 			if isReserved(g) {
 				add("%s: group %q is reserved: %s, %s and %s are assigned automatically from role",
 					where, g, GroupAll, GroupControlPlane, GroupWorker)
@@ -194,19 +254,25 @@ func (c *Config) validatePatchKeys(add func(string, ...any)) {
 // directory", which points at the wrong thing entirely.
 func (c *Config) validatePatchFiles(add func(string, ...any)) {
 	for _, ref := range c.AllPatchPaths() {
-		info, err := os.Stat(ref.Path)
+		checkFile(add, "patches."+ref.Group, ref.Rel, ref.Path,
+			"patches must be individual files so the apply order is explicit")
+	}
+}
 
-		switch {
-		case os.IsNotExist(err):
-			add("patches.%s: %q does not exist (resolved to %s)", ref.Group, ref.Rel, ref.Path)
-		case err != nil:
-			add("patches.%s: %q is not readable: %v", ref.Group, ref.Rel, err)
-		case info.IsDir():
-			add("patches.%s: %q is a directory; patches must be individual files "+
-				"so the apply order is explicit", ref.Group, ref.Rel)
-		case !info.Mode().IsRegular():
-			add("patches.%s: %q is not a regular file", ref.Group, ref.Rel)
-		}
+// checkFile reports a path that is missing, unreadable, a directory -- with
+// why that is wrong for this key -- or anything else that is not a file.
+func checkFile(add func(string, ...any), where, rel, path, notDir string) {
+	info, err := os.Stat(path)
+
+	switch {
+	case os.IsNotExist(err):
+		add("%s: %q does not exist (resolved to %s)", where, rel, path)
+	case err != nil:
+		add("%s: %q is not readable: %v", where, rel, err)
+	case info.IsDir():
+		add("%s: %q is a directory; %s", where, rel, notDir)
+	case !info.Mode().IsRegular():
+		add("%s: %q is not a regular file", where, rel)
 	}
 }
 
@@ -216,5 +282,45 @@ func isReserved(key string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// validateValuesFiles checks every valuesFiles entry names a readable file, as
+// validatePatchFiles does for patches.
+func (c *Config) validateValuesFiles(add func(string, ...any)) {
+	const notDir = "valuesFiles lists files, merged in the order given"
+
+	for _, rel := range c.ValuesFiles {
+		checkFile(add, "valuesFiles", rel, c.resolvePath(rel), notDir)
+	}
+
+	for i := range c.Nodes {
+		for _, rel := range c.Nodes[i].ValuesFiles {
+			checkFile(add, "node "+c.Nodes[i].Hostname+": valuesFiles", rel, c.resolvePath(rel), notDir)
+		}
+	}
+}
+
+// validateOutputDir refuses an output directory that holds the config.
+//
+// talman ignores the output directory whole in git, since it holds the
+// rendered secrets, so one that is the cluster directory or a parent of it
+// would hide talman.yaml and the encrypted bundle from git along with them.
+func (c *Config) validateOutputDir(add func(string, ...any)) {
+	if c.OutputDir == "" || c.Dir == "" {
+		return
+	}
+
+	out := c.OutputPath()
+
+	rel, err := filepath.Rel(out, c.Dir)
+	if err != nil {
+		return
+	}
+
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		add("outputDir %q holds the config itself: talman ignores it whole in git, which would hide "+
+			"talman.yaml and the bundle too; use a directory of its own, such as the default %q",
+			c.OutputDir, DefaultOutputDir)
 	}
 }

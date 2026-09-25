@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,7 +27,9 @@ that every patch path resolves to a file, then renders each node's patch chain
 as a template to prove it compiles and produces strategic merge patches.
 
 It reports every problem it finds rather than stopping at the first, and needs
-neither the secrets bundle nor a reachable cluster.`,
+neither the secrets bundle nor a reachable cluster. An encrypted patch is
+template-checked when sops can decrypt it, and named as unchecked when it
+cannot, so validate runs without decryption keys too.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
@@ -41,6 +47,11 @@ neither the secrets bundle nor a reachable cluster.`,
 			// schematic file once for every node.
 			r := &render.Renderer{Cfg: cfg, Submit: false}
 
+			// Encrypted patches sops could not open, by path, reported once
+			// each rather than once per node that uses them.
+			undecryptable := map[string]error{}
+			patches := patchReader{undecryptable: undecryptable}
+
 			for i := range cfg.Nodes {
 				n := &cfg.Nodes[i]
 
@@ -52,10 +63,30 @@ neither the secrets bundle nor a reachable cluster.`,
 				}
 
 				for _, ref := range cfg.PatchChain(n) {
-					if err := checkPatch(ref, ctx); err != nil {
+					raw, err := patches.read(ref)
+					if err != nil {
+						problems = append(problems, fmt.Errorf("node %s: %w", n.Hostname, err))
+
+						continue
+					}
+
+					if raw == nil {
+						continue
+					}
+
+					if err := checkPatch(ref, raw, ctx); err != nil {
 						problems = append(problems, fmt.Errorf("node %s: %w", n.Hostname, err))
 					}
 				}
+			}
+
+			for _, rel := range slices.Sorted(maps.Keys(undecryptable)) {
+				// The first line: sops follows it with every key it tried,
+				// which is a lot to repeat for a note.
+				why, _, _ := strings.Cut(undecryptable[rel].Error(), "\n")
+
+				fmt.Fprintf(os.Stderr, "note: %s is encrypted and cannot be decrypted here, "+
+					"so its template was not checked (%s)\n", rel, why)
 			}
 
 			if len(problems) > 0 {
@@ -76,12 +107,51 @@ neither the secrets bundle nor a reachable cluster.`,
 	return cmd
 }
 
-func checkPatch(ref config.PatchRef, ctx template.Context) error {
-	raw, err := sopsx.ReadFile(ref.Path)
-	if err != nil {
-		return fmt.Errorf("patches.%s: %w", ref.Group, err)
+// patchReader reads each patch once however many nodes use it: a patch in
+// `all` on a fifty-node cluster is one file, and decrypting it fifty times
+// would be fifty KMS calls, or fifty touches of a hardware key.
+type patchReader struct {
+	read1 map[string]patchRead
+	// undecryptable is every encrypted patch this machine has no means to
+	// decrypt, by the path the config wrote -- for the note at the end.
+	undecryptable map[string]error
+}
+
+type patchRead struct {
+	data []byte
+	err  error
+}
+
+// read reads a patch, decrypting it if it is encrypted. An encrypted patch
+// this machine has no means to decrypt -- no key for it, or no sops at all --
+// is recorded in undecryptable and returned as nil: validate promises to need
+// no secrets, so lacking them is a limit on what it checks, not a problem in
+// the config. Any other failure is one: a file the key opens but sops cannot,
+// from a bad merge or a hand edit, is broken for everyone.
+func (p *patchReader) read(ref config.PatchRef) ([]byte, error) {
+	if p.read1 == nil {
+		p.read1 = map[string]patchRead{}
 	}
 
+	got, ok := p.read1[ref.Path]
+	if !ok {
+		got.data, got.err = sopsx.ReadFile(ref.Path)
+		p.read1[ref.Path] = got
+	}
+
+	switch err := got.err; {
+	case errors.Is(err, sopsx.ErrNoKey), errors.Is(err, sopsx.ErrNotInstalled):
+		p.undecryptable[ref.Rel] = err
+
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+	}
+
+	return got.data, nil
+}
+
+func checkPatch(ref config.PatchRef, raw []byte, ctx template.Context) error {
 	rendered, err := template.Render(ref.Rel, raw, ctx)
 	if err != nil {
 		return fmt.Errorf("patches.%s: %w", ref.Group, err)

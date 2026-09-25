@@ -2,12 +2,15 @@ package talosctl
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/ludwighansson/talman/internal/interrupt"
 )
 
 // NodeState is what talman can learn about a running node through talosctl.
@@ -256,6 +259,21 @@ func (r *Runner) prefersProxy(node string) bool {
 	return r.routes[node]
 }
 
+// NodeArgs are the leading arguments that reach node the way it last
+// answered: pinned to its own address, or through the talosconfig's
+// endpoints. A command that follows a probe -- a snapshot, a read -- goes the
+// way the probe proved works, rather than through endpoints that may be the
+// very thing that is down.
+func (r *Runner) NodeArgs(talosconfig, node string) []string {
+	args := []string{"--talosconfig", talosconfig}
+
+	if !r.prefersProxy(node) {
+		args = append(args, "--endpoints", node)
+	}
+
+	return append(args, "--nodes", node)
+}
+
 func (r *Runner) rememberRoute(node string, viaProxy bool) {
 	r.routeMu.Lock()
 	defer r.routeMu.Unlock()
@@ -331,7 +349,7 @@ func (r *Runner) inMaintenance(node string) bool {
 type EtcdState int
 
 // The three answers, and the difference between the last two matters: the
-// remedy for a cluster that was never bootstrapped is `talman bootstrap`, and
+// remedy for a cluster that was never bootstrapped is `talman apply --bootstrap`, and
 // the remedy for a bootstrapped cluster that has lost quorum is anything but.
 const (
 	// EtcdUnknown is a node that did not answer, or answered in a shape
@@ -349,6 +367,16 @@ const (
 func (r *Runner) Etcd(talosconfig, node string) EtcdState {
 	out, err := r.askNode(talosconfig, node, "get", "services", "etcd", "--output", "yaml")
 	if err != nil {
+		// Answered, and there is no etcd service: a control plane that has
+		// just taken its config serves the Talos API before its services
+		// are registered. No etcd service is no etcd running -- which is
+		// what tells apply there is no cluster yet -- rather than a failure
+		// to find out.
+		var exit *ExitError
+		if errors.As(err, &exit) && strings.Contains(exit.Stderr, "code = NotFound") {
+			return EtcdStopped
+		}
+
 		return EtcdUnknown
 	}
 
@@ -444,7 +472,7 @@ func (r *Runner) Reachable(talosconfig, node string) bool {
 // single successful probe can land in the window before it goes down. Holding
 // the check for a settling period is what makes "the node came back" mean it.
 //
-// It says what it is waiting for while it waits. A node adopted out of
+// It says what it is waiting for while it waits. A node onboarded out of
 // maintenance mode installs Talos to disk and reboots, which takes minutes,
 // and it is away for all of them -- so the version that only spoke when a node
 // first answered printed one line and then nothing, for up to the whole
@@ -499,7 +527,9 @@ func (r *Runner) WaitReady(talosconfig, node string, stabilize, timeout time.Dur
 				"installer image before it can reboot)", node, stabilize, timeout)
 		}
 
-		time.Sleep(poll)
+		if err := interrupt.Sleep(poll); err != nil {
+			return fmt.Errorf("stopped waiting for %s: %w", node, err)
+		}
 	}
 }
 
@@ -521,4 +551,34 @@ func round(d time.Duration) time.Duration {
 	}
 
 	return d.Round(10 * time.Second)
+}
+
+// MachineConfig is the machine config a node is running, as Talos serves it:
+// the MachineConfig resource, whose spec is the config document itself.
+//
+// Asked for rather than read from disk. The file under /system/state is where
+// a docker node keeps it, but a machine installed to disk has no such path in
+// its API's view, and "read" fails there with "no such file or directory".
+func (r *Runner) MachineConfig(talosconfig, node string) ([]byte, error) {
+	out, err := r.Output(append(r.NodeArgs(talosconfig, node),
+		"get", "machineconfig", "v1alpha1", "--output", "yaml")...)
+	if err != nil {
+		return nil, err
+	}
+
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+
+	for {
+		var doc struct {
+			Spec string `yaml:"spec"`
+		}
+
+		if err := dec.Decode(&doc); err != nil {
+			return nil, fmt.Errorf("talosctl get machineconfig on %s returned no machine config", node)
+		}
+
+		if strings.TrimSpace(doc.Spec) != "" {
+			return []byte(doc.Spec), nil
+		}
+	}
 }

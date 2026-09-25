@@ -26,9 +26,13 @@ var applyModes = []string{"auto", "no-reboot", "staged", "try"}
 func newApplyCmd() *cobra.Command {
 	var (
 		nodes      []string
+		waves      waveFlags
 		mode       string
 		insecure   bool
 		onlyNew    bool
+		onboard    bool
+		bootstrap  bool
+		yes        bool
 		parallel   int
 		detailed   bool
 		diff       bool
@@ -45,44 +49,21 @@ func newApplyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply rendered machine configs to the cluster",
-		Long: `Apply renders each selected node's machine config and applies it, one node at a
-time, waiting for the node to come back before moving to the next. --health
-also checks that the cluster is healthy between nodes; it is off by default,
-because on a cluster that is already unhealthy it stops the very apply meant
-to fix it.
+		Long: `Apply renders each selected node's config and sends it, one node at a time,
+waiting for each to come back before the next. Control planes always go
+alone; --parallel batches workers.
 
-Each node is asked which API it answers before its config is sent: a node that
-has joined is addressed with cluster PKI, and one in maintenance mode -- never
-configured, or reset -- through the maintenance service, which is what adopting
-it means. A mixed cluster therefore needs no flag. --only-new restricts a run
-to the nodes in maintenance mode; -i forces the maintenance service for every
-node, and --insecure=false forces cluster PKI.
+New nodes, in maintenance mode, are configured only with --onboard-new-nodes
+or --only-new-nodes: the maintenance service authenticates nothing, and a
+config carries the CA keys. --bootstrap builds a new cluster: the first
+control plane, etcd on it, then the rest.
 
---dry-run runs "talosctl apply-config --dry-run" instead, which asks each node
-what the rendered config would change without changing it. Nothing is enacted,
-so nothing is staggered: every node is asked at once and the waiting and
-health checking are skipped.
+--dry-run asks each node what would change, --diff prints that before
+applying, and --detailed-exit-code turns it into an exit code (2 changed, 0
+unchanged, 1 error). Printed diffs have this cluster's secrets redacted.
 
---diff prints that same answer instead of reducing it to an exit code: each
-node is asked what would change, the answer is printed under its heading, and
-then the config is sent. --dry-run stops after the asking, so it prints the
-diff by itself.
-
-A diff is a diff of the machine configuration, so it carries what that carries:
-join tokens, the cluster secret, the machine CA. This cluster's own secrets are
-replaced with [redacted] before anything is printed, by value rather than by
-guessing which fields are sensitive -- talman decrypted them and rendered them
-into the config it is sending, so it knows exactly what to look for: the
-secrets bundle, the values SOPS encrypted in any patch, and anything a patch
-read from the environment. --redact-secrets=false prints them. Secrets talman
-has never seen, such as those of a cluster a node used to belong to, cannot be
-found this way; and when talman cannot read the ones it should know, --diff is
-refused and --dry-run prints its answer without the diff.
-
---detailed-exit-code reports the answer as an exit code: 2 when a node changed
-or would change, 0 when none did, 1 on error. It is the same question either
-way, because an apply asks each node for its diff before sending the config --
-once, however many of these flags are passed.`,
+More in the README: "Onboarding new nodes", "Rolling changes out safely" and
+"Exit codes for CI".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun
@@ -109,8 +90,25 @@ once, however many of these flags are passed.`,
 					mode, strings.Join(applyModes, ", "))
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
+				return err
+			}
+
+			if bootstrap {
+				if err := bootstrapFlagsAllowed(cmd, mode, onlyNew, wait); err != nil {
+					return err
+				}
+
+				// A cluster being built is made of nodes in maintenance
+				// mode: onboarding them is the point.
+				onboard = true
+			}
+
+			// The waves first, so a mistyped --from fails before the bundle
+			// is decrypted, and only the nodes in the selected waves are
+			// rendered. Planned again after --only-new-nodes, below.
+			if _, targets, _, err = waves.plan(cfg, targets); err != nil {
 				return err
 			}
 
@@ -170,9 +168,47 @@ once, however many of these flags are passed.`,
 
 			tal := runner(cfg)
 
+			// Whether there is a cluster: --bootstrap builds one, and needs
+			// there to be none yet; every other apply configures one, and a
+			// cluster not yet bootstrapped is one whose nodes cannot finish
+			// joining it.
+			states := probeControlPlanes(cfg, tal, tc)
+
+			switch {
+			case bootstrap:
+				configured, err := checkBootstrappable(states)
+				if err != nil {
+					return err
+				}
+
+				if !dryRun {
+					if err := confirmConfigured(cfg, configured, yes); err != nil {
+						return err
+					}
+				}
+			case allNew(states):
+				return fmt.Errorf("every control plane is new, in maintenance mode: this cluster has not been "+
+					"built yet\n  %s", talmanCmd("apply --bootstrap"))
+			case noEtcd(states):
+				// Never bootstrapped, or etcd broken: talman cannot tell, and
+				// refusing would stand in the way of the apply that fixes a
+				// broken one.
+				fmt.Fprintf(os.Stderr, "warning: no control plane runs etcd; if this cluster was never "+
+					"bootstrapped:\n  %s\n", talmanCmd("apply --bootstrap"))
+			}
+
 			// An explicit --insecure (or --insecure=false) is an instruction,
 			// not a hint: honour it for every node and skip the probing.
 			forced := cmd.Flags().Changed("insecure")
+
+			// New nodes found before anything is sent, not when the roll-out
+			// reaches them: by then the nodes before them have been applied
+			// and rebooted, and the run stops halfway.
+			if !onboard && !onlyNew && !forced {
+				if err := refuseNewNodes(tal, tc, targets, states); err != nil {
+					return err
+				}
+			}
 
 			// What each node answered, so the health gate can tell a cluster
 			// that is still being built from one that is misbehaving.
@@ -194,11 +230,17 @@ once, however many of these flags are passed.`,
 				}
 
 				if len(targets) == 0 {
-					fmt.Fprintf(os.Stderr, "nothing to adopt: no selected node is in maintenance mode\n")
+					fmt.Fprintf(os.Stderr, "nothing to onboard: no selected node is new (in maintenance mode)\n")
 					rec.SetChanged(false)
 
 					return nil
 				}
+			}
+
+			// After --only-new-nodes, so the waves hold only the nodes it kept.
+			stages, targets, thenFrom, err := waves.plan(cfg, targets)
+			if err != nil {
+				return err
 			}
 
 			for _, n := range targets {
@@ -216,25 +258,10 @@ once, however many of these flags are passed.`,
 				changed   bool
 			)
 
-			// Whether there is a cluster to join. Asked at most once, and
-			// only when the answer would change what talman does.
-			var (
-				askOnce sync.Once
-				cluster clusterState
-
-				adoptedEarly atomic.Int64
-			)
-
-			// Deliberately not "the probe said no": a probe that could not
-			// reach a control plane has established nothing, and what this
-			// gates -- waiting for a node, and the health check between nodes
-			// -- is what keeps one bad config from reaching a whole control
-			// plane. Silence must not switch those off.
-			noClusterYet := func() bool {
-				askOnce.Do(func() { cluster = askCluster(cfg, tal, tc) })
-
-				return cluster == clusterAbsent
-			}
+			// Set once etcd has been bootstrapped by this run: a node that
+			// already had its config sat quiet with no cluster to join, and
+			// is waited for now that there is one.
+			var bootstrapped atomic.Bool
 
 			markChanged := func() {
 				changedMu.Lock()
@@ -243,19 +270,32 @@ once, however many of these flags are passed.`,
 				changed = true
 			}
 
+			// Nodes that answered, when asked first, that the config changes
+			// nothing: all the roll-out's soak and health gate need to know,
+			// since a wave of those left nothing to watch.
+			var (
+				unchangedMu sync.Mutex
+				unchanged   = map[string]bool{}
+			)
+
+			// Asked first too when the answer decides whether to soak or
+			// gate: a dry run per node is cheap next to a ten-minute soak
+			// after a wave that changed nothing.
+			wantsAnswer := detailed || rec != nil || health || cfg.Rollout.SoakDuration() > 0
+
 			applyOne := func(n *config.Node, position int, say func(string)) error {
 				file := cfg.MachineConfigPath(n)
 
 				if _, err := os.Stat(file); err != nil {
-					return fmt.Errorf("no rendered config for %s at %s: run `talman render` first",
-						n.Hostname, file)
+					return fmt.Errorf("no rendered config for %s at %s: run `%s` first",
+						n.Hostname, file, talmanCmd("render"))
 				}
 
 				// A cluster is rarely all one thing: after a reset, or when a
 				// machine is added, some nodes answer with cluster PKI and
 				// some only on the maintenance service. Asking each node
 				// which it is costs one call and is the difference between
-				// adopting a node and failing the run.
+				// onboarding a node and failing the run.
 				maintenance := insecure
 
 				if !forced {
@@ -267,23 +307,40 @@ once, however many of these flags are passed.`,
 
 					switch state {
 					case talosctl.ModeMaintenance:
+						// Unauthenticated: a reused address, a spoofed host or
+						// a passing TLS failure on a real node all look like
+						// this, and each would be handed the cluster's keys.
+						if !onboard && !onlyNew {
+							return fmt.Errorf("%s (%s) is a new node: it answers only the maintenance service, "+
+								"which authenticates nothing, so it gets its config, CA keys included, only when "+
+								"asked\n  %s", n.Hostname, n.IPAddress, talmanCmd("apply --onboard-new-nodes -n "+n.Hostname))
+						}
+
 						maintenance = true
 					case talosctl.ModeRunning:
 						maintenance = false
 					case talosctl.ModeUnreachable:
-						// A node that has its config but no cluster to join
-						// goes quiet in exactly this way, and after a reset
-						// and a fresh apply that is most of them. Say so when
-						// it is the likely answer, rather than leaving an
-						// operator to wonder which machine died.
-						if noClusterYet() {
-							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance "+
-								"service\n  the cluster is not bootstrapped, and a node with a config but no "+
-								"cluster to join stays quiet: run `talman bootstrap`", n.Hostname, n.IPAddress)
+						// A node that was given its config before the cluster
+						// existed sits quiet until there is one to join. Once
+						// this run has bootstrapped it, that node is on its
+						// way, and is waited for rather than given up on.
+						if !bootstrapped.Load() {
+							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
+								n.Hostname, n.IPAddress)
 						}
 
-						return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
-							n.Hostname, n.IPAddress)
+						say(fmt.Sprintf("== %s (%s) has its config; waiting for it to join the cluster\n",
+							n.Hostname, n.IPAddress))
+
+						logf := detailLog(say)
+
+						if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
+							return err
+						}
+
+						modesMu.Lock()
+						modes[n.IPAddress] = talosctl.ModeRunning
+						modesMu.Unlock()
 					}
 				}
 
@@ -311,7 +368,7 @@ once, however many of these flags are passed.`,
 				case maintenance && forced:
 					note = " · through the maintenance service (--insecure)"
 				case maintenance:
-					note = " · adopting"
+					note = " · onboarding"
 				}
 
 				header := fmt.Sprintf("== [%d/%d] %s (%s)%s\n",
@@ -327,12 +384,18 @@ once, however many of these flags are passed.`,
 
 				// Metrics ask too: "changed" is what a CI alert most often
 				// wants to know, and without asking it is not known.
-				if askFirst(dryRun, detailed || rec != nil, diff) {
+				if askFirst(dryRun, wantsAnswer, diff) {
 					probe := append(slices.Clone(args), "--dry-run")
 
 					out, err := tal.Combined(probe...)
 					if err == nil {
 						rec.NodeChanged(n.Hostname, dryRunChanged(out))
+
+						if !dryRunChanged(out) {
+							unchangedMu.Lock()
+							unchanged[n.IPAddress] = true
+							unchangedMu.Unlock()
+						}
 					}
 
 					if detailed && (err != nil || dryRunChanged(out)) {
@@ -391,36 +454,10 @@ once, however many of these flags are passed.`,
 				}
 
 				if wait {
-					// A node adopted out of maintenance mode installs Talos,
-					// reboots, and then waits for a cluster to join. Before
-					// `talman bootstrap` there is no cluster and no etcd, so
-					// its API never comes back and waiting for it is a timeout
-					// with extra steps -- ten silent minutes per node, on the
-					// one path where every node is in that state.
-					//
-					// Bootstrap runs after the configs are applied, by design,
-					// so this is the ordinary shape of building a cluster
-					// rather than a mistake to report.
-					if maintenance && noClusterYet() {
-						adoptedEarly.Add(1)
-
-						// Its state is whatever the install makes of it, which
-						// talman did not watch: forget the reading rather than
-						// leave a stale one for the health gate.
-						modesMu.Lock()
-						delete(modes, n.IPAddress)
-						modesMu.Unlock()
-
-						return nil
-					}
-
-					logf := func(format string, args ...any) {
-						say(detail + strings.TrimLeft(fmt.Sprintf(format+"\n", args...), " "))
-					}
+					logf := detailLog(say)
 
 					if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
-						return fmt.Errorf("%w\n  re-run once it recovers, "+
-							"or pass --wait=false to roll on regardless", err)
+						return fmt.Errorf("%w\n  %s", err, waitFailedHint(targets))
 					}
 
 					// It answered on the secure API, so whatever it was
@@ -443,21 +480,11 @@ once, however many of these flags are passed.`,
 				return nil
 			}
 
-			// Control planes one at a time, workers up to --parallel: the
-			// unit of risk is still a node, and a batch of workers cannot
-			// take out a cluster the way two control planes rebooting
-			// together can.
-			done := 0
-
 			// Nothing is enacted by a dry run or a staged apply, so the rule
 			// that keeps control planes apart has nothing to protect: they
-			// batch with everything else: asking fifty nodes what would
+			// batch with everything else, and asking fifty nodes what would
 			// change should not take fifty turns.
 			inert := dryRun || mode == "staged"
-
-			if inert && !cmd.Flags().Changed("parallel") {
-				parallel = defaultParallel
-			}
 
 			// [n/m] is the node's place in the run, not the order it
 			// finished in: a batch of workers reports as it goes.
@@ -466,98 +493,128 @@ once, however many of these flags are passed.`,
 				positions[n.IPAddress] = i + 1
 			}
 
-			var (
-				okMu      sync.Mutex
-				succeeded = map[string]bool{}
-			)
-
-			for _, batch := range batchesFor(targets, parallel, inert) {
-				out := newInOrder(os.Stderr, batch)
-
-				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					defer out.finish(n)
-
-					rec.NodeStart(n.Hostname, string(n.Role))
-
-					err := applyOne(n, positions[n.IPAddress], func(s string) { out.say(n, s) })
-					rec.NodeDone(n.Hostname, err)
-
-					if err != nil {
-						return struct{}{}, err
-					}
-
-					okMu.Lock()
-					succeeded[n.IPAddress] = true
-					okMu.Unlock()
-
-					return struct{}{}, nil
-				}); err != nil {
-					return fmt.Errorf("%w\n%s", err,
-						resumeHint("apply", "applied", without(targets[done:], succeeded),
-							replayFlags(cmd, "node")...))
-				}
-
-				done += len(batch)
-
-				if dryRun || mode == "staged" {
-					continue
-				}
-
-				// The gate protects the nodes still to come, and after the
-				// last batch there are none. Checking anyway would only turn
-				// an apply that landed into a failure, which on a cluster
-				// that was unhealthy before the run is every apply.
-				if done == len(targets) {
-					break
-				}
-
-				// The gate checks the cluster the config describes, so it
-				// only means something once that cluster exists. A node that
-				// has not been adopted yet answers with a self-signed
-				// maintenance certificate, which the check reports as
-				// "certificate signed by unknown authority" -- a build-out
-				// step read as a broken cluster.
-				//
-				// So while any node is outside the cluster, the gate stands
-				// down and says which nodes those are. Once they have all
-				// joined it gates every node, which is the roll-out case it
-				// exists for.
-				if health {
-					if outside := notInCluster(cfg, tal, tc, modes, parallel); len(outside) > 0 {
-						ungated++
-
-						// Which ones, for whoever is asking why; the summary
-						// at the end gives the count.
-						if opts.verbose && !saidUngated {
-							saidUngated = true
-
-							fmt.Fprintf(os.Stderr, "%s%s\n", detail, strings.Join(outside, ", "))
-						}
-
-						continue
-					}
-				}
-
-				if health {
+			// The gate checks the cluster the config describes, so it only
+			// means something once that cluster exists. A node that has not
+			// been onboarded yet answers with a self-signed maintenance
+			// certificate, which the check reports as "certificate signed by
+			// unknown authority" -- a build-out step read as a broken
+			// cluster. So while any node is outside the cluster, the gate
+			// stands down and says which nodes those are. Once they have all
+			// joined it gates every node, which is the roll-out case it
+			// exists for.
+			standDown := func() bool {
+				outside := notInCluster(cfg, tal, tc, modes, parallel)
+				if len(outside) == 0 {
 					gated++
 
-					fmt.Fprintf(os.Stderr, "%schecking cluster health before continuing\n", detail)
+					return false
+				}
 
-					if err := clusterHealth(cfg, tal, tc, timeout); err != nil {
-						return fmt.Errorf("cluster is unhealthy after applying to %s: %w\n%s",
-							names(batch), err, resumeHint("apply", "applied", targets[done:], replayFlags(cmd, "node")...))
+				ungated++
+
+				// Which ones, for whoever is asking why; the summary at the
+				// end gives the count.
+				if opts.verbose && !saidUngated {
+					saidUngated = true
+
+					fmt.Fprintf(os.Stderr, "%s%s\n", detail, strings.Join(outside, ", "))
+				}
+
+				return true
+			}
+
+			perNode := func(n *config.Node, _ bool, say func(string)) (bool, error) {
+				err := applyOne(n, positions[n.IPAddress], say)
+
+				unchangedMu.Lock()
+				defer unchangedMu.Unlock()
+
+				return !unchanged[n.IPAddress], err
+			}
+
+			// Control planes one at a time, workers up to --parallel: the
+			// unit of risk is still a node, and a batch of workers cannot
+			// take out a cluster the way two control planes rebooting
+			// together can. A node counts as acting for the gate unless it
+			// was asked first and answered that nothing changes.
+			ro := rollOut{
+				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
+				verb: "apply", done: "applied",
+				targets: targets, parallel: parallel, inert: inert,
+				health: health, timeout: timeout,
+				// auto is the one mode that may reboot a node.
+				waits:     wait || mode != "auto",
+				standDown: standDown,
+				stages:    stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
+			}
+
+			if bootstrap {
+				// The first control plane first, alone, then etcd on it;
+				// then everything else, into a cluster that exists.
+				first := cfg.ControlPlanes()[0]
+
+				if dryRun {
+					rest := make([]*config.Node, 0, len(targets))
+					for _, n := range targets {
+						if n != first {
+							rest = append(rest, n)
+						}
 					}
+
+					stages, _, _, err := waves.plan(cfg, rest)
+					if err != nil {
+						return err
+					}
+
+					if len(stages) == 0 && len(rest) > 0 {
+						stages = []config.Staged{{Nodes: rest}}
+					}
+
+					printBootstrapPlan(tal, tc, first, stages)
+
+					return nil
+				}
+
+				if err := bootstrapFirst(cmd, tal, tc, first, timeout, func(say func(string)) error {
+					_, err := perNode(first, false, say)
+
+					return err
+				}); err != nil {
+					return err
+				}
+
+				bootstrapped.Store(true)
+
+				rest := make([]*config.Node, 0, len(targets)-1)
+				for _, n := range targets {
+					if n != first {
+						rest = append(rest, n)
+					}
+				}
+
+				// A resume carries on in the cluster this run made: it is
+				// not a second bootstrap, and its nodes are still onboarded.
+				if ro.stages, ro.targets, ro.thenFrom, err = waves.plan(cfg, rest); err != nil {
+					return err
+				}
+
+				ro.hintDrop = []string{"bootstrap"}
+				ro.hintAdd = []string{"--onboard-new-nodes"}
+			}
+
+			if len(ro.targets) > 0 {
+				if err := ro.run(perNode); err != nil {
+					return err
 				}
 			}
 
-			adopted := adoptedEarly.Load()
-
-			if summary := gateSummary(adopted, ungated, gated); summary != "" {
+			if summary := gateSummary(ungated, gated); summary != "" {
 				fmt.Fprintf(os.Stderr, "\n%s\n", summary)
 			}
 
-			if adopted > 0 {
-				fmt.Fprintf(os.Stderr, "%d node(s) adopted → talman bootstrap\n", adopted)
+			if mode == "staged" && !dryRun && len(targets) > 0 {
+				fmt.Fprintf(os.Stderr, "\nconfigs staged; they take effect on the next reboot → talman%s reboot%s\n",
+					configArg(), nodeArgs(targets, len(cfg.Nodes)))
 			}
 
 			if detailed && changed {
@@ -569,12 +626,19 @@ once, however many of these flags are passed.`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	addWaveFlags(cmd, &waves)
 	cmd.Flags().StringVarP(&mode, "mode", "m", "auto",
 		"apply mode: "+strings.Join(applyModes, ", "))
 	cmd.Flags().BoolVarP(&insecure, "insecure", "i", false,
 		"force the maintenance service for every node (default: ask each node which API it answers)")
-	cmd.Flags().BoolVar(&onlyNew, "only-new", false,
-		"restrict the run to nodes that are in maintenance mode")
+	cmd.Flags().BoolVar(&onboard, "onboard-new-nodes", false,
+		"configure new nodes (in maintenance mode) too, over the unauthenticated maintenance service")
+	cmd.Flags().BoolVar(&bootstrap, "bootstrap", false,
+		"build a new cluster: configure the first control plane, bootstrap etcd on it, then the rest")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false,
+		"with --bootstrap, skip the question asked when control planes are configured but run no etcd")
+	cmd.Flags().BoolVar(&onlyNew, "only-new-nodes", false,
+		"restrict the run to new nodes (in maintenance mode), and onboard them")
 
 	addParallelFlag(cmd, &parallel, 1,
 		"how many nodes to work on at once; control planes go one at a time unless nothing is enacted")
@@ -608,7 +672,7 @@ once, however many of these flags are passed.`,
 }
 
 // newNodes keeps the targets that are in maintenance mode, which is what
-// "not adopted yet" looks like from outside.
+// "not onboarded yet" looks like from outside.
 //
 // This is the one path that probes every target up front rather than node by
 // node: the filter cannot be applied without knowing all the answers, and
@@ -634,7 +698,7 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node, 
 			fmt.Fprintf(os.Stderr, "   %s (%s) is running; not new, skipping\n", n.Hostname, n.IPAddress)
 		case talosctl.ModeUnreachable:
 			return nil, fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service: "+
-				"--only-new cannot tell whether it needs adopting\n"+
+				"--only-new-nodes cannot tell whether it needs onboarding\n"+
 				"  bring it up, or narrow the run with -n", n.Hostname, n.IPAddress)
 		}
 	}
@@ -646,7 +710,7 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node, 
 // yet, empty when every one of them is.
 //
 // Nodes this run has already asked about are not asked again: the answers are
-// carried in modes, including for a node this run just adopted and watched
+// carried in modes, including for a node this run just onboarded and watched
 // come back.
 func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	modes map[string]talosctl.Mode, parallel int,
@@ -688,12 +752,8 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 // first step and ran for the rest is not a run that skipped the gate, and a
 // summary claiming otherwise is worse than no summary. Empty when there is
 // nothing to report.
-func gateSummary(adopted int64, ungated, gated int) string {
+func gateSummary(ungated, gated int) string {
 	switch {
-	case adopted > 0 && ungated > 0 && gated == 0:
-		return "not waiting, and not gating on health: no cluster to join yet"
-	case adopted > 0:
-		return "not waiting: nothing to join until `talman bootstrap` runs"
 	case ungated > 0 && gated == 0:
 		return "not gating on health: nodes not in the cluster yet"
 	case ungated > 0:
@@ -788,7 +848,7 @@ func renderForApply(cfg *config.Config, targets []*config.Node, parallel int,
 			return nil, err
 		}
 
-		if err := r.Validate(res, cfg.TalosMode); err != nil {
+		if err := r.Validate(res, cfg.ValidationModeFor(res.Node)); err != nil {
 			return nil, err
 		}
 
@@ -842,4 +902,23 @@ func redaction(hide, diff, dryRun, noRender bool, secrets func() (*redact.Redact
 	fmt.Fprintf(os.Stderr, "%v\n  diffs are not shown\n", err)
 
 	return nil, true, nil
+}
+
+// waitFailedHint is what to do about a node that did not come back. Rolling
+// on without the wait is only offered where talman would allow it: not for a
+// run reaching more than one control plane, where it is refused.
+func waitFailedHint(targets []*config.Node) string {
+	if waitsForControlPlanes(targets) != nil {
+		return "re-run once it recovers, or pass --timeout to wait longer"
+	}
+
+	return "re-run once it recovers, or pass --wait=false to roll on regardless"
+}
+
+// detailLog prints a progress line under a node's heading, as the detail it
+// is.
+func detailLog(say func(string)) func(string, ...any) {
+	return func(format string, args ...any) {
+		say(detail + strings.TrimLeft(fmt.Sprintf(format+"\n", args...), " "))
+	}
 }

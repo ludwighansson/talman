@@ -93,7 +93,7 @@ patch, which is worse than a failed run.
 
 ## Conventions
 
-- `gofmt` and `go vet` must be clean; CI fails on either.
+- `gofmt`, `go vet` and `golangci-lint` must be clean; CI fails on any of them.
 - Tests run with `-race`.
 - Comments explain *why*, not what. The code says what it does; a comment earns
   its place by recording the reasoning or constraint that is not visible from
@@ -112,8 +112,9 @@ Branch, commit, open it. A draft PR with a rough idea is a perfectly good way
 to start a conversation — you do not need it finished, or even working, to ask
 whether an approach is worth pursuing.
 
-CI runs the formatting and vet checks, the test suite on Linux and macOS,
-renders `example/` end to end, and cross-compiles every released target. If
+CI runs the formatting, vet and lint checks, the test suite on Linux and
+macOS, renders `example/` end to end, cross-compiles every released target,
+and drives a real cluster with `hack/e2e.sh` (see the README's Tests section). If
 something fails there and the reason is not obvious, say so in the PR rather
 than fighting it alone.
 

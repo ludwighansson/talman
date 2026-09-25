@@ -3,17 +3,20 @@
 package render
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/factory"
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/patch"
 	"github.com/ludwighansson/talman/internal/redact"
 	"github.com/ludwighansson/talman/internal/sopsx"
@@ -38,6 +41,13 @@ type Renderer struct {
 	// the rendered patches for the duration of a pass.
 	workspace   string
 	secretsFile string
+	// cleanup removes the workspace, for Close.
+	cleanup func()
+
+	// configText is talman.yaml as written, read once: a value it spells
+	// out is no secret. See ordinary.
+	configOnce sync.Once
+	configText []byte
 
 	// secrets is every secret value the pass has rendered into a config: the
 	// bundle, the values SOPS decrypted out of patches, and whatever a
@@ -89,12 +99,13 @@ func (r *Renderer) Open() error {
 		return err
 	}
 
-	dir, err := os.MkdirTemp("", "talman-")
+	dir, cleanup, err := interrupt.TempDir("", "talman-")
 	if err != nil {
 		return err
 	}
 
 	r.workspace = dir
+	r.cleanup = cleanup
 	r.schematicIDs = map[string]string{}
 
 	secretPath := r.Cfg.SecretPath()
@@ -165,7 +176,7 @@ func (r *Renderer) noteSecretsErr(err error) {
 // Close removes the workspace and the decrypted secrets inside it.
 func (r *Renderer) Close() {
 	if r.workspace != "" {
-		_ = os.RemoveAll(r.workspace)
+		r.cleanup()
 		r.workspace = ""
 	}
 }
@@ -199,7 +210,7 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 	for i, ref := range chain {
 		rendered, err := r.renderPatch(ref, ctx)
 		if err != nil {
-			return nil, fmt.Errorf("node %s: %w", n.Hostname, err)
+			return nil, r.redacted(fmt.Errorf("node %s: %w", n.Hostname, err))
 		}
 
 		// Skip files that render to nothing: a patch wrapped entirely in a
@@ -240,7 +251,10 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 
 	content, err := gen(paths)
 	if err != nil {
-		return nil, fmt.Errorf("node %s: %s", n.Hostname, r.blame(err, gen, chain, paths))
+		// talosctl's rejection quotes the offending document, values and
+		// all, and they may be the secrets this pass decrypted or read from
+		// the environment.
+		return nil, r.redacted(fmt.Errorf("node %s: %s", n.Hostname, r.blame(err, gen, chain, paths)))
 	}
 
 	return &Result{
@@ -269,7 +283,11 @@ func (r *Renderer) renderPatch(ref config.PatchRef, ctx template.Context) ([]byt
 		}
 	}
 
-	rendered, err := template.RenderSeeing(ref.Rel, raw, ctx, func(v string) { r.secrets.Add(v) })
+	rendered, err := template.RenderSeeing(ref.Rel, raw, ctx, func(v string) {
+		if !r.ordinary(v) {
+			r.secrets.Add(v)
+		}
+	})
 	if err != nil {
 		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
 	}
@@ -295,11 +313,13 @@ func (r *Renderer) Context(n *config.Node) (template.Context, error) {
 			Hostname:     n.Hostname,
 			IPAddress:    n.IPAddress,
 			Role:         string(n.Role),
-			Groups:       n.Groups,
-			Values:       n.Values,
+			Groups:       slices.Clone(n.Groups),
+			Values:       config.CopyValues(n.Values),
 			TalosVersion: n.EffectiveTalosVersion(r.Cfg),
 		},
-		Values: r.Cfg.Values,
+		// Copies, for each node: a template can change what it is handed,
+		// and nodes render in parallel from the same config.
+		Values: config.CopyValues(r.Cfg.Values),
 	}
 
 	id, err := r.schematicID(n, base)
@@ -307,7 +327,7 @@ func (r *Renderer) Context(n *config.Node) (template.Context, error) {
 		return base, fmt.Errorf("node %s: %w", n.Hostname, err)
 	}
 
-	installer, err := r.Cfg.ImageFactory.InstallerURL(id, n.EffectiveTalosVersion(r.Cfg))
+	installer, err := r.Cfg.ImageFactoryFor(n).InstallerURL(id, n.EffectiveTalosVersion(r.Cfg))
 	if err != nil {
 		return base, fmt.Errorf("node %s: %w", n.Hostname, err)
 	}
@@ -351,6 +371,17 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 		return "", err
 	}
 
+	// Keyed by the schematic, and when submitting by the factory it goes to
+	// as well: the ID is the same everywhere, but a node that names its own
+	// factory pulls its installer from there, so that factory has to be told
+	// about the schematic too.
+	key := string(canonical)
+
+	if r.Submit {
+		f := r.Cfg.ImageFactoryFor(n)
+		key = f.Protocol + "://" + f.RegistryURL + f.SchematicEndpoint + "\x00" + key
+	}
+
 	// Context is reachable without Open (validate does exactly that), so the
 	// cache is created on demand rather than assumed.
 	//
@@ -364,7 +395,7 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 		r.schematicIDs = map[string]string{}
 	}
 
-	cached, ok := r.schematicIDs[string(canonical)]
+	cached, ok := r.schematicIDs[key]
 
 	r.schemaMu.Unlock()
 
@@ -375,7 +406,7 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 	var id string
 
 	if r.Submit {
-		if id, err = r.Cfg.ImageFactory.Submit(schematic); err != nil {
+		if id, err = r.Cfg.ImageFactoryFor(n).Submit(schematic); err != nil {
 			return "", err
 		}
 
@@ -392,7 +423,7 @@ func (r *Renderer) schematicID(n *config.Node, base template.Context) (string, e
 	}
 
 	r.schemaMu.Lock()
-	r.schematicIDs[string(canonical)] = id
+	r.schematicIDs[key] = id
 	r.schemaMu.Unlock()
 
 	return id, nil
@@ -513,7 +544,9 @@ func (r *Renderer) blame(cause error, gen func([]string) ([]byte, error),
 ) string {
 	msg := cause.Error()
 
-	if len(paths) == 0 {
+	// An interrupted generation was not rejected, and every re-run would fail
+	// the same way and blame whatever came first.
+	if len(paths) == 0 || interrupt.Interrupted() {
 		return msg
 	}
 
@@ -566,4 +599,49 @@ func ordinal(n int) string {
 	default:
 		return "th"
 	}
+}
+
+// redactedError is an error whose message had this pass's secrets taken out.
+// It still unwraps to the original, for errors.Is and errors.As; only what it
+// says is changed.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
+// redacted takes every secret the pass knows so far out of err's message.
+func (r *Renderer) redacted(err error) error {
+	if err == nil || r.secrets == nil {
+		return err
+	}
+
+	return &redactedError{msg: r.secrets.Redactor().String(err.Error()), err: err}
+}
+
+// plainWord is a value that is only letters and dashes: staging, eu-west,
+// production.
+var plainWord = regexp.MustCompile(`^[A-Za-z-]+$`)
+
+// ordinary reports whether a value a template read from the environment is
+// plainly not a secret, so it is left out of redaction: a short plain word,
+// or a value that talman.yaml itself spells out -- a Talos version, the
+// cluster name. Hiding those would blank every mention of them in a diff,
+// and whatever sits in a committed config is no secret.
+func (r *Renderer) ordinary(v string) bool {
+	v = strings.TrimSpace(v)
+
+	if len(v) < 12 && plainWord.MatchString(v) {
+		return true
+	}
+
+	r.configOnce.Do(func() {
+		if r.Cfg != nil && r.Cfg.Path != "" {
+			r.configText, _ = os.ReadFile(r.Cfg.Path)
+		}
+	})
+
+	return v != "" && bytes.Contains(r.configText, []byte(v))
 }
