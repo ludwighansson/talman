@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -98,7 +99,10 @@ case " $* " in
 	ls -ld "$(dirname "$out")" | cut -c1-10 >> "$STUB_LOG.dirmode"
 	umask 022
 	echo "snapshot" > "$out" ;;
+*" version --insecure "*)
+	case " $* " in *" $STUB_MAINTENANCE "*) echo "maintenance" ;; *) exit 1 ;; esac ;;
 *" version "*)
+	case " $* " in *" $STUB_MAINTENANCE "*) exit 1 ;; esac
 	running=v1.14.1
 	case " $* " in *" $STUB_STALE "*) running=v1.13.0 ;; esac
 	printf 'Client:\n\tTag: v1.14.1\nServer:\n\tTag: %s\n' "$running" ;;
@@ -167,6 +171,7 @@ nodes:
 	t.Setenv("STUB_RACE", "")
 	t.Setenv("STUB_ROTATE_PARTWAY", "")
 	t.Setenv("STUB_ETCD", "")
+	t.Setenv("STUB_MAINTENANCE", "none")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -1152,5 +1157,57 @@ func TestStagedHintKeepsTheConfig(t *testing.T) {
 
 	if !strings.Contains(stderr, "→ talman -c "+filepath.Join(dir, "talman.yaml")+" reboot") {
 		t.Errorf("the hint does not name the config:\n%s", stderr)
+	}
+}
+
+// TestApplyAdoptsOnlyWhenAsked: a node answering only the maintenance
+// service is reached without authentication, so apply sends it a config --
+// the CA keys in a control plane's -- only with --adopt or --only-new.
+func TestApplyAdoptsOnlyWhenAsked(t *testing.T) {
+	dir, log := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_MAINTENANCE", "10.0.0.2")
+
+	apply := []string{"apply", "--no-render", "--redact-secrets=false", "--wait=false"}
+
+	for _, args := range [][]string{apply, append(slices.Clone(apply), "--dry-run")} {
+		_ = os.WriteFile(log, nil, 0o644)
+
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(args) })
+
+		if got != 1 {
+			t.Errorf("%v: exit %d, want 1", args, got)
+		}
+
+		if !strings.Contains(stderr, "talman apply --adopt -n w1") {
+			t.Errorf("%v: no --adopt hint:\n%s", args, stderr)
+		}
+
+		if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "--insecure --nodes") ||
+			strings.Contains(string(calls), "apply-config --nodes 10.0.0.2") {
+			t.Errorf("%v sent the maintenance node a config:\n%s", args, calls)
+		}
+	}
+
+	for _, extra := range []string{"--adopt", "--only-new"} {
+		_ = os.WriteFile(log, nil, 0o644)
+
+		if got := run(append(slices.Clone(apply), extra)); got != 0 {
+			calls, _ := os.ReadFile(log)
+			t.Errorf("%s: exit %d\n%s", extra, got, calls)
+		}
+
+		if calls, _ := os.ReadFile(log); !strings.Contains(string(calls), "apply-config --nodes 10.0.0.2") {
+			t.Errorf("%s did not adopt the node:\n%s", extra, calls)
+		}
 	}
 }

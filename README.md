@@ -456,7 +456,7 @@ alone and the render stops, rather than being replaced.
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
 | `talman image url` | the installer image per node, or with `--kind` its ISO, disk image or iPXE script |
-| `talman apply` | re-render, then apply, adopting nodes in maintenance mode |
+| `talman apply` | re-render, then apply; `--adopt` also configures nodes in maintenance mode |
 | `talman bootstrap` | initialise etcd, once |
 | `talman kubeconfig` | fetch the kubeconfig into the output directory |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
@@ -507,13 +507,22 @@ killing any talosctl still running and still removing the decrypted secrets.
 A node that has never been configured — or that has just been `reset` — answers
 only the maintenance service, while nodes already in the cluster answer with
 cluster PKI. `apply` asks each node which it is, immediately before sending its
-config, so a half-adopted cluster needs no flag:
+config.
+
+The maintenance service authenticates nothing. Whatever answers at a node's
+address gets its whole config, and a control plane's includes the cluster's CA
+keys — so a reused address, a spoofed host, or a real node whose secure API
+failed for a moment would be handed them. `apply` therefore sends a config
+that way only when asked to adopt:
 
 ```console
 $ talman apply
 == [1/2] talos-c01 (10.164.0.27)
      Applied configuration without a reboot
-== [2/2] talos-w01 (10.164.0.32) · adopting
+error: talos-w01 (10.164.0.32) answers only the maintenance service, which authenticates nothing: it gets its config, CA keys included, only when asked
+  talman apply --adopt -n talos-w01
+$ talman apply --adopt -n talos-w01
+== [1/1] talos-w01 (10.164.0.32) · adopting
      Applied configuration without a reboot
 ```
 
@@ -539,10 +548,10 @@ the run.
 A fresh cluster, where the configs go out before there is a cluster to join:
 
 ```console
-$ talman apply                # adopts every node; does not wait for what cannot finish
-   not waiting for talos-w01: nothing to join until `talman bootstrap` runs
-2 node(s) adopted; they finish joining once the cluster exists
-  talman bootstrap   next, then `talman health`
+$ talman apply --adopt        # adopts every node; does not wait for what cannot finish
+...
+not waiting: nothing to join until `talman bootstrap` runs
+2 node(s) adopted → talman bootstrap
 ```
 
 A node adopted out of maintenance mode installs Talos, reboots, and then waits
@@ -553,13 +562,13 @@ any control plane has etcd running, and when none does it says what is missing
 instead of waiting for it. Step by step, that flow is:
 
 ```console
-$ talman apply -n talos-c01   # adopted: installs and reboots into its config
+$ talman apply --adopt -n talos-c01   # installs and reboots into its config
 $ talman bootstrap            # once, ever: initialises etcd
 == bootstrapping etcd on talos-c01 (10.164.0.27)
 cluster bootstrap initiated; etcd is starting on talos-c01
   talman status      to watch the control plane come up
   talman kubeconfig  once it is serving
-$ talman apply                # the rest, control planes and workers alike
+$ talman apply --adopt        # the rest, control planes and workers alike
 ```
 
 `bootstrap` returns as soon as Talos accepts the request — etcd starts
@@ -567,23 +576,23 @@ afterwards and the control plane forms over the following minute — so it says
 so rather than exiting silently on the one command a cluster only ever gets
 once.
 
-Adding a machine to a live cluster is `talman apply -n <new node>`, and
-re-adopting one after `reset` is the same command. `--only-new` does the whole
-lot at once, restricting the run to the nodes currently in maintenance mode:
+Adding a machine to a live cluster is `talman apply --adopt -n <new node>`,
+and re-adopting one after `reset` is the same command. `--only-new` does the
+whole lot at once: it restricts the run to the nodes currently in maintenance
+mode, and adopts them.
 
 ```console
 $ talman apply --only-new
    talos-c01 (10.164.0.27) is running; not new, skipping
-== talos-w01 (10.164.0.32) maintenance mode; adopting it
+== [1/1] talos-w01 (10.164.0.32) · adopting
 ```
 
 `talman status` is the view of the same question, and of every other question
 about what is actually out there — see below.
 
-`-i` still forces the maintenance service for every node and `--insecure=false`
-forces cluster PKI, for when the answer is known better than the probe can tell
-— but neither is needed for a mixed cluster any more, which is what they used
-to be reached for and what they were never able to do.
+`-i` forces the maintenance service for every node and `--insecure=false`
+forces cluster PKI, for when the answer is known better than the probe can
+tell.
 
 A node that answers neither API stops the run and names what is left, since
 that is a fault rather than a state:
@@ -1112,7 +1121,7 @@ needs one waits: containerd, the CRI, and any extension service behind them.
 `iscsi-tools` parks on `waiting for file /etc/iscsi/initiatorname.iscsi to
 exist` — the initiator name is derived from the node identity, which lives in
 STATE — and a console showing that looks like a boot that never finishes. It is
-not: the node is in maintenance mode, and `talman apply -n <node>` adopts it
+not: the node is in maintenance mode, and `talman apply --adopt -n <node>` adopts it
 and clears the wait.
 
 A reset still stops at the first failure, and names what it did not get to:
@@ -1297,6 +1306,8 @@ with a message saying what to do, rather than read differently:
 | any `hostname` | a lower-case RFC 1123 name, since it is also a file name |
 | `endpoint` without a port | `https://…:6443` |
 | `upgrade --stage`, `--skip-etcd-check` | removed: Talos 1.14's upgrade API ignores both; `--extra-flags` reaches them on a legacy node |
+| `upgrade --wait=false` | removed: talosctl waits whenever it drains, which is by default |
+| `apply` adopting a node in maintenance mode by itself | `apply --adopt`, or `--only-new`: the maintenance service authenticates nothing |
 
 ## Migrating from talhelper
 

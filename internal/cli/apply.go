@@ -30,6 +30,7 @@ func newApplyCmd() *cobra.Command {
 		mode       string
 		insecure   bool
 		onlyNew    bool
+		adopt      bool
 		parallel   int
 		detailed   bool
 		diff       bool
@@ -52,12 +53,15 @@ also checks that the cluster is healthy between nodes; it is off by default,
 because on a cluster that is already unhealthy it stops the very apply meant
 to fix it.
 
-Each node is asked which API it answers before its config is sent: a node that
-has joined is addressed with cluster PKI, and one in maintenance mode -- never
-configured, or reset -- through the maintenance service, which is what adopting
-it means. A mixed cluster therefore needs no flag. --only-new restricts a run
-to the nodes in maintenance mode; -i forces the maintenance service for every
-node, and --insecure=false forces cluster PKI.
+Each node is asked which API it answers before its config is sent. A node that
+has joined is addressed with cluster PKI. One in maintenance mode -- never
+configured, or reset -- can only be reached through the maintenance service,
+which authenticates nothing: whatever answers at the address gets the whole
+config, a control plane's CA keys included. So talman sends it only when asked
+to adopt: --adopt adopts any node found in maintenance mode, and --only-new
+restricts the run to those nodes and adopts them. Without either, apply stops
+at such a node and says how to adopt it. -i forces the maintenance service for
+every node, and --insecure=false forces cluster PKI.
 
 --dry-run runs "talosctl apply-config --dry-run" instead, which asks each node
 what the rendered config would change without changing it. Nothing is enacted,
@@ -294,6 +298,15 @@ once, however many of these flags are passed.`,
 
 					switch state {
 					case talosctl.ModeMaintenance:
+						// Unauthenticated: a reused address, a spoofed host or
+						// a passing TLS failure on a real node all look like
+						// this, and each would be handed the cluster's keys.
+						if !adopt && !onlyNew {
+							return fmt.Errorf("%s (%s) answers only the maintenance service, which "+
+								"authenticates nothing: it gets its config, CA keys included, only when "+
+								"asked\n  talman apply --adopt -n %s", n.Hostname, n.IPAddress, n.Hostname)
+						}
+
 						maintenance = true
 					case talosctl.ModeRunning:
 						maintenance = false
@@ -572,6 +585,8 @@ once, however many of these flags are passed.`,
 		"apply mode: "+strings.Join(applyModes, ", "))
 	cmd.Flags().BoolVarP(&insecure, "insecure", "i", false,
 		"force the maintenance service for every node (default: ask each node which API it answers)")
+	cmd.Flags().BoolVar(&adopt, "adopt", false,
+		"send configs to nodes in maintenance mode, over the unauthenticated maintenance service")
 	cmd.Flags().BoolVar(&onlyNew, "only-new", false,
 		"restrict the run to nodes that are in maintenance mode")
 
