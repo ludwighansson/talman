@@ -43,7 +43,7 @@ value".`,
 					Path  string `json:"path"`
 				}
 
-				type nodeJSON struct {
+				type chainJSON struct {
 					Hostname string      `json:"hostname"`
 					Role     string      `json:"role"`
 					Groups   []string    `json:"groups"`
@@ -51,11 +51,11 @@ value".`,
 				}
 
 				report := struct {
-					Nodes []nodeJSON `json:"nodes"`
-				}{Nodes: []nodeJSON{}}
+					Nodes []chainJSON `json:"nodes"`
+				}{Nodes: []chainJSON{}}
 
 				for _, n := range targets {
-					node := nodeJSON{Hostname: n.Hostname, Role: string(n.Role), Groups: n.Groups, Patches: []patchJSON{}}
+					node := chainJSON{Hostname: n.Hostname, Role: string(n.Role), Groups: n.Groups, Patches: []patchJSON{}}
 					if node.Groups == nil {
 						node.Groups = []string{}
 					}
