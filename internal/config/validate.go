@@ -194,6 +194,10 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 
 			seenGroup[g] = true
 
+			if g == RestWave {
+				add("%s: group %q is reserved: it names the nodes no rollout wave names", where, g)
+			}
+
 			if isReserved(g) {
 				add("%s: group %q is reserved: %s, %s and %s are assigned automatically from role",
 					where, g, GroupAll, GroupControlPlane, GroupWorker)

@@ -254,6 +254,12 @@ func (c *Config) Node(name string) (*Node, bool) {
 	return nil, false
 }
 
+// IsGroup reports whether name selects nodes: a role, or a group some node
+// declares. -g and rollout.waves both take one.
+func (c *Config) IsGroup(name string) bool {
+	return name == GroupControlPlane || name == GroupWorker || c.DeclaredGroups()[name]
+}
+
 // DeclaredGroups is the set of every group named by any node.
 func (c *Config) DeclaredGroups() map[string]bool {
 	groups := map[string]bool{}

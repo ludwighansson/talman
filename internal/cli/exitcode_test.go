@@ -845,3 +845,93 @@ func TestTalosctlGroup(t *testing.T) {
 		t.Errorf("an unknown group: exit %d, want 1", got)
 	}
 }
+
+// runHint runs args and returns the "continue with" command it printed.
+func runHint(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run(args) })
+
+	_, hint, ok := strings.Cut(stderr, "continue with: talman ")
+	if !ok {
+		return got, ""
+	}
+
+	hint, _, _ = strings.Cut(hint, "\n")
+
+	return got, hint
+}
+
+// TestRolloutHintsCarryOn: the command a pause or --until prints has to run,
+// and has to keep the selection the operator made.
+func TestRolloutHintsCarryOn(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes+`rollout:
+  waves:
+    - {groups: [blue], pause: true}
+    - [green, pink]
+`)
+
+	// The printed command runs, for a wave of several groups.
+	_, hint := runHint(t, "reboot", "-g", "worker", "--until", "blue")
+	if hint == "" {
+		t.Fatal("no continue hint after --until")
+	}
+
+	_ = os.WriteFile(log, nil, 0o644)
+
+	if got := run(strings.Fields(hint)); got != 0 {
+		t.Errorf("the hint %q does not run: exit %d", hint, got)
+	}
+
+	if order := rebooted(t, log); order != "10.0.0.3 10.0.0.4 10.0.0.5" {
+		t.Errorf("the hint rebooted %q, want the waves after blue", order)
+	}
+
+	// --until survives a pause before it.
+	_, hint = runHint(t, "reboot", "-g", "worker", "--until", "green")
+	if !strings.Contains(hint, "--until=green") {
+		t.Errorf("the pause hint %q dropped --until", hint)
+	}
+}
+
+// TestRolloutPauseOnlyAfterChange: a canary wave that is already done does
+// not stop every later run at itself.
+func TestRolloutPauseOnlyAfterChange(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes+`rollout:
+  waves:
+    - {groups: [blue], pause: true}
+`)
+
+	// Every node already runs the configured version: nothing to do in
+	// blue, so no reason to stop there.
+	if got := run([]string{"upgrade", "--detailed-exit-code"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	t.Setenv("STUB_STALE", "10.0.0.5")
+
+	_ = os.WriteFile(log, nil, 0o644)
+
+	if got := run([]string{"upgrade", "--detailed-exit-code"}); got != 2 {
+		calls, _ := os.ReadFile(log)
+		t.Errorf("exit %d, want 2: the stale node after the done canary was not reached\n%s", got, calls)
+	}
+}
+
+// TestWaveSelectionThatSelectsNothing is an error, not a quiet success.
+func TestWaveSelectionThatSelectsNothing(t *testing.T) {
+	exitFixtureWith(t, waveNodes+`rollout:
+  waves: [controlplane, blue, green]
+`)
+
+	for _, args := range [][]string{
+		{"upgrade", "--from", "green", "--until", "blue"},
+		{"upgrade", "-g", "pink", "--wave", "blue"},
+	} {
+		if got := run(args); got != 1 {
+			t.Errorf("%v: exit %d, want 1", args, got)
+		}
+	}
+}

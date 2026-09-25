@@ -416,10 +416,8 @@ func selectNodes(cfg *config.Config, names []string) ([]*config.Node, error) {
 		return render.Nodes(cfg, names)
 	}
 
-	declared := cfg.DeclaredGroups()
-
 	for _, g := range opts.groups {
-		if g != config.GroupControlPlane && g != config.GroupWorker && !declared[g] {
+		if !cfg.IsGroup(g) {
 			return nil, fmt.Errorf("-g %s: no node declares the group %q, and it is not a role", g, g)
 		}
 	}
