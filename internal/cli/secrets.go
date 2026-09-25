@@ -92,7 +92,7 @@ cluster that already exists.`,
 			// --force replaces the one bundle a running cluster trusts: the
 			// old one is kept, so a mistaken --from-controlplane-config can
 			// be undone.
-			if old, err := os.ReadFile(dest); err == nil && !toStdout {
+			if old, err := os.ReadFile(dest); err == nil {
 				backup, err := keepBundle(cfg, old, "pre-generate")
 				if err != nil {
 					return err

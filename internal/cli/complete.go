@@ -87,18 +87,9 @@ func refuseEmptySelectors(c *cobra.Command) error {
 			values = sv.GetSlice()
 		}
 
-		named := false
+		blank := func(v string) bool { return strings.TrimSpace(v) == "" }
 
-		for _, v := range values {
-			if strings.TrimSpace(v) == "" {
-				return fmt.Errorf("--%s was given an empty value: name a %s, or leave the flag out for every node",
-					name, name)
-			}
-
-			named = true
-		}
-
-		if !named {
+		if len(values) == 0 || slices.ContainsFunc(values, blank) {
 			return fmt.Errorf("--%s was given an empty value: name a %s, or leave the flag out for every node",
 				name, name)
 		}
