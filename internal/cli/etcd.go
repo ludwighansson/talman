@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -139,12 +141,16 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 		return err
 	}
 
-	if exists(path) {
-		return fmt.Errorf("%s appeared while the snapshot was taken; talman does not overwrite a snapshot",
-			render.Rel(path))
-	}
+	// A link rather than a rename, because a link refuses a destination
+	// that exists and a rename replaces it: the check before the stream is
+	// only a courtesy, and another run could land a snapshot on the same
+	// name in between. The staged name goes with the staging directory.
+	if err := os.Link(staged, path); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%s appeared while the snapshot was taken; talman does not overwrite a snapshot",
+				render.Rel(path))
+		}
 
-	if err := os.Rename(staged, path); err != nil {
 		return err
 	}
 
