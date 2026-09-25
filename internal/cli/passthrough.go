@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -89,7 +90,17 @@ talosctl's exit status is talman's.`,
 
 			argv = append(argv, args...)
 
-			if err := runner(cfg).Stream(argv...); err != nil {
+			// What talosctl said, kept only to recognise one answer: the
+			// talosconfig lists every node, and a command talosctl runs on
+			// exactly one refuses them all. The last few KiB are enough.
+			said := &tail{max: 8 << 10}
+
+			if err := runner(cfg).StreamTee(said, argv...); err != nil {
+				if len(addrs) == 0 && strings.Contains(said.String(), "requires exactly one node") {
+					fmt.Fprintln(os.Stderr, "talman: this talosctl command runs on one node, and the talosconfig "+
+						"lists every node: name one with -n, e.g. `talman ctl -n <node> "+strings.Join(args, " ")+"`")
+				}
+
 				var status *talosctl.StatusError
 				if errors.As(err, &status) {
 					return exitCodeError{status.Code}
@@ -174,3 +185,20 @@ func passthroughArgs(raw []string) (nodes, rest []string, help bool, err error) 
 
 	return nodes, nil, false, nil
 }
+
+// tail keeps the last max bytes written to it.
+type tail struct {
+	max int
+	buf []byte
+}
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if over := len(t.buf) - t.max; over > 0 {
+		t.buf = t.buf[over:]
+	}
+
+	return len(p), nil
+}
+
+func (t *tail) String() string { return string(t.buf) }

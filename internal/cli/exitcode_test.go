@@ -44,6 +44,15 @@ for a in "$@"; do
 	esac
 done
 
+# read, as talosctl's, runs on exactly one node, and names how many it got.
+case " $* " in
+*" read "*)
+	case " $* " in
+	*" --nodes "*) ;;
+	*) echo 'command "read" requires exactly one node (got 5)' >&2; exit 1 ;;
+	esac ;;
+esac
+
 # rotate-ca, as talosctl's, runs through exactly one node: none falls back to
 # the talosconfig's every node, and more than one is refused.
 case " $* " in
@@ -1069,5 +1078,23 @@ func TestResetResumeKeepsGracefulForWorkers(t *testing.T) {
 	_, hint = runHint(t, "reset", "--yes")
 	if !strings.Contains(hint, "--graceful=false") {
 		t.Errorf("resuming with only the control plane left: %q, want --graceful=false", hint)
+	}
+}
+
+// A single-node talosctl command through ctl without -n meets the
+// talosconfig's every node and is refused; talman says what to do about it.
+func TestCtlSingleNodeCommandHint(t *testing.T) {
+	exitFixtureWith(t, waveNodes)
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"ctl", "read", "/etc/hostname"}) })
+
+	if got != 1 {
+		t.Errorf("exit %d, want talosctl's 1", got)
+	}
+
+	if !strings.Contains(stderr, "name one with -n, e.g. `talman ctl -n <node> read /etc/hostname`") {
+		t.Errorf("no hint:\n%s", stderr)
 	}
 }
