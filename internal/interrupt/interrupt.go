@@ -49,7 +49,12 @@ var (
 	cleanups = map[int]func(){}
 	nextID   int
 
+	// runMu guards running and killing apart from mu, so that starting a
+	// process -- a fork and an exec -- holds up neither other starts nor
+	// anyone asking for Context.
+	runMu   sync.Mutex
 	running = map[*os.Process]bool{}
+	killing bool
 
 	// interruptedBy is the first signal, for ExitCode.
 	interruptedBy os.Signal
@@ -160,30 +165,37 @@ func Command(name string, args ...string) *exec.Cmd {
 // leave a talosctl that ignored SIGTERM carrying on against the cluster after
 // talman is gone.
 func Run(cmd *exec.Cmd) error {
-	mu.Lock()
-
 	if err := cmd.Start(); err != nil {
-		mu.Unlock()
-
 		return err
 	}
 
 	proc := cmd.Process
+
+	runMu.Lock()
+
+	// Started while a forced exit was already killing the others: it would
+	// have been missed, so it goes the same way.
+	if killing {
+		_ = proc.Kill()
+	}
+
 	running[proc] = true
-	mu.Unlock()
+	runMu.Unlock()
 
 	defer func() {
-		mu.Lock()
+		runMu.Lock()
 		delete(running, proc)
-		mu.Unlock()
+		runMu.Unlock()
 	}()
 
 	return cmd.Wait()
 }
 
 func killRunning() {
-	mu.Lock()
-	defer mu.Unlock()
+	runMu.Lock()
+	defer runMu.Unlock()
+
+	killing = true
 
 	for proc := range running {
 		_ = proc.Kill()
