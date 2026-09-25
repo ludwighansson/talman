@@ -1220,9 +1220,18 @@ old one, encrypted if the old one was. The old one is kept in the gitignored
 output directory, since it still holds every key a rotation leaves alone, and
 the talosconfig is replaced with the one the new CA signed.
 
-Whether the new bundle can be encrypted is checked before anything rotates, so
-a missing `sops` or a `.sops.yaml` rule that no longer matches refuses the run
-instead of stranding it halfway. A `talosconfig.rotated` left by a rotation
+Before anything rotates, talman checks it will be able to finish: that the
+bundle can be read back out of a control plane's running config, and that the
+new one can be encrypted the way the old one is. A cluster it cannot read, a
+missing `sops`, or a `.sops.yaml` rule that no longer matches refuses the run
+instead of stranding it halfway.
+
+If a rotation does stop after the nodes have changed, one command finishes
+it, reading the bundle back and putting the rotated talosconfig in place:
+
+```console
+$ talman rotate-ca --finish
+``` A `talosconfig.rotated` left by a rotation
 that did not finish is never deleted — it may be the only talosconfig the
 cluster still accepts — and rotate-ca refuses to start until you have dealt
 with it.
