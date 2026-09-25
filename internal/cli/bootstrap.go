@@ -273,3 +273,39 @@ func waitForEtcd(tal *talosctl.Runner, tc string, n *config.Node, timeout time.D
 		}
 	}
 }
+
+// refuseNewNodes refuses a run that would reach new nodes -- in maintenance
+// mode -- without being asked to onboard them, naming every one and the
+// command that onboards them. Control planes already asked are not asked
+// again.
+func refuseNewNodes(tal *talosctl.Runner, tc string, targets []*config.Node, known []cpState) error {
+	asked := make(map[*config.Node]talosctl.Mode, len(known))
+	for _, st := range known {
+		asked[st.node] = st.mode
+	}
+
+	modes, _ := eachNode(targets, defaultParallel, func(n *config.Node) (talosctl.Mode, error) {
+		if m, ok := asked[n]; ok {
+			return m, nil
+		}
+
+		return tal.Mode(tc, n.IPAddress), nil
+	})
+
+	var names, args []string
+
+	for i, n := range targets {
+		if modes[i] == talosctl.ModeMaintenance {
+			names = append(names, n.Hostname)
+			args = append(args, "-n "+n.Hostname)
+		}
+	}
+
+	if len(names) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("%d new node(s), in maintenance mode: %s\n  the maintenance service authenticates "+
+		"nothing, so a new node gets its config, CA keys included, only when asked\n  %s",
+		len(names), strings.Join(names, ", "), talmanCmd("apply --onboard-new-nodes "+strings.Join(args, " ")))
+}
