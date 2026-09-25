@@ -332,9 +332,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 						say(fmt.Sprintf("== %s (%s) has its config; waiting for it to join the cluster\n",
 							n.Hostname, n.IPAddress))
 
-						logf := func(format string, args ...any) {
-							say(detail + strings.TrimLeft(fmt.Sprintf(format+"\n", args...), " "))
-						}
+						logf := detailLog(say)
 
 						if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
 							return err
@@ -456,9 +454,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				}
 
 				if wait {
-					logf := func(format string, args ...any) {
-						say(detail + strings.TrimLeft(fmt.Sprintf(format+"\n", args...), " "))
-					}
+					logf := detailLog(say)
 
 					if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
 						return fmt.Errorf("%w\n  %s", err, waitFailedHint(targets))
@@ -917,4 +913,12 @@ func waitFailedHint(targets []*config.Node) string {
 	}
 
 	return "re-run once it recovers, or pass --wait=false to roll on regardless"
+}
+
+// detailLog prints a progress line under a node's heading, as the detail it
+// is.
+func detailLog(say func(string)) func(string, ...any) {
+	return func(format string, args ...any) {
+		say(detail + strings.TrimLeft(fmt.Sprintf(format+"\n", args...), " "))
+	}
 }
