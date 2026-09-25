@@ -1,4 +1,5 @@
-// Package interrupt turns SIGINT and SIGTERM into an orderly stop.
+// Package interrupt turns SIGINT, SIGTERM, SIGHUP and SIGQUIT into an orderly
+// stop.
 //
 // Left to Go's default, either signal ends the process on the spot: no
 // deferred function runs, so the decrypted secrets bundle a render stages in
@@ -79,7 +80,10 @@ func Interrupted() bool { return Context().Err() != nil }
 // Watch installs the signal handler. The returned function uninstalls it.
 func Watch() (stop func()) {
 	ch := make(chan os.Signal, 2)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	// SIGHUP is a terminal closing or an ssh session dropping, and SIGQUIT
+	// is Ctrl-\: left to Go's defaults, both end the process on the spot,
+	// with the decrypted bundle still in $TMPDIR.
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 
 	done := make(chan struct{})
 
