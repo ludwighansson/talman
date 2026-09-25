@@ -30,21 +30,13 @@ func newResetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Wipe nodes and return them to maintenance mode",
-		Long: `Reset returns a node to maintenance mode. The EPHEMERAL and STATE partitions
-are wiped -- all data, and the machine config with it -- and the node reboots
-with Talos still installed, waiting for a config. Run against enough control
-planes, it destroys the cluster.
+		Long: `Reset wipes the EPHEMERAL and STATE partitions and reboots each node into
+maintenance mode, Talos still installed. It asks for the cluster name first,
+unless --yes. Workers go before control planes, each reached at its own
+address. --wipe-labels narrows what is wiped, --wipe-disk wipes the whole
+disk, --reboot=false shuts down instead.
 
-That is talosctl's --system-labels-to-wipe, not its default: left to itself
-talosctl wipes the disk whole, bootloader included, which leaves a machine with
-nothing to boot rather than a node in maintenance mode. --wipe-disk asks for
-that reinstall-me state deliberately.
-
-Workers are reset before control planes, and each node is reached at its own
-address rather than through the talosconfig endpoints. Both exist for the same
-reason: the endpoints are the control planes, so wiping those first destroys
-the path to every node still waiting -- and a graceful reset needs a live
-cluster to leave.`,
+More in the README: "Rolling changes out safely".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun

@@ -47,47 +47,19 @@ func newApplyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply rendered machine configs to the cluster",
-		Long: `Apply renders each selected node's machine config and applies it, one node at a
-time, waiting for the node to come back before moving to the next. --health
-also checks that the cluster is healthy between nodes; it is off by default,
-because on a cluster that is already unhealthy it stops the very apply meant
-to fix it.
+		Long: `Apply renders each selected node's config and sends it, one node at a time,
+waiting for each to come back before the next. Control planes always go
+alone; --parallel batches workers.
 
-Each node is asked which API it answers before its config is sent. A node that
-has joined is addressed with cluster PKI. One in maintenance mode -- never
-configured, or reset -- can only be reached through the maintenance service,
-which authenticates nothing: whatever answers at the address gets the whole
-config, a control plane's CA keys included. So talman sends it only when asked
-to adopt: --adopt adopts any node found in maintenance mode, and --only-new
-restricts the run to those nodes and adopts them. Without either, apply stops
-at such a node and says how to adopt it. -i forces the maintenance service for
-every node, and --insecure=false forces cluster PKI.
+Nodes in maintenance mode are only configured with --adopt or --only-new: the
+maintenance service authenticates nothing, and a config carries the CA keys.
 
---dry-run runs "talosctl apply-config --dry-run" instead, which asks each node
-what the rendered config would change without changing it. Nothing is enacted,
-so nothing is staggered: every node is asked at once and the waiting and
-health checking are skipped.
+--dry-run asks each node what would change, --diff prints that before
+applying, and --detailed-exit-code turns it into an exit code (2 changed, 0
+unchanged, 1 error). Printed diffs have this cluster's secrets redacted.
 
---diff prints that same answer instead of reducing it to an exit code: each
-node is asked what would change, the answer is printed under its heading, and
-then the config is sent. --dry-run stops after the asking, so it prints the
-diff by itself.
-
-A diff is a diff of the machine configuration, so it carries what that carries:
-join tokens, the cluster secret, the machine CA. This cluster's own secrets are
-replaced with [redacted] before anything is printed, by value rather than by
-guessing which fields are sensitive -- talman decrypted them and rendered them
-into the config it is sending, so it knows exactly what to look for: the
-secrets bundle, the values SOPS encrypted in any patch, and anything a patch
-read from the environment. --redact-secrets=false prints them. Secrets talman
-has never seen, such as those of a cluster a node used to belong to, cannot be
-found this way; and when talman cannot read the ones it should know, --diff is
-refused and --dry-run prints its answer without the diff.
-
---detailed-exit-code reports the answer as an exit code: 2 when a node changed
-or would change, 0 when none did, 1 on error. It is the same question either
-way, because an apply asks each node for its diff before sending the config --
-once, however many of these flags are passed.`,
+More in the README: "Adopting nodes", "Rolling changes out safely" and
+"Exit codes for CI".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun

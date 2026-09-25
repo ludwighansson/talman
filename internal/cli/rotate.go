@@ -28,23 +28,16 @@ func newRotateCACmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rotate-ca",
 		Short: "Rotate the cluster's Talos and Kubernetes API CAs, and the secrets bundle with them",
-		Long: `Rotate-ca runs "talosctl rotate-ca" against every node in the config, which
-generates new root CAs for the Talos API and the Kubernetes API and rolls them
-out gracefully: the new CA is accepted everywhere before anything is issued
-from it, and the old one is dropped last.
+		Long: `Rotate-ca rotates the Talos API and Kubernetes API CAs across every node, then
+rebuilds the secrets bundle from a control plane so the next apply does not
+put the old CAs back. The old bundle is kept in the output directory, and the
+talosconfig is replaced with one signed by the new CA.
 
-That leaves the secrets bundle holding the old CAs, and the next "talman
-apply" would put them back. So once the rotation has finished, talman reads a
-control plane's machine config, extracts the bundle from it as
-"talman secrets generate --from-controlplane-config" does, and writes it over
-secrets.sops.yaml -- encrypted if the old one was. The old bundle is kept
-beside it, and the talosconfig is replaced with the one signed by the new CA.
+--dry-run shows what talosctl would do. A real rotation asks for the cluster
+name first, unless --yes. Afterwards: commit the bundle, run "talman render",
+and "talman kubeconfig" if the Kubernetes CA changed.
 
---dry-run asks talosctl what it would do and changes nothing. A real rotation
-asks for the cluster name first, unless --yes.
-
-Afterwards, commit the new bundle, run "talman render", and fetch a new
-"talman kubeconfig" if the Kubernetes CA was rotated.`,
+More in the README: "Rotating the CAs".`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			rec := currentRun
