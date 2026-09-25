@@ -278,8 +278,14 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 				fmt.Fprintln(out, "  add a .sops.yaml with a creation rule for secrets.sops.yaml (or pass --age)")
 			}
 
-			fmt.Fprintln(out, "  talman secrets generate   the cluster's CAs and keys, encrypted")
-			fmt.Fprintln(out, "  talman render             then read what it wrote")
+			// Naming the config written elsewhere, so the commands reach it.
+			talman := "talman"
+			if dir != "." {
+				talman += " -c " + shellQuote(render.Rel(path))
+			}
+
+			fmt.Fprintf(out, "  %s secrets generate   the cluster's CAs and keys, encrypted\n", talman)
+			fmt.Fprintf(out, "  %s render             then read what it wrote\n", talman)
 
 			return nil
 		},

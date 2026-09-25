@@ -91,7 +91,7 @@ More in the README: "Everything else talosctl does".`,
 			if err := runner(cfg).StreamTee(said, argv...); err != nil {
 				if len(addrs) == 0 && strings.Contains(said.String(), "requires exactly one node") {
 					fmt.Fprintln(os.Stderr, "talman: this talosctl command runs on one node, and the talosconfig "+
-						"lists every node: name one with -n, e.g. `talman ctl -n <node> "+strings.Join(args, " ")+"`")
+						"lists every node: name one with -n, e.g. `"+talmanCmd("ctl -n <node> "+strings.Join(args, " "))+"`")
 				}
 
 				var status *talosctl.StatusError

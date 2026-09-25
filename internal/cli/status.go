@@ -126,7 +126,7 @@ More in the README: "Seeing what is out there".`,
 			// they said nothing at all.
 			if !offline && quiet(reports) && askCluster(cfg, tal, tc) == clusterAbsent {
 				fmt.Fprintln(cmd.OutOrStdout(), "cluster: not bootstrapped — a node with a config but no "+
-					"cluster to join stays quiet; run `talman apply --bootstrap`")
+					"cluster to join stays quiet; run `"+talmanCmd("apply --bootstrap")+"`")
 			}
 
 			return nil
