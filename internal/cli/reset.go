@@ -205,17 +205,22 @@ cluster to leave.`,
 					// different set of machines, and should ask about them.
 					flags := replayFlags(cmd, "node", "yes")
 
+					remaining := without(targets[done:], succeeded)
+
 					// This run chose to skip leaving etcd because it was
-					// destroying the cluster. The rest of the control planes
-					// alone are no longer every control plane, so without
-					// saying so the resumed run would try to leave a cluster
-					// with too few members left to let it.
-					if destroying && !cmd.Flags().Changed("graceful") {
+					// destroying the cluster. Once only some control planes
+					// are left they are no longer every control plane, so
+					// without saying so the resumed run would try to leave a
+					// cluster with too few members to let it. While workers
+					// remain it is not needed -- workers go first, so every
+					// control plane remains too, and the resumed run sees the
+					// teardown for itself -- and it would cost the workers
+					// the graceful leave this run was giving them.
+					if destroying && !cmd.Flags().Changed("graceful") && onlyControlPlanes(remaining) {
 						flags = append(flags, "--graceful=false")
 					}
 
-					return fmt.Errorf("%w\n%s", err,
-						resumeHint("reset", "reset", without(targets[done:], succeeded), flags...))
+					return fmt.Errorf("%w\n%s", err, resumeHint("reset", "reset", remaining, flags...))
 				}
 
 				done += len(batch)
@@ -391,4 +396,14 @@ func typeClusterName(what, clusterName, consequence string) error {
 	}
 
 	return nil
+}
+
+func onlyControlPlanes(nodes []*config.Node) bool {
+	for _, n := range nodes {
+		if !n.IsControlPlane() {
+			return false
+		}
+	}
+
+	return len(nodes) > 0
 }
