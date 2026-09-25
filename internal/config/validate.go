@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -63,6 +64,7 @@ func (c *Config) Validate() error {
 	}
 
 	c.validateEndpoint(add)
+	c.validateOutputDir(add)
 
 	if c.TalosVersion == "" {
 		add("talosVersion is required: pinning it is what makes renders reproducible " +
@@ -296,5 +298,29 @@ func (c *Config) validateValuesFiles(add func(string, ...any)) {
 		for _, rel := range c.Nodes[i].ValuesFiles {
 			checkFile(add, "node "+c.Nodes[i].Hostname+": valuesFiles", rel, c.resolvePath(rel), notDir)
 		}
+	}
+}
+
+// validateOutputDir refuses an output directory that holds the config.
+//
+// talman ignores the output directory whole in git, since it holds the
+// rendered secrets, so one that is the cluster directory or a parent of it
+// would hide talman.yaml and the encrypted bundle from git along with them.
+func (c *Config) validateOutputDir(add func(string, ...any)) {
+	if c.OutputDir == "" || c.Dir == "" {
+		return
+	}
+
+	out := c.OutputPath()
+
+	rel, err := filepath.Rel(out, c.Dir)
+	if err != nil {
+		return
+	}
+
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		add("outputDir %q holds the config itself: talman ignores it whole in git, which would hide "+
+			"talman.yaml and the bundle too; use a directory of its own, such as the default %q",
+			c.OutputDir, DefaultOutputDir)
 	}
 }
