@@ -4,12 +4,9 @@
       "additionalProperties": false,
       "properties": {
         "bootloader": {
-          "enum": [
-            "none",
-            "dual-boot",
-            "sd-boot",
-            "grub"
-          ]
+          "description": "none, dual-boot, sd-boot or grub, in any case.",
+          "pattern": "^([nN][oO][nN][eE]|[dD][uU][aA][lL]-[bB][oO][oO][tT]|[sS][dD]-[bB][oO][oO][tT]|[gG][rR][uU][bB])$",
+          "type": "string"
         },
         "diskImage": {
           "$ref": "#/$defs/diskImage"
