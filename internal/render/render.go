@@ -3,6 +3,7 @@
 package render
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -42,6 +43,11 @@ type Renderer struct {
 	secretsFile string
 	// cleanup removes the workspace, for Close.
 	cleanup func()
+
+	// configText is talman.yaml as written, read once: a value it spells
+	// out is no secret. See ordinary.
+	configOnce sync.Once
+	configText []byte
 
 	// secrets is every secret value the pass has rendered into a config: the
 	// bundle, the values SOPS decrypted out of patches, and whatever a
@@ -277,7 +283,11 @@ func (r *Renderer) renderPatch(ref config.PatchRef, ctx template.Context) ([]byt
 		}
 	}
 
-	rendered, err := template.RenderSeeing(ref.Rel, raw, ctx, func(v string) { r.secrets.Add(v) })
+	rendered, err := template.RenderSeeing(ref.Rel, raw, ctx, func(v string) {
+		if !r.ordinary(v) {
+			r.secrets.Add(v)
+		}
+	})
 	if err != nil {
 		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
 	}
@@ -609,4 +619,29 @@ func (r *Renderer) redacted(err error) error {
 	}
 
 	return &redactedError{msg: r.secrets.Redactor().String(err.Error()), err: err}
+}
+
+// plainWord is a value that is only letters and dashes: staging, eu-west,
+// production.
+var plainWord = regexp.MustCompile(`^[A-Za-z-]+$`)
+
+// ordinary reports whether a value a template read from the environment is
+// plainly not a secret, so it is left out of redaction: a short plain word,
+// or a value that talman.yaml itself spells out -- a Talos version, the
+// cluster name. Hiding those would blank every mention of them in a diff,
+// and whatever sits in a committed config is no secret.
+func (r *Renderer) ordinary(v string) bool {
+	v = strings.TrimSpace(v)
+
+	if len(v) < 12 && plainWord.MatchString(v) {
+		return true
+	}
+
+	r.configOnce.Do(func() {
+		if r.Cfg != nil && r.Cfg.Path != "" {
+			r.configText, _ = os.ReadFile(r.Cfg.Path)
+		}
+	})
+
+	return v != "" && bytes.Contains(r.configText, []byte(v))
 }

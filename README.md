@@ -838,7 +838,9 @@ exactly what to look for, wherever it appears: the secrets bundle, in both the
 base64 form it stores and the PEM blocks some of it is written out as; the
 values SOPS encrypted in any patch, in every document of it; and anything of
 six characters or more a patch read from the environment with `env` or
-`expandenv`. Each is also found in its base64 forms, since a template that
+`expandenv` — except a short plain word like `staging`, or a value
+`talman.yaml` itself spells out, like a version, which are plainly not
+secrets and would otherwise be blanked everywhere they appear. Each is also found in its base64 forms, since a template that
 writes a secret into an inline manifest usually pipes it through `b64enc`.
 The same goes for a rejection: when talosctl refuses a config and quotes the
 offending document, talman takes the secrets out of that too.

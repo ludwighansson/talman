@@ -687,3 +687,30 @@ func TestTemplatesGetTheirOwnValues(t *testing.T) {
 		t.Errorf("a template changed the config itself: %v, %v", cfg.Values, cfg.Nodes[0].Values)
 	}
 }
+
+// TestOrdinaryEnvironmentValues: a value read from the environment is a
+// secret for redaction's purposes unless it plainly is not -- a short plain
+// word, or something talman.yaml itself spells out.
+func TestOrdinaryEnvironmentValues(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "talman.yaml")
+
+	if err := os.WriteFile(path, []byte("clusterName: sto1-prod\ntalosVersion: v1.14.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Renderer{Cfg: &config.Config{Path: path}}
+
+	for v, want := range map[string]bool{
+		"staging":            true,  // a plain word
+		"v1.14.0":            true,  // in talman.yaml
+		"sto1-prod":          true,  // in talman.yaml
+		"hunter2x9":          false, // a password
+		"tskey-auth-kQx7aBc": false, // a token, however it starts
+		"production-cluster": false, // a plain word, but long enough to be something
+	} {
+		if got := r.ordinary(v); got != want {
+			t.Errorf("ordinary(%q) = %t, want %t", v, got, want)
+		}
+	}
+}
