@@ -286,10 +286,20 @@ func (r *Runner) Combined(args ...string) ([]byte, error) {
 // Stream runs talosctl with the caller's stdio attached, for interactive and
 // long-running commands where progress matters more than capture.
 func (r *Runner) Stream(args ...string) error {
+	return r.StreamTee(nil, args...)
+}
+
+// StreamTee is Stream, also copying talosctl's stderr to tee as it goes, for
+// a caller that wants to read what talosctl said as well as show it.
+func (r *Runner) StreamTee(tee io.Writer, args ...string) error {
 	cmd := interrupt.Command(r.Bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	if tee != nil {
+		cmd.Stderr = io.MultiWriter(os.Stderr, tee)
+	}
 
 	r.echo(args)
 
