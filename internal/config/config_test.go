@@ -569,7 +569,7 @@ nodes:
 	}
 }
 
-// TestPatchPathOrderIsDeterministic guards the promise that validation lists
+// TestPatchPathOrderIsDeterministic checks that validation lists
 // every problem in one pass: Go randomises map iteration, so without an
 // explicit sort the same broken config reports its errors in a different
 // order on every run and cannot be diffed or worked through top to bottom.

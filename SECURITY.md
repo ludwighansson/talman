@@ -12,12 +12,6 @@ Please report privately, through GitHub's
 rather than in a public issue. Include what you ran, what happened, and what
 you expected; a config that reproduces it helps most.
 
-## Supported versions
-
-Only the latest release is supported. Within 1.x an upgrade does not break a
-working cluster directory (see [Compatibility](README.md#compatibility)), so
-the way to pick up a fix is to upgrade.
-
 ## Scope
 
 In scope, for example:

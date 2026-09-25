@@ -35,9 +35,7 @@ func (f outputFormat) json() bool { return f == outputJSON }
 
 // addOutputFlag registers -o/--output.
 //
-// The text form is for reading and may change to read better. The JSON form
-// is for scripts, and is the one that keeps its shape: fields are added to it,
-// never renamed or removed, within a major version.
+// The text form is for reading, the JSON form for scripts.
 func addOutputFlag(cmd *cobra.Command, target *outputFormat) {
 	*target = outputText
 	cmd.Flags().VarP(target, "output", "o", "output format: text or json")

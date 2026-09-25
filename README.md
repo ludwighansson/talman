@@ -6,8 +6,7 @@ configuration patches.
 > [!IMPORTANT]
 > talman drives real clusters. Read what `render` writes and what
 > `apply --dry-run` reports before you `apply`, and pin a tagged release rather
-> than tracking `main`. What a release promises to keep stable is under
-> [Compatibility](#compatibility).
+> than tracking `main`.
 
 ```console
 $ talman patches -n development-worker-01
@@ -127,8 +126,8 @@ $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version"
 v1.14.1
 ```
 
-That pinning is the one cost of the image: talman's own promise is that a new
-Talos release needs no talman release, and an image ties you to the talosctl it
+That pinning is the one cost of the image: talman is built so that a new Talos
+release needs no talman release, and an image ties you to the talosctl it
 shipped with. `talosctl:` in talman.yaml can point at a newer binary mounted
 into the container when that matters.
 
@@ -482,8 +481,7 @@ select both. `-v` echoes every
 so does `TALMAN_CONFIG` when `-c` is not given.
 
 `status`, `patches`, `schematic id`, `image url` and `version` take
-`-o json`. The text they print is for reading and may change to read better;
-the JSON is for scripts, and keeps its shape.
+`-o json`: the text they print is for reading, the JSON for scripts.
 
 ```console
 $ talman status -o json | jq -r '.nodes[] | select(.talos.running and .talos.running != .talos.configured) | .hostname'
@@ -1247,29 +1245,6 @@ with it.
 commit the new bundle, `talman render`, and fetch a new `talman kubeconfig` if
 the Kubernetes CA changed. Should anything fail after the rotation itself, the
 error says so and spells out the two commands that finish the job by hand.
-
-## Compatibility
-
-talman follows [semantic versioning](https://semver.org/). Within 1.x, these
-do not change in a way that breaks what already works:
-
-- **The config schema, `talman.dev/v1`.** Keys may be added; none is renamed,
-  removed or given a new meaning. A schema that has to break gets a new
-  `apiVersion`, and talman says so rather than misreading it.
-- **The template scope** patches see: `.Cluster`, `.Node`, `.Values` and
-  their fields, and the patch order.
-- **Commands and flags.** Flags may be added. None is removed or renamed, and
-  no default changes what a command does to a cluster.
-- **Exit codes**, including `--detailed-exit-code`'s 0/2/1.
-- **`-o json`**, which gains fields and keeps the ones it has.
-- **Metric names and labels.**
-- **The rendered output layout**: `<outputDir>/<hostname>.yaml`,
-  `talosconfig` and `kubeconfig`.
-
-Not covered: the text commands print for people, which may be reworded, and
-anything `talosctl` itself prints, which talman passes through. The talosctl
-floor (currently v1.14.0) may rise in a minor release, when a Talos release
-talman supports needs a newer one, and the release notes say so.
 
 ## Tests
 

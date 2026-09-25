@@ -64,7 +64,7 @@ func (c *Config) PatchChain(n *Node) []PatchRef {
 func (c *Config) AllPatchPaths() []PatchRef {
 	var out []PatchRef
 
-	// Sorted, because Go randomises map iteration and validation promises to
+	// Sorted, because Go randomises map iteration and validation sets out to
 	// list every problem in one pass -- an order that reshuffles between
 	// identical runs cannot be diffed or worked through top to bottom.
 	groups := make([]string, 0, len(c.Patches))

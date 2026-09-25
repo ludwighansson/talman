@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// TestJSONShapes pins the -o json output of the commands whose JSON the
-// README promises only ever grows: a key renamed, or an empty list turned
-// null, breaks the scripts that read it, and fails here first.
+// TestJSONShapes pins the -o json output scripts read: a key renamed, or an
+// empty list turned null, breaks them, and fails here first.
 func TestJSONShapes(t *testing.T) {
 	dir, _ := exitFixtureWith(t, `  - hostname: w1
     ipAddress: 10.0.0.2

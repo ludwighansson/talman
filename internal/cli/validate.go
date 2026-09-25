@@ -124,7 +124,7 @@ type patchRead struct {
 
 // read reads a patch, decrypting it if it is encrypted. An encrypted patch
 // this machine has no means to decrypt -- no key for it, or no sops at all --
-// is recorded in undecryptable and returned as nil: validate promises to need
+// is recorded in undecryptable and returned as nil: validate is meant to need
 // no secrets, so lacking them is a limit on what it checks, not a problem in
 // the config. Any other failure is one: a file the key opens but sops cannot,
 // from a bad merge or a hand edit, is broken for everyone.

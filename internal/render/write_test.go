@@ -11,7 +11,7 @@ import (
 )
 
 // TestWriteAllGuardsSecrets holds the output directory to what the README
-// promises: configs 0600 in a 0700 directory, behind a .gitignore that
+// describes: configs 0600 in a 0700 directory, behind a .gitignore that
 // ignores everything, and an operator's own .gitignore that already ignores
 // everything left alone.
 func TestWriteAllGuardsSecrets(t *testing.T) {

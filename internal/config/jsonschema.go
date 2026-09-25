@@ -17,8 +17,7 @@ import (
 //
 //	# yaml-language-server: $schema=https://raw.githubusercontent.com/ludwighansson/talman/main/schema/talman.v1.json
 //
-// It describes talman.dev/v1, which only ever gains keys, so the copy on main
-// is right for every v1 config.
+// It describes talman.dev/v1 as the code on main reads it.
 const SchemaURL = "https://raw.githubusercontent.com/ludwighansson/talman/main/schema/talman.v1.json"
 
 // JSONSchema describes talman.yaml as a JSON schema, generated from the types
