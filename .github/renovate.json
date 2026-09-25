@@ -10,16 +10,10 @@
   "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
-      "description": "go.yaml.in/yaml/v4 is a release candidate, so updates within the v4 pre-release track are expected rather than exceptional.",
+      "description": "go.yaml.in/yaml/v4 is a release candidate, so updates within the v4 pre-release track are expected rather than exceptional. It is also the encoder image-factory computes schematic IDs with, so it stays in step with upstream rather than moving to another library; TestUpstreamParity is what catches the two diverging.",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["go.yaml.in/yaml/v4"],
       "ignoreUnstable": false
-    },
-    {
-      "description": "getsops pulls the cloud KMS SDKs in with it, so a sops bump moves a large tail of indirect dependencies. Keeping them together lets CI prove the combination before it lands.",
-      "groupName": "sops",
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["github.com/getsops/sops/v3", "filippo.io/age"]
     },
     {
       "description": "Everything else non-major in one PR; CI gates it.",

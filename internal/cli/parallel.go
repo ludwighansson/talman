@@ -258,3 +258,29 @@ func (o *inOrder) finish(n *config.Node) {
 		}
 	}
 }
+
+// nodeArgs spells out -n for each node, or nothing when the selection is the
+// whole cluster anyway.
+func nodeArgs(nodes []*config.Node, total int) string {
+	if len(nodes) == total {
+		return ""
+	}
+
+	var b strings.Builder
+
+	for _, n := range nodes {
+		b.WriteString(" -n " + n.Hostname)
+	}
+
+	return b.String()
+}
+
+// configArg spells out -c for a hint, when the run named its config, so the
+// command it suggests reaches the same cluster.
+func configArg() string {
+	if opts.configFile == "" {
+		return ""
+	}
+
+	return " -c " + shellQuote(opts.configFile)
+}

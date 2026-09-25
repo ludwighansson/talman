@@ -1,6 +1,12 @@
 package factory
 
-import "testing"
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 // TestSchematicIDs pins the schematic ID algorithm.
 //
@@ -138,7 +144,7 @@ func TestInstallerURL(t *testing.T) {
 		},
 		{
 			name: "secureboot inserts the suffix",
-			cfg:  Config{SecureBoot: true},
+			cfg:  Config{SecureBoot: new(true)},
 			want: "factory.talos.dev/metal-installer-secureboot/abc:v1.14.0",
 		},
 		{
@@ -179,5 +185,173 @@ func TestInstallerURLReportsBadTemplate(t *testing.T) {
 	_, err := Config{InstallerURLTmpl: "{{.Nope"}.InstallerURL("abc", "v1.14.0")
 	if err == nil {
 		t.Fatal("expected an error for a malformed template, got nil")
+	}
+}
+
+// TestUpstreamParity pins IDs computed by image-factory v1.7.0's own
+// pkg/schematic (Unmarshal, then ID) for the same input. talman re-declares
+// the schematic types rather than importing them, so this is the only thing
+// that notices when the two disagree -- which is how `bootloader`, an enum
+// upstream and a plain string here, once produced IDs the factory never
+// would.
+func TestUpstreamParity(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"empty", "customization: {}\n", VanillaID},
+		{"bootloader none is the zero value", "customization:\n  bootloader: none\n", VanillaID},
+		{"sd-boot", "customization:\n  bootloader: sd-boot\n",
+			"9ed5fecdacb36b5c5427b87d409f1065cfb2df69b0f71c58b868d9d466d8dab3"},
+		{"names are case-insensitive", "customization:\n  bootloader: SD-BOOT\n",
+			"9ed5fecdacb36b5c5427b87d409f1065cfb2df69b0f71c58b868d9d466d8dab3"},
+		{"grub", "customization:\n  bootloader: grub\n",
+			"39d496b2cbdb6265d3b714514c5334bf010f1b4d31b23b9e38c80fb2f3ad7ecb"},
+		{"dual-boot", "customization:\n  bootloader: dual-boot\n",
+			"43a1a6104d8dcd6547983f4ed13abb6f5e8a1b2fdad796c69e7db6e95d122884"},
+		{"every field", `overlay:
+  image: siderolabs/sbc-raspberrypi
+  name: rpi_generic
+  options:
+    configTxtAppend: dtoverlay=disable-bt
+customization:
+  extraKernelArgs: [console=ttyS0, net.ifnames=0]
+  meta:
+    - key: 12
+      value: '{"a":1}'
+  systemExtensions:
+    officialExtensions: [siderolabs/iscsi-tools, siderolabs/drbd]
+  bootloader: grub
+  secureboot:
+    enrollKeys: force
+    includeWellKnownCertificates: true
+  diskImage:
+    sectorSize: 4096
+`, "95fda781b9dfb0c0dda9d34bade4de002c3f64665d3e73674a2b1768babd2ef9"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := Unmarshal([]byte(tt.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := s.ID()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != tt.want {
+				t.Errorf("ID() = %s, upstream computes %s", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := Unmarshal([]byte("customization:\n  bootloader: bogus\n")); err == nil {
+		t.Error("an unknown bootloader was accepted; upstream rejects it")
+	}
+}
+
+func TestSubmit(t *testing.T) {
+	var gotBody, gotType, gotMethod, gotPath string
+
+	status, reply := http.StatusCreated, `{"id":"abc123"}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody, gotType, gotMethod, gotPath = string(body), r.Header.Get("Content-Type"), r.Method, r.URL.Path
+
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, reply)
+	}))
+	defer srv.Close()
+
+	cfg := Config{
+		RegistryURL: strings.TrimPrefix(srv.URL, "http://"),
+		Protocol:    "http",
+	}
+
+	s := &Schematic{Customization: Customization{
+		SystemExtensions: SystemExtensions{OfficialExtensions: []string{"siderolabs/drbd"}},
+	}}
+
+	id, err := cfg.Submit(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	canonical, _ := s.Marshal()
+
+	switch {
+	case id != "abc123":
+		t.Errorf("id = %q, want the factory's", id)
+	case gotMethod != http.MethodPost || gotPath != DefaultSchematicEndpoint:
+		t.Errorf("request was %s %s, want POST %s", gotMethod, gotPath, DefaultSchematicEndpoint)
+	case gotType != "application/yaml":
+		t.Errorf("Content-Type = %q", gotType)
+	case gotBody != string(canonical):
+		t.Errorf("body = %q, want the canonical form %q", gotBody, canonical)
+	}
+
+	for _, tt := range []struct {
+		name   string
+		status int
+		reply  string
+		want   string
+	}{
+		{"refused", http.StatusBadRequest, "invalid schematic", "invalid schematic"},
+		{"no id", http.StatusOK, `{}`, "contained no id"},
+		{"not json", http.StatusOK, `<html>`, "decoding schematic response"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			status, reply = tt.status, tt.reply
+
+			if _, err := cfg.Submit(s); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Submit() error = %v, want it to mention %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestImageURL pins the boot media URLs to the shapes the public factory
+// serves; each was checked against factory.talos.dev.
+func TestImageURL(t *testing.T) {
+	const id, v = "abc", "v1.14.0"
+
+	tests := []struct {
+		name         string
+		cfg          Config
+		kind, format string
+		arch         string
+		want         string
+	}{
+		{"iso", Config{}, KindISO, "", "amd64", "https://factory.talos.dev/image/abc/v1.14.0/metal-amd64.iso"},
+		{"secure boot iso", Config{SecureBoot: new(true)}, KindISO, "", "amd64",
+			"https://factory.talos.dev/image/abc/v1.14.0/metal-amd64-secureboot.iso"},
+		{"metal disk", Config{}, KindDisk, "", "arm64", "https://factory.talos.dev/image/abc/v1.14.0/metal-arm64.raw.zst"},
+		{"platform disk", Config{Platform: "vmware"}, KindDisk, "", "amd64",
+			"https://factory.talos.dev/image/abc/v1.14.0/vmware-amd64.ova"},
+		{"explicit format", Config{}, KindDisk, "qcow2", "amd64",
+			"https://factory.talos.dev/image/abc/v1.14.0/metal-amd64.qcow2"},
+		{"pxe", Config{}, KindPXE, "", "amd64", "https://factory.talos.dev/pxe/abc/v1.14.0/metal-amd64"},
+		{"own factory", Config{RegistryURL: "factory.internal", Protocol: "http"}, KindISO, "", "amd64",
+			"http://factory.internal/image/abc/v1.14.0/metal-amd64.iso"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.cfg.ImageURL(tt.kind, id, v, tt.arch, tt.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != tt.want {
+				t.Errorf("ImageURL() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := (Config{Platform: "somewhere-new"}).ImageURL(KindDisk, id, v, "amd64", ""); err == nil {
+		t.Error("a platform with no known disk format was given one anyway")
 	}
 }

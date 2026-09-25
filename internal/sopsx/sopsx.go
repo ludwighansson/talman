@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/ludwighansson/talman/internal/interrupt"
 )
 
 // Bin is the sops binary talman invokes. Overridable for tests.
@@ -26,6 +28,15 @@ var Bin = "sops"
 
 // ErrNotInstalled is returned when the sops binary cannot be found.
 var ErrNotInstalled = errors.New("sops not found on PATH")
+
+// ErrNoKey is returned when sops finds none of the keys a file is encrypted
+// to: no identity for it here, which is a fact about this machine rather than
+// about the file.
+var ErrNoKey = errors.New("no key available to decrypt it")
+
+// exitNoKey is sops' exit status for "failed to get the data key required to
+// decrypt the SOPS file" (codes.CouldNotRetrieveKey).
+const exitNoKey = 128
 
 // Ensure reports whether the sops binary is usable, with a message that says
 // what to do about it.
@@ -91,6 +102,11 @@ func decrypt(path string) ([]byte, error) {
 
 	plaintext, stderr, err := run("decrypt", "--input-type", "yaml", "--output-type", "yaml", path)
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == exitNoKey {
+			return nil, fmt.Errorf("decrypting %s: %w: %s", path, ErrNoKey, describe(stderr, err))
+		}
+
 		return nil, fmt.Errorf("decrypting %s: %s", path, describe(stderr, err))
 	}
 
@@ -122,12 +138,11 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 	// makes the location irrelevant to sops.
 	dir := filepath.Dir(abs)
 
-	stage, err := os.MkdirTemp("", "talman-secrets-")
+	stage, cleanup, err := interrupt.TempDir("", "talman-secrets-")
 	if err != nil {
 		return nil, err
 	}
-
-	defer os.RemoveAll(stage) //nolint:errcheck // best effort cleanup; the error that matters is returned below
+	defer cleanup()
 
 	tmpName := filepath.Join(stage, "secrets.yaml")
 
@@ -162,14 +177,14 @@ func EncryptTo(plaintext []byte, destPath string) ([]byte, error) {
 
 // run invokes sops and returns stdout, sops' stderr, and the process error.
 func run(args ...string) ([]byte, string, error) {
-	cmd := exec.Command(Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+	cmd := interrupt.Command(Bin, args...)
 
 	var out, errBuf bytes.Buffer
 
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 
-	err := cmd.Run()
+	err := interrupt.Run(cmd)
 
 	return out.Bytes(), errBuf.String(), err
 }

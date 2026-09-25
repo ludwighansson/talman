@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ludwighansson/talman/main/schema/talman.v1.json
 ---
 apiVersion: talman.dev/v1       # the schema this file is written against
 clusterName: development
@@ -16,10 +17,10 @@ values:
     quay.io: quay_io_cache
     registry.k8s.io: k8s_io_cache
 
-# These VMs boot the OpenStack installer, not the default metal one.
-# {{.ID}} is the resolved schematic, {{.Version}} the node's Talos version.
+# These VMs boot OpenStack's images, not the default metal ones: the installer,
+# and the disk image `talman image url --kind disk` names.
 imageFactory:
-  installerURLTmpl: "{{.RegistryURL}}/openstack-installer/{{.ID}}:{{.Version}}"
+  platform: openstack
 
 # The schematic ID is computed offline (sha256 of its canonical form), so
 # rendering needs no network. `talman render --submit` registers it instead.
@@ -46,6 +47,13 @@ patches:
     - ./patches/worker/kubelet.yaml
   db:
     - ./patches/db/hugepages.yaml
+
+# Roll-outs go wave by wave: the control plane, then the db workers as the
+# canary, then everything else. `talman upgrade --until db` stops after it.
+rollout:
+  waves:
+    - controlplane
+    - db
 
 nodes:
   - hostname: development-control-01

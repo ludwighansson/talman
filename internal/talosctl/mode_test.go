@@ -265,3 +265,64 @@ func TestParseServiceRunning(t *testing.T) {
 		})
 	}
 }
+
+// TestEtcdNotYetRegistered: a control plane that has just taken its config
+// answers the Talos API before its etcd service exists, and talosctl reports
+// that as NotFound. No etcd service is no etcd running -- the answer that
+// lets apply see a cluster not yet bootstrapped -- not "cannot tell".
+func TestEtcdNotYetRegistered(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "talosctl")
+
+	script := "#!/bin/sh\necho 'rpc error: code = NotFound desc = resource ServiceStatuses.v1alpha1.talos.dev(runtime/etcd@undefined) doesn'\\''t exist' >&2\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := New(bin).Etcd("tc", "10.0.0.1"); got != EtcdStopped {
+		t.Errorf("Etcd() = %v, want EtcdStopped", got)
+	}
+
+	// Anything else that fails is still not an answer.
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'connection refused' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := New(bin).Etcd("tc", "10.0.0.1"); got != EtcdUnknown {
+		t.Errorf("Etcd() = %v on a refused connection, want EtcdUnknown", got)
+	}
+}
+
+// TestMachineConfigIsTheResourceSpec: the config comes back as the spec of
+// the MachineConfig resource, a YAML string, which is what is returned.
+func TestMachineConfigIsTheResourceSpec(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "talosctl")
+
+	script := `#!/bin/sh
+cat <<'OUT'
+node: 10.0.0.1
+metadata:
+    namespace: config
+    type: MachineConfigs.config.talos.dev
+    id: v1alpha1
+spec: |
+    version: v1alpha1
+    machine:
+        ca:
+            crt: bmV3
+OUT
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := New(bin).MachineConfig("tc", "10.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "version: v1alpha1\nmachine:\n    ca:\n        crt: bmV3\n"; string(got) != want {
+		t.Errorf("MachineConfig() = %q, want %q", got, want)
+	}
+}

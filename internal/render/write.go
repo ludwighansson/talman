@@ -11,14 +11,16 @@ import (
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
+// gitignoreHeader marks a .gitignore as talman's, and so one it may rewrite.
+const gitignoreHeader = "# Managed by talman.\n"
+
 // gitignoreBody keeps rendered output out of git wholesale.
 //
 // A rendered machine config embeds the machine CA key, the cluster secret and
 // the bootstrap token, so the safe default is to ignore the directory rather
 // than to list files as they appear -- a new node must not be able to slip
 // into a commit because nobody re-ran the generator.
-const gitignoreBody = `# Managed by talman.
-# Rendered machine configs and the talosconfig contain live cluster secrets.
+const gitignoreBody = gitignoreHeader + `# Rendered machine configs and the talosconfig contain live cluster secrets.
 *
 !.gitignore
 `
@@ -85,9 +87,19 @@ func (r *Renderer) ensureGitignore(dir string) error {
 			return nil
 		}
 
-		// Present but not doing its job -- truncated, or rewritten by some
-		// other tool. Since what sits beside it is machine CA keys and the
-		// bootstrap token, restoring the rule beats respecting the edit.
+		// Someone else's: the output directory is shared with something that
+		// keeps its own .gitignore. Replacing it destroys what they had, and
+		// keeping it leaves the secrets committable, so neither is talman's
+		// call to make.
+		if !strings.HasPrefix(string(existing), gitignoreHeader) {
+			return fmt.Errorf("%s exists, was not written by talman, and does not ignore the directory, "+
+				"where rendered configs hold live cluster secrets: point outputDir at a directory of its own",
+				Rel(path))
+		}
+
+		// talman's, but no longer doing its job -- truncated, or edited.
+		// Since what sits beside it is machine CA keys and the bootstrap
+		// token, restoring the rule beats respecting the edit.
 		r.logf("warning: %s does not ignore the directory; rewriting it, "+
 			"because the configs beside it contain live cluster secrets", Rel(path))
 	} else if !os.IsNotExist(err) {
@@ -250,7 +262,8 @@ func (r *Renderer) Validate(res *Result, mode string) error {
 	}
 
 	if err := r.Tal.Validate(staging, mode); err != nil {
-		return fmt.Errorf("node %s: %w", res.Node.Hostname, err)
+		// Validation quotes the config it rejects, as generation does.
+		return r.redacted(fmt.Errorf("node %s: %w", res.Node.Hostname, err))
 	}
 
 	return nil
@@ -268,8 +281,6 @@ func Nodes(cfg *config.Config, names []string) ([]*config.Node, error) {
 		return out, nil
 	}
 
-	var out []*config.Node
-
 	// Deduplicated: a node can be named twice, or once by hostname and once
 	// by address. These selections feed apply, upgrade and reset, where a
 	// duplicate means resetting or upgrading the same machine twice off a
@@ -283,13 +294,17 @@ func Nodes(cfg *config.Config, names []string) ([]*config.Node, error) {
 				name, Rel(cfg.Path), hostnames(cfg))
 		}
 
-		if seen[n.Hostname] {
-			continue
-		}
-
 		seen[n.Hostname] = true
+	}
 
-		out = append(out, n)
+	// In config order, not the order they were named: the order a roll-out
+	// takes is the one that was reviewed, not the one typed.
+	out := make([]*config.Node, 0, len(seen))
+
+	for i := range cfg.Nodes {
+		if seen[cfg.Nodes[i].Hostname] {
+			out = append(out, &cfg.Nodes[i])
+		}
 	}
 
 	return out, nil

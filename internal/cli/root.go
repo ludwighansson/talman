@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/factory"
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
@@ -36,18 +38,57 @@ func addDetailedExitCode(cmd *cobra.Command, target *bool) {
 type globals struct {
 	configFile string
 	verbose    bool
+	// groups is -g/--group, on every command whose -n takes a list.
+	groups []string
 }
 
 var opts globals
 
 // Execute runs the root command and returns a process exit code.
+//
+// 0 is success, 1 a failure of any kind -- a usage error included -- 2 a
+// --detailed-exit-code run that changed something, and 130 a run stopped by
+// SIGINT or SIGTERM, which is reported whatever else the command returned.
 func Execute() int {
-	if err := newRootCmd().Execute(); err != nil {
+	defer interrupt.Watch()()
+
+	return run(os.Args[1:])
+}
+
+// run executes one command line and maps its outcome to an exit code.
+func run(args []string) int {
+	root := newRootCmd()
+	root.SetArgs(args)
+
+	err := root.ExecuteContext(interrupt.Context())
+
+	if interrupt.Interrupted() {
+		// A passed-through talosctl's status is not news: it stopped
+		// because of the same signal, and said whatever it had to.
+		var exit exitCodeError
+		if err != nil && !errors.Is(err, errChanged) && !errors.As(err, &exit) {
+			fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		}
+
+		fmt.Fprintln(os.Stderr, "interrupted")
+
+		return interrupt.ExitCode()
+	}
+
+	if err != nil {
 		if errors.Is(err, errChanged) {
 			return 2
 		}
 
-		// Cobra has already printed usage errors; everything else is ours.
+		// A passed-through talosctl has said what went wrong already; its
+		// status is the answer.
+		var exit exitCodeError
+		if errors.As(err, &exit) {
+			return exit.code
+		}
+
+		// SilenceErrors is set, so this is the only place any error is
+		// printed, cobra's own usage errors included.
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 
 		return 1
@@ -76,12 +117,12 @@ release.`,
 	}
 
 	cmd.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "",
-		"path to the talman config (default "+config.DefaultFileName+")")
+		"path to the talman config (default $"+config.EnvConfig+", else "+config.DefaultFileName+")")
 	cmd.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false,
 		"echo each talosctl invocation")
-	addMetricsFlags(cmd)
 
 	for _, sub := range []*cobra.Command{
+		newInitCmd(),
 		newRenderCmd(),
 		newValidateCmd(),
 		newPatchesCmd(),
@@ -90,13 +131,15 @@ release.`,
 		newSchematicCmd(),
 		newImageCmd(),
 		recorded(newApplyCmd()),
-		recorded(newBootstrapCmd()),
 		newKubeconfigCmd(),
 		recorded(newUpgradeCmd()),
 		recorded(newUpgradeK8sCmd()),
+		recorded(newRebootCmd()),
 		recorded(newHealthCmd()),
-		newDashboardCmd(),
+		newTalosctlCmd(),
+		newEtcdCmd(),
 		recorded(newResetCmd()),
+		recorded(newRotateCACmd()),
 		newVersionCmd(),
 	} {
 		cmd.AddCommand(withNodeCompletion(sub))
@@ -203,11 +246,17 @@ func ensureTalosconfig(cfg *config.Config) (string, error) {
 //
 // Every flag that was set, not a list of the ones that seemed to matter: a
 // hint that drops --dry-run resumes as a real apply, and one that drops
-// --wipe-disk or --stage runs a different operation from the one that
+// --wipe-disk or --mode=staged runs a different operation from the one that
 // stopped. except names flags the hint handles itself -- the node list -- or
 // that should be asked again, like --yes.
 func replayFlags(cmd *cobra.Command, except ...string) []string {
 	var out []string
+
+	// A hint that names the nodes left names them all: -g beside it would
+	// add its whole group back.
+	if slices.Contains(except, "node") {
+		except = append(except, "group")
+	}
 
 	cmd.Flags().Visit(func(f *pflag.Flag) {
 		if slices.Contains(except, f.Name) {
@@ -284,17 +333,21 @@ func resumeHint(command, done string, remaining []*config.Node, flags ...string)
 type renderContext struct {
 	SchematicID    string
 	InstallerImage string
+	TalosVersion   string
+	Factory        factory.Config
 }
 
-func printPerNode(cmd *cobra.Command, nodes []string, submit bool,
-	emit func(*tabwriter.Writer, string, renderContext),
+// printPerNode prints one value per node: a two-column table, or with
+// -o json a list of {"hostname": ..., field: value}.
+func printPerNode(cmd *cobra.Command, nodes []string, submit bool, output outputFormat,
+	field string, value func(renderContext) (string, error),
 ) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
 
-	targets, err := render.Nodes(cfg, nodes)
+	targets, err := selectNodes(cfg, nodes)
 	if err != nil {
 		return err
 	}
@@ -303,6 +356,7 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool,
 	r := &render.Renderer{Cfg: cfg, Submit: submit}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	rows := []map[string]string{}
 
 	for _, n := range targets {
 		ctx, err := r.Context(n)
@@ -310,10 +364,27 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool,
 			return err
 		}
 
-		emit(w, n.Hostname, renderContext{
+		v, err := value(renderContext{
 			SchematicID:    ctx.Node.SchematicID,
 			InstallerImage: ctx.Node.InstallerImage,
+			TalosVersion:   ctx.Node.TalosVersion,
+			Factory:        cfg.ImageFactoryFor(n),
 		})
+		if err != nil {
+			return fmt.Errorf("node %s: %w", n.Hostname, err)
+		}
+
+		if output.json() {
+			rows = append(rows, map[string]string{"hostname": n.Hostname, field: v})
+
+			continue
+		}
+
+		fmt.Fprintf(w, "%s\t%s\n", n.Hostname, v)
+	}
+
+	if output.json() {
+		return writeJSON(cmd.OutOrStdout(), map[string]any{"nodes": rows})
 	}
 
 	return w.Flush()
@@ -333,4 +404,55 @@ func printPerNode(cmd *cobra.Command, nodes []string, submit bool,
 func addExtraFlags(cmd *cobra.Command, target *[]string) {
 	cmd.Flags().StringArrayVar(target, "extra-flags", nil,
 		"extra flag passed verbatim to the underlying talosctl command (repeatable)")
+}
+
+// selectNodes is the nodes a command works on: those -n names and those in
+// the groups -g names, in config order; every node when neither is given.
+func selectNodes(cfg *config.Config, names []string) ([]*config.Node, error) {
+	if len(opts.groups) == 0 {
+		return render.Nodes(cfg, names)
+	}
+
+	for _, g := range opts.groups {
+		if !cfg.IsGroup(g) {
+			return nil, fmt.Errorf("-g %s: no node declares the group %q, and it is not a role", g, g)
+		}
+	}
+
+	named := map[string]bool{}
+
+	if len(names) > 0 {
+		picked, err := render.Nodes(cfg, names)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, n := range picked {
+			named[n.Hostname] = true
+		}
+	}
+
+	var out []*config.Node
+
+	for i := range cfg.Nodes {
+		n := &cfg.Nodes[i]
+
+		in := named[n.Hostname] || slices.Contains(opts.groups, string(n.Role))
+		for _, g := range n.Groups {
+			in = in || slices.Contains(opts.groups, g)
+		}
+
+		if in {
+			out = append(out, n)
+		}
+	}
+
+	// A selection of nothing is refused rather than passed on: a command
+	// handed no nodes may fall back to all of them, as talosctl does with
+	// no --nodes, and a role no node has is still a valid name.
+	if len(out) == 0 {
+		return nil, fmt.Errorf("-g %s: no node is in it", strings.Join(opts.groups, ", -g "))
+	}
+
+	return out, nil
 }

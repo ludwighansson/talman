@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,8 @@ func write(t *testing.T, body string, patchFiles ...string) string {
 	return path
 }
 
-const validBase = `clusterName: test
+const validBase = `apiVersion: talman.dev/v1
+clusterName: test
 endpoint: https://10.0.0.1:6443
 talosVersion: v1.14.0
 kubernetesVersion: v1.37.0
@@ -275,6 +277,116 @@ nodes:
 			wantErr: "duplicate ipAddress",
 		},
 		{
+			// It names the default etcd snapshot, among other files.
+			name: "cluster name that is a path",
+			body: `apiVersion: talman.dev/v1
+clusterName: a/../../x
+endpoint: https://10.0.0.1:6443
+talosVersion: v1.14.0
+kubernetesVersion: v1.37.0
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "clusterName",
+		},
+		{
+			name: "endpoint without a port",
+			body: `apiVersion: talman.dev/v1
+clusterName: t
+endpoint: https://10.0.0.1
+talosVersion: v1.14.0
+kubernetesVersion: v1.37.0
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "including the port",
+		},
+		{
+			// The hostname is the rendered file's name: a path in it would
+			// write a config full of secrets outside the output directory.
+			name: "hostname that is a path",
+			body: validBase + `
+nodes:
+  - hostname: ../../escaped
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "not a valid RFC 1123 host name",
+		},
+		{
+			name: "upper-case hostname",
+			body: validBase + `
+nodes:
+  - hostname: Control-01
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "not a valid RFC 1123 host name",
+		},
+		{
+			name: "group listed twice",
+			body: validBase + `
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    groups: [db, db]
+`,
+			wantErr: "listed twice",
+		},
+		{
+			name: "unknown validation mode",
+			body: validBase + `validationMode: bare
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "validationMode",
+		},
+		{
+			name: "two documents",
+			body: validBase + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+---
+clusterName: other
+`,
+			wantErr: "more than one YAML document",
+		},
+		{
+			name: "a prerelease key",
+			body: validBase + `talosMode: metal
+imageFactory:
+  secureboot: true
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: "renamed secureBoot",
+		},
+		{
+			name:    "empty file",
+			body:    "",
+			wantErr: "is empty",
+		},
+		{
+			// A later schema will have keys this one lacks; the refusal
+			// has to name the schema, not the first unknown key.
+			name: "a later schema with keys this one lacks",
+			body: `apiVersion: talman.dev/v2
+cluster:
+  name: t
+`,
+			wantErr: "not one this talman understands",
+		},
+		{
 			name: "unknown top level field",
 			body: validBase + `
 patchez:
@@ -288,7 +400,8 @@ nodes:
 		},
 		{
 			name: "missing talosVersion",
-			body: `clusterName: t
+			body: `apiVersion: talman.dev/v1
+clusterName: t
 endpoint: https://10.0.0.1:6443
 kubernetesVersion: v1.37.0
 nodes:
@@ -300,7 +413,8 @@ nodes:
 		},
 		{
 			name: "endpoint without a scheme",
-			body: `clusterName: t
+			body: `apiVersion: talman.dev/v1
+clusterName: t
 endpoint: 10.0.0.1:6443
 talosVersion: v1.14.0
 kubernetesVersion: v1.37.0
@@ -309,7 +423,7 @@ nodes:
     ipAddress: 10.0.0.10
     role: controlplane
 `,
-			wantErr: "must be a full URL",
+			wantErr: "must be a full https URL",
 		},
 		{
 			name: "schematic and schematicID together",
@@ -361,7 +475,8 @@ nodes:
 }
 
 func TestTalosVersionNormalised(t *testing.T) {
-	cfg, err := Load(write(t, `clusterName: t
+	cfg, err := Load(write(t, `apiVersion: talman.dev/v1
+clusterName: t
 endpoint: https://10.0.0.1:6443
 talosVersion: "1.14.0"
 kubernetesVersion: v1.37.0
@@ -518,8 +633,12 @@ nodes:
 		wantErr string
 	}{
 		{
-			name:   "absent: read as this schema",
-			header: "",
+			// Required from v1 on: a config that does not say which schema
+			// it was written against is exactly the one a later talman
+			// would have to guess about.
+			name:    "absent",
+			header:  "",
+			wantErr: "apiVersion is required",
 		},
 		{
 			name:   "the schema talman speaks",
@@ -561,5 +680,251 @@ nodes:
 				t.Errorf("error does not say which schema is wrong: %v", err)
 			}
 		})
+	}
+}
+
+func TestHostnames(t *testing.T) {
+	for h, want := range map[string]bool{
+		"c1":                            true,
+		"talos-w01":                     true,
+		"w01.dc1.example.net":           true,
+		"":                              false,
+		"-w01":                          false,
+		"w01-":                          false,
+		"W01":                           false,
+		"w_01":                          false,
+		"a/b":                           false,
+		"..":                            false,
+		"a..b":                          false,
+		strings.Repeat("a", 64):         false,
+		strings.Repeat("a.", 127) + "a": false,
+	} {
+		if got := validHostname(h); got != want {
+			t.Errorf("validHostname(%q) = %t, want %t", h, got, want)
+		}
+	}
+}
+
+func TestPerNodeImageFactory(t *testing.T) {
+	cfg, err := Load(write(t, validBase+`imageFactory:
+  platform: openstack
+  secureBoot: true
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+  - hostname: w1
+    ipAddress: 10.0.0.11
+    role: worker
+    imageFactory:
+      platform: metal
+      secureBoot: false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c1, w1 := &cfg.Nodes[0], &cfg.Nodes[1]
+
+	if got := cfg.ImageFactoryFor(c1); got.Platform != "openstack" || !got.SecureBootEnabled() {
+		t.Errorf("c1 inherits %+v, want the cluster's openstack with secure boot", got)
+	}
+
+	if got := cfg.ImageFactoryFor(w1); got.Platform != "metal" || got.SecureBootEnabled() {
+		t.Errorf("w1 gets %+v, want its own metal without secure boot", got)
+	}
+
+	if got := cfg.ImageFactoryFor(w1).RegistryURL; got != "factory.talos.dev" {
+		t.Errorf("w1 registry = %q, want the default carried through", got)
+	}
+
+	if got := cfg.ValidationModeFor(c1); got != "cloud" {
+		t.Errorf("validation mode for an openstack node = %q, want cloud", got)
+	}
+
+	if got := cfg.ValidationModeFor(w1); got != "metal" {
+		t.Errorf("validation mode for a metal node = %q, want metal", got)
+	}
+}
+
+func TestFindConfig(t *testing.T) {
+	t.Setenv(EnvConfig, "")
+
+	if got := FindConfig(""); got != DefaultFileName {
+		t.Errorf("FindConfig(\"\") = %q, want %q", got, DefaultFileName)
+	}
+
+	t.Setenv(EnvConfig, "clusters/prod/talman.yaml")
+
+	if got := FindConfig(""); got != "clusters/prod/talman.yaml" {
+		t.Errorf("FindConfig(\"\") = %q, want $%s", got, EnvConfig)
+	}
+
+	if got := FindConfig("explicit.yaml"); got != "explicit.yaml" {
+		t.Errorf("FindConfig(explicit) = %q; -c must win over the environment", got)
+	}
+}
+
+func TestValuesFiles(t *testing.T) {
+	path := write(t, validBase+`valuesFiles: [shared.yaml, site.yaml]
+values:
+  registry:
+    mirror: inline.example
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    valuesFiles: [node.yaml]
+    values:
+      zone: az2
+`)
+	dir := filepath.Dir(path)
+
+	for name, body := range map[string]string{
+		"shared.yaml": "registry:\n  mirror: shared.example\n  insecure: false\nntp: [a, b]\n",
+		"site.yaml":   "registry:\n  insecure: true\nntp: [c]\n",
+		"node.yaml":   "zone: az1\ndisk: /dev/vda\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registry, _ := cfg.Values["registry"].(map[string]any)
+
+	switch {
+	case registry["mirror"] != "inline.example":
+		t.Errorf("registry.mirror = %v; the inline map must win", registry["mirror"])
+	case registry["insecure"] != true:
+		t.Errorf("registry.insecure = %v; a later file must win over an earlier one, key by key", registry["insecure"])
+	case fmt.Sprint(cfg.Values["ntp"]) != "[c]":
+		t.Errorf("ntp = %v; a list is replaced, not appended to", cfg.Values["ntp"])
+	}
+
+	if n := cfg.Nodes[0].Values; n["zone"] != "az2" || n["disk"] != "/dev/vda" {
+		t.Errorf("node values = %v", n)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "site.yaml"), []byte("a: ENC[x]\nsops:\n  version: 3.9.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "SOPS-encrypted") {
+		t.Errorf("an encrypted values file gave %v, want it refused", err)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "node.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("a missing values file gave %v", err)
+	}
+}
+
+// A trailing separator, or a trailing document holding only comments, is not
+// a second config: plenty of generated YAML ends that way.
+func TestTrailingEmptyDocument(t *testing.T) {
+	body := validBase + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`
+
+	for name, tail := range map[string]string{
+		"separator":          "---\n",
+		"separator, comment": "---\n# nothing here\n",
+		"two separators":     "---\n---\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(write(t, body+tail)); err != nil {
+				t.Errorf("Load() = %v", err)
+			}
+		})
+	}
+}
+
+// A mapping with a non-string key decodes as map[any]any, and has to merge
+// key by key like any other.
+func TestValuesFilesMergeNonStringKeys(t *testing.T) {
+	path := write(t, validBase+`valuesFiles: [shared.yaml]
+values:
+  ports: {8080: alt}
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`)
+
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "shared.yaml"),
+		[]byte("ports: {80: http, 443: https}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ports, ok := cfg.Values["ports"].(map[any]any)
+	if !ok || ports[80] != "http" || ports[443] != "https" || ports[8080] != "alt" {
+		t.Errorf("ports = %#v, want all three, keyed as YAML wrote them", cfg.Values["ports"])
+	}
+
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "shared.yaml"),
+		[]byte("a: 1\n---\nb: 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "more than one YAML document") {
+		t.Errorf("a values file with two documents gave %v", err)
+	}
+}
+
+// The rename hints come from reading the file, so they hold whatever wording
+// the YAML library's own error takes.
+func TestRenameHints(t *testing.T) {
+	for want, body := range map[string]string{
+		"renamed validationMode": validBase + "talosMode: metal\n" + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+		"renamed secureBoot": validBase + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    imageFactory:
+      secureboot: true
+`,
+	} {
+		if _, err := Load(write(t, body)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() = %v, want it to say %q", err, want)
+		}
+	}
+
+	if hint := renameHint([]byte("clusterName: x\n")); hint != "" {
+		t.Errorf("a config with no old keys got a hint: %q", hint)
+	}
+}
+
+// outputDir is ignored whole by the .gitignore talman writes there, so one
+// that holds the config -- "." or a parent -- would hide talman.yaml and the
+// bundle from git.
+func TestOutputDirMustBeItsOwn(t *testing.T) {
+	for _, dir := range []string{".", "./", "..", "../.."} {
+		_, err := Load(write(t, validBase+"outputDir: "+dir+"\n"+`nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`))
+		if err == nil || !strings.Contains(err.Error(), "outputDir") {
+			t.Errorf("outputDir %q: Load() = %v, want it refused", dir, err)
+		}
 	}
 }

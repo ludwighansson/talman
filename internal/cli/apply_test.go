@@ -48,7 +48,7 @@ func targetsOf(addrs ...string) []*config.Node {
 	return out
 }
 
-// --only-new is the adoption filter: what is already in the cluster must not
+// --only-new-nodes is the onboarding filter: what is already in the cluster must not
 // be touched, and what talman cannot classify must not be guessed at.
 func TestNewNodes(t *testing.T) {
 	tal := fakeCluster(t, []string{"10.0.0.11"}, []string{"10.0.0.21", "10.0.0.22"})
@@ -82,7 +82,7 @@ func TestNewNodesRefusesToGuessAboutADeadNode(t *testing.T) {
 }
 
 // The health gate checks the cluster the config describes, so it only means
-// something once that cluster exists. A node that has not been adopted answers
+// something once that cluster exists. A node that has not been onboarded answers
 // with a self-signed maintenance certificate, which the check reports as
 // "certificate signed by unknown authority" -- a build-out step read as a
 // broken cluster.
@@ -183,7 +183,6 @@ func TestDryRunChanged(t *testing.T) {
 func TestGateSummary(t *testing.T) {
 	tests := []struct {
 		name    string
-		adopted int64
 		ungated int
 		gated   int
 		want    string
@@ -192,20 +191,7 @@ func TestGateSummary(t *testing.T) {
 			name: "an ordinary run says nothing",
 		},
 		{
-			name:    "every step ungated, nodes adopted: a cluster being built",
-			adopted: 2,
-			ungated: 3,
-			want:    "not waiting, and not gating on health: no cluster to join yet",
-		},
-		{
-			name:    "adopted, but the gate did run",
-			adopted: 1,
-			ungated: 1,
-			gated:   2,
-			want:    "not waiting: nothing to join until `talman bootstrap` runs",
-		},
-		{
-			name:    "gate stood down throughout, nothing adopted",
+			name:    "gate stood down throughout, nothing onboarded",
 			ungated: 2,
 			want:    "not gating on health: nodes not in the cluster yet",
 		},
@@ -226,7 +212,7 @@ func TestGateSummary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := gateSummary(tt.adopted, tt.ungated, tt.gated); got != tt.want {
+			if got := gateSummary(tt.ungated, tt.gated); got != tt.want {
 				t.Errorf("gateSummary() = %q, want %q", got, tt.want)
 			}
 		})
@@ -324,5 +310,18 @@ func TestRedaction(t *testing.T) {
 	// bundle to hide nothing.
 	if _, _, err := redaction(true, false, false, true, counted); err != nil || asked {
 		t.Errorf("a plain --no-render apply asked for the secrets (err %v)", err)
+	}
+}
+
+func TestWaitFailedHintOffersOnlyWhatRuns(t *testing.T) {
+	cp := func(h string) *config.Node { return &config.Node{Hostname: h, Role: config.RoleControlPlane} }
+	w := &config.Node{Hostname: "w1", Role: config.RoleWorker}
+
+	if hint := waitFailedHint([]*config.Node{cp("c1"), cp("c2")}); strings.Contains(hint, "--wait=false") {
+		t.Errorf("offered --wait=false across two control planes, which is refused: %q", hint)
+	}
+
+	if hint := waitFailedHint([]*config.Node{cp("c1"), w}); !strings.Contains(hint, "--wait=false") {
+		t.Errorf("did not offer --wait=false where it is allowed: %q", hint)
 	}
 }

@@ -16,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+
+	"github.com/ludwighansson/talman/internal/interrupt"
 )
 
 // Runner invokes a talosctl binary.
@@ -101,6 +104,34 @@ func subcommand(args []string) string {
 }
 
 func (e *ExitError) Unwrap() error { return e.Err }
+
+// StatusError is a talosctl that ran and exited non-zero, from a caller that
+// passed its output on as it came: the output said what went wrong, so all
+// this adds is how it ended.
+type StatusError struct {
+	Subcommand string
+	// Code is the exit status, or 128 + the signal that killed it, as a
+	// shell reports it.
+	Code int
+	err  *exec.ExitError
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("talosctl %s exited with status %d", e.Subcommand, e.Code)
+}
+
+func (e *StatusError) Unwrap() error { return e.err }
+
+// exitStatus is a process's exit status. exec reports -1 for one a signal
+// ended; that becomes 128 + the signal, so an OOM kill reads as 137 rather
+// than a status no process can have.
+func exitStatus(e *exec.ExitError) int {
+	if ws, ok := e.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+
+	return e.ExitCode()
+}
 
 // MinVersion is the oldest talosctl talman drives.
 //
@@ -203,7 +234,7 @@ func semver(tag string) ([3]int, bool) {
 // only if the command fails: talosctl writes progress lines like
 // "generating PKI and tokens" to stderr on success.
 func (r *Runner) Output(args ...string) ([]byte, error) {
-	cmd := exec.Command(r.Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+	cmd := interrupt.Command(r.Bin, args...)
 
 	var stdout, stderr bytes.Buffer
 
@@ -212,7 +243,7 @@ func (r *Runner) Output(args ...string) ([]byte, error) {
 
 	r.echo(args)
 
-	if err := cmd.Run(); err != nil {
+	if err := interrupt.Run(cmd); err != nil {
 		return nil, &ExitError{Args: args, Stderr: stderr.String(), Err: err}
 	}
 
@@ -231,7 +262,7 @@ func (r *Runner) Output(args ...string) ([]byte, error) {
 // The bytes come back on failure too. What a command managed to say before it
 // died is usually the explanation.
 func (r *Runner) Combined(args ...string) ([]byte, error) {
-	cmd := exec.Command(r.Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+	cmd := interrupt.Command(r.Bin, args...)
 
 	var buf bytes.Buffer
 
@@ -240,10 +271,10 @@ func (r *Runner) Combined(args ...string) ([]byte, error) {
 
 	r.echo(args)
 
-	if err := cmd.Run(); err != nil {
+	if err := interrupt.Run(cmd); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return buf.Bytes(), fmt.Errorf("talosctl %s exited with status %d", subcommand(args), exitErr.ExitCode())
+			return buf.Bytes(), &StatusError{Subcommand: subcommand(args), Code: exitStatus(exitErr), err: exitErr}
 		}
 
 		return buf.Bytes(), fmt.Errorf("talosctl %s: %w", subcommand(args), err)
@@ -255,20 +286,30 @@ func (r *Runner) Combined(args ...string) ([]byte, error) {
 // Stream runs talosctl with the caller's stdio attached, for interactive and
 // long-running commands where progress matters more than capture.
 func (r *Runner) Stream(args ...string) error {
-	cmd := exec.Command(r.Bin, args...) //nolint:gosec // args are built by talman, not user shell input
+	return r.StreamTee(nil, args...)
+}
+
+// StreamTee is Stream, also copying talosctl's stderr to tee as it goes, for
+// a caller that wants to read what talosctl said as well as show it.
+func (r *Runner) StreamTee(tee io.Writer, args ...string) error {
+	cmd := interrupt.Command(r.Bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	if tee != nil {
+		cmd.Stderr = io.MultiWriter(os.Stderr, tee)
+	}
+
 	r.echo(args)
 
-	if err := cmd.Run(); err != nil {
+	if err := interrupt.Run(cmd); err != nil {
 		// Named the same way as a captured failure: the streamed output has
 		// already shown the operator what went wrong, so repeating the argv
 		// only buries it.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return fmt.Errorf("talosctl %s exited with status %d", subcommand(args), exitErr.ExitCode())
+			return &StatusError{Subcommand: subcommand(args), Code: exitStatus(exitErr), err: exitErr}
 		}
 
 		return fmt.Errorf("talosctl %s: %w", subcommand(args), err)

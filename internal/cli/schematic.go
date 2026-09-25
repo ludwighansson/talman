@@ -1,9 +1,6 @@
 package cli
 
 import (
-	"fmt"
-	"text/tabwriter"
-
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +19,7 @@ func newSchematicIDCmd() *cobra.Command {
 	var (
 		nodes  []string
 		submit bool
+		output outputFormat
 	)
 
 	cmd := &cobra.Command{
@@ -35,13 +33,12 @@ computes it offline by default and never needs to reach the factory. Pass
 returns instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return printPerNode(cmd, nodes, submit, func(w *tabwriter.Writer, hostname string, ctx renderContext) {
-				fmt.Fprintf(w, "%s\t%s\n", hostname, ctx.SchematicID)
-			})
+			return printPerNode(cmd, nodes, submit, output, "schematicID", func(ctx renderContext) (string, error) { return ctx.SchematicID, nil })
 		},
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	addOutputFlag(cmd, &output)
 	cmd.Flags().BoolVar(&submit, "submit", false, "register the schematic with the Image Factory")
 
 	return cmd

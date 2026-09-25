@@ -6,12 +6,13 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-
-	"github.com/ludwighansson/talman/internal/render"
 )
 
 func newPatchesCmd() *cobra.Command {
-	var nodes []string
+	var (
+		nodes  []string
+		output outputFormat
+	)
 
 	cmd := &cobra.Command{
 		Use:   "patches",
@@ -29,12 +30,45 @@ value".`,
 				return err
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
 			}
 
 			out := cmd.OutOrStdout()
+
+			if output.json() {
+				type patchJSON struct {
+					Group string `json:"group"`
+					Path  string `json:"path"`
+				}
+
+				type chainJSON struct {
+					Hostname string      `json:"hostname"`
+					Role     string      `json:"role"`
+					Groups   []string    `json:"groups"`
+					Patches  []patchJSON `json:"patches"`
+				}
+
+				report := struct {
+					Nodes []chainJSON `json:"nodes"`
+				}{Nodes: []chainJSON{}}
+
+				for _, n := range targets {
+					entry := chainJSON{Hostname: n.Hostname, Role: string(n.Role), Groups: n.Groups, Patches: []patchJSON{}}
+					if entry.Groups == nil {
+						entry.Groups = []string{}
+					}
+
+					for _, ref := range cfg.PatchChain(n) {
+						entry.Patches = append(entry.Patches, patchJSON{Group: ref.Group, Path: ref.Rel})
+					}
+
+					report.Nodes = append(report.Nodes, entry)
+				}
+
+				return writeJSON(out, report)
+			}
 
 			for i, n := range targets {
 				if i > 0 {
@@ -70,6 +104,7 @@ value".`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	addOutputFlag(cmd, &output)
 
 	return cmd
 }

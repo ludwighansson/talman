@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ludwighansson/talman/internal/config"
-	"github.com/ludwighansson/talman/internal/render"
+	"github.com/ludwighansson/talman/internal/interrupt"
 )
 
 func newResetCmd() *cobra.Command {
@@ -30,21 +30,13 @@ func newResetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Wipe nodes and return them to maintenance mode",
-		Long: `Reset returns a node to maintenance mode. The EPHEMERAL and STATE partitions
-are wiped -- all data, and the machine config with it -- and the node reboots
-with Talos still installed, waiting for a config. Run against enough control
-planes, it destroys the cluster.
+		Long: `Reset wipes the EPHEMERAL and STATE partitions and reboots each node into
+maintenance mode, Talos still installed. It asks for the cluster name first,
+unless --yes. Workers go before control planes, each reached at its own
+address. --wipe-labels narrows what is wiped, --wipe-disk wipes the whole
+disk, --reboot=false shuts down instead.
 
-That is talosctl's --system-labels-to-wipe, not its default: left to itself
-talosctl wipes the disk whole, bootloader included, which leaves a machine with
-nothing to boot rather than a node in maintenance mode. --wipe-disk asks for
-that reinstall-me state deliberately.
-
-Workers are reset before control planes, and each node is reached at its own
-address rather than through the talosconfig endpoints. Both exist for the same
-reason: the endpoints are the control planes, so wiping those first destroys
-the path to every node still waiting -- and a graceful reset needs a live
-cluster to leave.`,
+More in the README: "Rolling changes out safely".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun
@@ -54,7 +46,7 @@ cluster to leave.`,
 				return err
 			}
 
-			targets, err := render.Nodes(cfg, nodes)
+			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
 			}
@@ -205,17 +197,22 @@ cluster to leave.`,
 					// different set of machines, and should ask about them.
 					flags := replayFlags(cmd, "node", "yes")
 
+					remaining := without(targets[done:], succeeded)
+
 					// This run chose to skip leaving etcd because it was
-					// destroying the cluster. The rest of the control planes
-					// alone are no longer every control plane, so without
-					// saying so the resumed run would try to leave a cluster
-					// with too few members left to let it.
-					if destroying && !cmd.Flags().Changed("graceful") {
+					// destroying the cluster. Once only some control planes
+					// are left they are no longer every control plane, so
+					// without saying so the resumed run would try to leave a
+					// cluster with too few members to let it. While workers
+					// remain it is not needed -- workers go first, so every
+					// control plane remains too, and the resumed run sees the
+					// teardown for itself -- and it would cost the workers
+					// the graceful leave this run was giving them.
+					if destroying && !cmd.Flags().Changed("graceful") && onlyControlPlanes(remaining) {
 						flags = append(flags, "--graceful=false")
 					}
 
-					return fmt.Errorf("%w\n%s", err,
-						resumeHint("reset", "reset", without(targets[done:], succeeded), flags...))
+					return fmt.Errorf("%w\n%s", err, resumeHint("reset", "reset", remaining, flags...))
 				}
 
 				done += len(batch)
@@ -228,7 +225,7 @@ cluster to leave.`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().BoolVar(&graceful, "graceful", true, "leave etcd cleanly before resetting")
 	cmd.Flags().BoolVar(&direct, "direct", true,
 		"reach each node at its own address instead of proxying through the talosconfig endpoints")
@@ -350,16 +347,55 @@ func confirm(clusterName string, targets []*config.Node, consequence string) err
 		fmt.Fprintf(os.Stderr, "  %s (%s)\n", n.Hostname, n.IPAddress)
 	}
 
+	return typeClusterName("reset", clusterName, consequence)
+}
+
+// typeClusterName asks for the cluster name and fails unless it is typed back.
+// what names the operation in the refusal.
+func typeClusterName(what, clusterName, consequence string) error {
 	fmt.Fprintf(os.Stderr, "%s Type the cluster name to continue: ", consequence)
 
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("reset aborted: %w", err)
+	// Read off to the side: the signal handler keeps Ctrl-C from ending the
+	// process, so a read blocked on the terminal would otherwise be the one
+	// place an interrupt could not get out of.
+	type answer struct {
+		line string
+		err  error
+	}
+
+	answered := make(chan answer, 1)
+
+	go func() {
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		answered <- answer{line, err}
+	}()
+
+	var line string
+
+	select {
+	case a := <-answered:
+		if a.err != nil {
+			return fmt.Errorf("%s aborted: %w", what, a.err)
+		}
+
+		line = a.line
+	case <-interrupt.Context().Done():
+		return fmt.Errorf("%s aborted: interrupted", what)
 	}
 
 	if strings.TrimSpace(line) != clusterName {
-		return fmt.Errorf("reset aborted: input did not match %q", clusterName)
+		return fmt.Errorf("%s aborted: input did not match %q", what, clusterName)
 	}
 
 	return nil
+}
+
+func onlyControlPlanes(nodes []*config.Node) bool {
+	for _, n := range nodes {
+		if !n.IsControlPlane() {
+			return false
+		}
+	}
+
+	return len(nodes) > 0
 }

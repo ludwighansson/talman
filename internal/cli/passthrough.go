@@ -1,0 +1,197 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/ludwighansson/talman/internal/talosctl"
+)
+
+// exitCodeError is a child's exit status that talman passes on as its own.
+// It carries no message: the child has already said what went wrong.
+type exitCodeError struct{ code int }
+
+func (e exitCodeError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
+func newTalosctlCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "talosctl [-n node]... [--] <talosctl args>...",
+		Aliases: []string{"ctl"},
+		Short:   "Run any talosctl command against this cluster's nodes, by hostname",
+		Long: `Talosctl (or ctl) runs any talosctl command with this cluster's talosconfig,
+and --nodes set from -n and -g by hostname:
+
+  talman ctl -n worker-01 logs kubelet -f
+
+talman's own -n, -g, -c and -v come first; everything after is talosctl's.
+talosctl's exit status is talman's.
+
+More in the README: "Everything else talosctl does".`,
+		DisableFlagsInUseLine: true,
+		// Parsed here rather than by cobra, which rejects a flag it does
+		// not know even when it comes before the first argument that is
+		// talosctl's.
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, raw []string) error {
+			nodes, args, help, err := passthroughArgs(raw)
+			if err != nil {
+				return err
+			}
+
+			if help {
+				return cmd.Help()
+			}
+
+			if len(args) == 0 {
+				return errors.New("name a talosctl command to run, e.g. `talman ctl -n <node> logs kubelet`")
+			}
+
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			var addrs []string
+
+			// Either selector names the nodes. With neither, talosctl
+			// falls back to the talosconfig's default -- every node -- so
+			// a -g honoured only beside -n would reach the whole cluster.
+			if len(nodes) > 0 || len(opts.groups) > 0 {
+				targets, err := selectNodes(cfg, nodes)
+				if err != nil {
+					return err
+				}
+
+				for _, n := range targets {
+					addrs = append(addrs, n.IPAddress)
+				}
+			}
+
+			tc, err := ensureTalosconfig(cfg)
+			if err != nil {
+				return err
+			}
+
+			argv := []string{"--talosconfig", tc}
+			if len(addrs) > 0 {
+				argv = append(argv, "--nodes", strings.Join(addrs, ","))
+			}
+
+			argv = append(argv, args...)
+
+			// What talosctl said, kept only to recognise one answer: the
+			// talosconfig lists every node, and a command talosctl runs on
+			// exactly one refuses them all. The last few KiB are enough.
+			said := &tail{max: 8 << 10}
+
+			if err := runner(cfg).StreamTee(said, argv...); err != nil {
+				if len(addrs) == 0 && strings.Contains(said.String(), "requires exactly one node") {
+					fmt.Fprintln(os.Stderr, "talman: this talosctl command runs on one node, and the talosconfig "+
+						"lists every node: name one with -n, e.g. `"+talmanCmd("ctl -n <node> "+strings.Join(args, " "))+"`")
+				}
+
+				var status *talosctl.StatusError
+				if errors.As(err, &status) {
+					return exitCodeError{status.Code}
+				}
+
+				return err
+			}
+
+			return nil
+		},
+	}
+
+	return cmd
+}
+
+// passthroughArgs takes talman's own flags off the front of a `talman ctl`
+// command line -- -n/--node, -g/--group, -c/--config, -v/--verbose,
+// -h/--help -- and
+// returns the rest for talosctl. It stops at "--", or at the first argument
+// that is not one of them.
+func passthroughArgs(raw []string) (nodes, rest []string, help bool, err error) {
+	value := func(i int, a, long, short string) (string, int, bool, error) {
+		switch {
+		case a == long || a == short:
+			if i+1 >= len(raw) {
+				return "", i, true, fmt.Errorf("%s needs a value", a)
+			}
+
+			return raw[i+1], i + 1, true, nil
+		case strings.HasPrefix(a, long+"="):
+			return strings.TrimPrefix(a, long+"="), i, true, nil
+		case strings.HasPrefix(a, short+"="):
+			return strings.TrimPrefix(a, short+"="), i, true, nil
+		}
+
+		return "", i, false, nil
+	}
+
+	for i := 0; i < len(raw); i++ {
+		a := raw[i]
+
+		switch a {
+		case "--":
+			return nodes, raw[i+1:], false, nil
+		case "-h", "--help":
+			return nil, nil, true, nil
+		case "-v", "--verbose":
+			opts.verbose = true
+
+			continue
+		}
+
+		if v, next, ok, err := value(i, a, "--node", "-n"); err != nil {
+			return nil, nil, false, err
+		} else if ok {
+			nodes = append(nodes, strings.Split(v, ",")...)
+			i = next
+
+			continue
+		}
+
+		if v, next, ok, err := value(i, a, "--group", "-g"); err != nil {
+			return nil, nil, false, err
+		} else if ok {
+			opts.groups = append(opts.groups, strings.Split(v, ",")...)
+			i = next
+
+			continue
+		}
+
+		if v, next, ok, err := value(i, a, "--config", "-c"); err != nil {
+			return nil, nil, false, err
+		} else if ok {
+			opts.configFile = v
+			i = next
+
+			continue
+		}
+
+		return nodes, raw[i:], false, nil
+	}
+
+	return nodes, nil, false, nil
+}
+
+// tail keeps the last max bytes written to it.
+type tail struct {
+	max int
+	buf []byte
+}
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if over := len(t.buf) - t.max; over > 0 {
+		t.buf = t.buf[over:]
+	}
+
+	return len(p), nil
+}
+
+func (t *tail) String() string { return string(t.buf) }
