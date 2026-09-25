@@ -488,11 +488,11 @@ completes node names for `-n` from the config in the working directory:
 $ source <(talman completion zsh)
 ```
 
-Ctrl-C, or a CI runner's SIGTERM, stops a run in order rather than on the
-spot. The talosctl process in flight is signalled too, the decrypted secrets
+Ctrl-C, a CI runner's SIGTERM, or a SIGHUP from a terminal closing or an ssh
+session dropping stops a run in order rather than on the spot. The talosctl process in flight is signalled too, the decrypted secrets
 are removed, metrics are written and a stopped roll-out names the nodes it did
-not reach, as it does for any failure; talman then exits 130 for Ctrl-C and
-143 for SIGTERM, as a shell would report them. A second signal exits at once,
+not reach, as it does for any failure; talman then exits 128 plus the signal,
+as a shell would report it: 130 for Ctrl-C, 143 for SIGTERM, 129 for SIGHUP. A second signal exits at once,
 killing any talosctl still running and still removing the decrypted secrets.
 
 ### Adopting nodes
@@ -769,7 +769,7 @@ attribute to a machine.
 | 0 | nothing changed, or would have |
 | 2 | something changed, or would have |
 | 1 | the command failed, a usage error included |
-| 130, 143 | the run was interrupted, by SIGINT or by SIGTERM |
+| 129, 130, 131, 143 | the run was interrupted, by SIGHUP, SIGINT, SIGQUIT or SIGTERM |
 
 Without the flag, a change is a 0 like anything else that succeeded. Test the
 code rather than chaining `||` and `&&`, which reads 0 as drift too:
