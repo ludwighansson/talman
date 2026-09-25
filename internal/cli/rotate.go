@@ -438,9 +438,9 @@ func printRotationNext(cfg *config.Config, old []byte, kubernetes bool) {
 		fmt.Fprintf(os.Stderr, "  keep %s out of git: it is unencrypted\n", cfg.SecretFile)
 	}
 
-	fmt.Fprintln(os.Stderr, "  talman render       the rendered configs still carry the old CAs")
+	fmt.Fprintf(os.Stderr, "  %s       the rendered configs still carry the old CAs\n", talmanCmd("render"))
 
 	if kubernetes {
-		fmt.Fprintln(os.Stderr, "  talman kubeconfig   the old one is signed by the old Kubernetes CA")
+		fmt.Fprintf(os.Stderr, "  %s   the old one is signed by the old Kubernetes CA\n", talmanCmd("kubeconfig"))
 	}
 }

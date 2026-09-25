@@ -287,8 +287,8 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				file := cfg.MachineConfigPath(n)
 
 				if _, err := os.Stat(file); err != nil {
-					return fmt.Errorf("no rendered config for %s at %s: run `talman render` first",
-						n.Hostname, file)
+					return fmt.Errorf("no rendered config for %s at %s: run `%s` first",
+						n.Hostname, file, talmanCmd("render"))
 				}
 
 				// A cluster is rarely all one thing: after a reset, or when a
