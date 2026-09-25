@@ -63,7 +63,10 @@ talosctl's exit status is talman's.`,
 
 			var addrs []string
 
-			if len(nodes) > 0 {
+			// Either selector names the nodes. With neither, talosctl
+			// falls back to the talosconfig's default -- every node -- so
+			// a -g honoured only beside -n would reach the whole cluster.
+			if len(nodes) > 0 || len(opts.groups) > 0 {
 				targets, err := selectNodes(cfg, nodes)
 				if err != nil {
 					return err
