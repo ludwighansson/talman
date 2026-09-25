@@ -210,6 +210,7 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 			m, _ := s.(map[string]any)
 
 			out := map[string]any{"type": "string"}
+
 			for k, v := range m {
 				if k != "type" {
 					out[k] = v
