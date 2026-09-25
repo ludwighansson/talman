@@ -11,14 +11,16 @@ import (
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
+// gitignoreHeader marks a .gitignore as talman's, and so one it may rewrite.
+const gitignoreHeader = "# Managed by talman.\n"
+
 // gitignoreBody keeps rendered output out of git wholesale.
 //
 // A rendered machine config embeds the machine CA key, the cluster secret and
 // the bootstrap token, so the safe default is to ignore the directory rather
 // than to list files as they appear -- a new node must not be able to slip
 // into a commit because nobody re-ran the generator.
-const gitignoreBody = `# Managed by talman.
-# Rendered machine configs and the talosconfig contain live cluster secrets.
+const gitignoreBody = gitignoreHeader + `# Rendered machine configs and the talosconfig contain live cluster secrets.
 *
 !.gitignore
 `
@@ -85,9 +87,19 @@ func (r *Renderer) ensureGitignore(dir string) error {
 			return nil
 		}
 
-		// Present but not doing its job -- truncated, or rewritten by some
-		// other tool. Since what sits beside it is machine CA keys and the
-		// bootstrap token, restoring the rule beats respecting the edit.
+		// Someone else's: the output directory is shared with something that
+		// keeps its own .gitignore. Replacing it destroys what they had, and
+		// keeping it leaves the secrets committable, so neither is talman's
+		// call to make.
+		if !strings.HasPrefix(string(existing), gitignoreHeader) {
+			return fmt.Errorf("%s exists, was not written by talman, and does not ignore the directory, "+
+				"where rendered configs hold live cluster secrets: point outputDir at a directory of its own",
+				Rel(path))
+		}
+
+		// talman's, but no longer doing its job -- truncated, or edited.
+		// Since what sits beside it is machine CA keys and the bootstrap
+		// token, restoring the rule beats respecting the edit.
 		r.logf("warning: %s does not ignore the directory; rewriting it, "+
 			"because the configs beside it contain live cluster secrets", Rel(path))
 	} else if !os.IsNotExist(err) {

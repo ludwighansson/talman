@@ -431,7 +431,9 @@ func TestGitignoreRestoredWhenIneffective(t *testing.T) {
 	}
 
 	gitignore := filepath.Join(dir, ".gitignore")
-	if err := os.WriteFile(gitignore, []byte("# emptied by something\n"), 0o644); err != nil {
+	// talman's own, emptied since: restored. (One talman did not write is
+	// the operator's, and is refused instead; see write_test.go.)
+	if err := os.WriteFile(gitignore, []byte(gitignoreHeader+"# emptied by something\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

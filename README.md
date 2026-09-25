@@ -436,7 +436,10 @@ identity in it are what a running cluster trusts. To adopt a cluster that
 already exists, use `--from-controlplane-config`.
 
 Rendered machine configs *do* contain secrets, so `render` writes them `0600`
-and drops a `.gitignore` that excludes the whole output directory.
+and drops a `.gitignore` that excludes the whole output directory. That is why
+`outputDir` has to be a directory of its own: one that holds `talman.yaml` is
+refused, and a `.gitignore` already there that talman did not write is left
+alone and the render stops, rather than being replaced.
 
 ## Commands
 

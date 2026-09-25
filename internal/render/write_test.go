@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/ludwighansson/talman/internal/config"
@@ -82,5 +83,45 @@ func TestWriteAllGuardsSecrets(t *testing.T) {
 	leftovers, _ := filepath.Glob(filepath.Join(out, ".*.tmp*"))
 	if len(leftovers) > 0 {
 		t.Errorf("temp files left in the output directory: %v", leftovers)
+	}
+}
+
+// A .gitignore talman did not write is the operator's, and is not replaced:
+// with outputDir pointed at a directory of their own, rewriting it destroyed
+// what they had there.
+func TestForeignGitignoreIsLeftAlone(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{Dir: dir, OutputDir: "out"}
+
+	if err := os.MkdirAll(cfg.OutputPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	theirs := filepath.Join(cfg.OutputPath(), ".gitignore")
+	if err := os.WriteFile(theirs, []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Renderer{Cfg: cfg}
+
+	if err := r.prepareOutput(); err == nil {
+		t.Error("render went ahead beside a .gitignore that does not ignore the secrets")
+	}
+
+	if b, _ := os.ReadFile(theirs); string(b) != "node_modules/\n" {
+		t.Errorf("the operator's .gitignore was replaced with %q", b)
+	}
+
+	// One talman wrote, and someone since edited, is restored.
+	if err := os.WriteFile(theirs, []byte(gitignoreBody[:strings.Index(gitignoreBody, "\n")+1]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.prepareOutput(); err != nil {
+		t.Fatal(err)
+	}
+
+	if b, _ := os.ReadFile(theirs); !ignoresEverything(b) {
+		t.Errorf("talman's own edited .gitignore was not restored: %q", b)
 	}
 }

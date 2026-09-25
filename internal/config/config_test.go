@@ -912,3 +912,19 @@ func TestRenameHints(t *testing.T) {
 		t.Errorf("a config with no old keys got a hint: %q", hint)
 	}
 }
+
+// outputDir is ignored whole by the .gitignore talman writes there, so one
+// that holds the config -- "." or a parent -- would hide talman.yaml and the
+// bundle from git.
+func TestOutputDirMustBeItsOwn(t *testing.T) {
+	for _, dir := range []string{".", "./", "..", "../.."} {
+		_, err := Load(write(t, validBase+"outputDir: "+dir+"\n"+`nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`))
+		if err == nil || !strings.Contains(err.Error(), "outputDir") {
+			t.Errorf("outputDir %q: Load() = %v, want it refused", dir, err)
+		}
+	}
+}
