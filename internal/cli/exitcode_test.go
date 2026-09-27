@@ -1551,6 +1551,81 @@ func TestDryRunWithInsecureSendsNothing(t *testing.T) {
 	}
 }
 
+// --recover-from restores etcd from a snapshot as the cluster is built: the
+// bootstrap carries it, and nothing else changes.
+func TestApplyBootstrapRecoversFromASnapshot(t *testing.T) {
+	dir, log := bootstrapFixture(t)
+
+	snap := filepath.Join(dir, "etcd.db")
+	if err := os.WriteFile(snap, []byte("snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run([]string{"apply", "--bootstrap", "--recover-from", snap, "--no-render", "--redact-secrets=false",
+		"--stabilize=0s", "--timeout=20s"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d\n%s", got, calls)
+	}
+
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "--nodes 10.0.0.1 bootstrap --recover-from "+snap) {
+		t.Errorf("the bootstrap did not carry the snapshot:\n%s", calls)
+	}
+
+	if strings.Count(string(calls), " bootstrap") != 1 {
+		t.Errorf("etcd was bootstrapped %d times, want once", strings.Count(string(calls), " bootstrap"))
+	}
+}
+
+// --recover-from is checked before anything is sent: it needs --bootstrap, and
+// a snapshot that is there.
+func TestRecoverFromIsCheckedFirst(t *testing.T) {
+	dir, log := bootstrapFixture(t)
+
+	snap := filepath.Join(dir, "etcd.db")
+	_ = os.WriteFile(snap, []byte("snapshot"), 0o600)
+
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"apply", "--recover-from", snap, "--onboard-new-nodes"}, "needs --bootstrap"},
+		{[]string{"apply", "--bootstrap", "--recover-from", filepath.Join(dir, "missing.db")}, "--recover-from"},
+		{[]string{"apply", "--bootstrap", "--recover-from", dir}, "is not a file"},
+	} {
+		_ = os.WriteFile(log, nil, 0o644)
+
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(append(tt.args, "--no-render")) })
+
+		if got != 1 || !strings.Contains(stderr, tt.want) {
+			t.Errorf("%v: exit %d, want 1 and %q:\n%s", tt.args, got, tt.want, stderr)
+		}
+
+		if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "apply-config") ||
+			strings.Contains(string(calls), " bootstrap") {
+			t.Errorf("%v sent something:\n%s", tt.args, calls)
+		}
+	}
+}
+
+// The plan says which snapshot the build restores.
+func TestBootstrapPlanNamesTheSnapshot(t *testing.T) {
+	dir, _ := bootstrapFixture(t)
+
+	snap := filepath.Join(dir, "etcd.db")
+	_ = os.WriteFile(snap, []byte("snapshot"), 0o600)
+
+	stderr := captureStderr(t, func() {
+		run([]string{"apply", "--bootstrap", "--recover-from", snap, "--dry-run", "--no-render"})
+	})
+
+	if !strings.Contains(stderr, "bootstrap etcd on it from ") || !strings.Contains(stderr, "etcd.db") {
+		t.Errorf("the plan does not name the snapshot:\n%s", stderr)
+	}
+}
+
 // A dry run of a build answers "it would change", with or without --diff.
 func TestBootstrapDryRunIsAChange(t *testing.T) {
 	for _, extra := range [][]string{nil, {"--diff"}} {

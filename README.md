@@ -459,7 +459,7 @@ alone and the render stops, rather than being replaced.
 | `talman render` | write machine configs and a talosconfig |
 | `talman schematic id` | the resolved schematic ID per node |
 | `talman image url` | the installer image per node, or with `--kind` its ISO, disk image or iPXE script |
-| `talman apply` | re-render, then apply; `--onboard-new-nodes` also configures new nodes, `--bootstrap` builds a new cluster |
+| `talman apply` | re-render, then apply; `--onboard-new-nodes` also configures new nodes, `--bootstrap` builds a new cluster, `--recover-from` restores its etcd from a snapshot |
 | `talman kubeconfig` | fetch the kubeconfig into the output directory |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
 | `talman reboot` | a rolling reboot, one node at a time |
@@ -1224,6 +1224,34 @@ credentials, gitignored and `0600`. talman never overwrites one.
 
 `upgrade --snapshot` and `upgrade-k8s --snapshot` take one before they change
 anything, which is the moment a snapshot is most worth having.
+
+### Restoring etcd
+
+When every control plane has lost etcd — the machines were rebuilt, or their
+EPHEMERAL partitions wiped at once — the cluster is rebuilt from a snapshot the
+way it was built the first time, with `--recover-from` naming the snapshot:
+
+```console
+$ talman apply --bootstrap --recover-from clusterconfig/etcd-sto1-com-20260924T101500Z.db
+== [1/6] talos-c01 (10.164.0.27)
+     Applied configuration without a reboot
+== bootstrapping etcd on talos-c01 (10.164.0.27) from clusterconfig/etcd-sto1-com-20260924T101500Z.db
+recovering from snapshot "...": hash 04b1a348, revision 32600, total keys 329, total size 4677632
+     etcd is running on talos-c01 after 1s
+== [2/6] talos-c02 (10.164.0.28)
+```
+
+It is `talosctl bootstrap --recover-from` on the first control plane, then the
+rest as any build goes; the other control planes join the restored etcd.
+`--bootstrap`'s checks hold as they do for a first build: a control plane that
+still runs etcd means there is a cluster to split, and the run refuses.
+Control planes that are configured but run no etcd — what a wipe of EPHEMERAL
+leaves — are asked about first (`-y` skips it), and `--dry-run` prints the plan
+with the snapshot it would restore.
+
+talman wipes nothing to get there. A reset takes control planes one at a time,
+and each one rejoins from the others, which is what a reset is for and not a
+way to lose etcd.
 
 ### Rotating the CAs
 

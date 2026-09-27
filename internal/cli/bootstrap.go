@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/interrupt"
+	"github.com/ludwighansson/talman/internal/render"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -39,6 +41,27 @@ func bootstrapFlagsAllowed(cmd *cobra.Command, mode string, onlyNew, wait bool) 
 	}
 
 	return nil
+}
+
+// recoverySnapshot checks --recover-from before anything is sent: it restores
+// etcd while bootstrapping it, so it needs --bootstrap, and the snapshot has to
+// be there -- finding out once the first control plane is configured leaves a
+// cluster half built. It returns the path made absolute, as talosctl reads it.
+func recoverySnapshot(path string, bootstrap bool) (string, error) {
+	if !bootstrap {
+		return "", errors.New("--recover-from restores etcd while bootstrapping it, so it needs --bootstrap")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("--recover-from: %w", err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("--recover-from: %s is not a file", path)
+	}
+
+	return filepath.Abs(path)
 }
 
 // checkCluster checks there is a cluster for the apply to configure, or, for
@@ -210,7 +233,7 @@ func talmanCmd(rest string) string {
 // take, and which nodes are new, without sending anything -- a dry run to a
 // node in maintenance mode would ship it the config, unauthenticated.
 func printBootstrapPlan(tal *talosctl.Runner, tc string, first *config.Node,
-	stages []config.Staged,
+	stages []config.Staged, recoverFrom string,
 ) {
 	status := func(n *config.Node) string {
 		switch tal.Mode(tc, n.IPAddress) {
@@ -223,7 +246,12 @@ func printBootstrapPlan(tal *talosctl.Runner, tc string, first *config.Node,
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "would configure %s, bootstrap etcd on it, then:\n", status(first))
+	from := ""
+	if recoverFrom != "" {
+		from = " from " + render.Rel(recoverFrom)
+	}
+
+	fmt.Fprintf(os.Stderr, "would configure %s, bootstrap etcd on it%s, then:\n", status(first), from)
 
 	for i, st := range stages {
 		names := make([]string, 0, len(st.Nodes))
@@ -242,7 +270,7 @@ func printBootstrapPlan(tal *talosctl.Runner, tc string, first *config.Node,
 // that exists. apply is the node's own apply, which waits for it to come back
 // as any apply does.
 func bootstrapFirst(cmd *cobra.Command, tal *talosctl.Runner, tc string, first *config.Node,
-	timeout time.Duration, apply func(say func(string)) error,
+	recoverFrom string, timeout time.Duration, apply func(say func(string)) error,
 ) error {
 	rec := currentRun
 	say := func(s string) { fmt.Fprint(os.Stderr, s) }
@@ -260,9 +288,18 @@ func bootstrapFirst(cmd *cobra.Command, tal *talosctl.Runner, tc string, first *
 		return fmt.Errorf("%w\n%s", err, again)
 	}
 
-	fmt.Fprintf(os.Stderr, "== bootstrapping etcd on %s (%s)\n", first.Hostname, first.IPAddress)
+	args := append(tal.NodeArgs(tc, first.IPAddress), "bootstrap")
 
-	if err := tal.Stream(append(tal.NodeArgs(tc, first.IPAddress), "bootstrap")...); err != nil {
+	if recoverFrom != "" {
+		fmt.Fprintf(os.Stderr, "== bootstrapping etcd on %s (%s) from %s\n", first.Hostname, first.IPAddress,
+			render.Rel(recoverFrom))
+
+		args = append(args, "--recover-from", recoverFrom)
+	} else {
+		fmt.Fprintf(os.Stderr, "== bootstrapping etcd on %s (%s)\n", first.Hostname, first.IPAddress)
+	}
+
+	if err := tal.Stream(args...); err != nil {
 		return fmt.Errorf("%w\n%s", err, again)
 	}
 

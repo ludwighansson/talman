@@ -26,25 +26,26 @@ var applyModes = []string{"auto", "no-reboot", "staged", "try"}
 
 func newApplyCmd() *cobra.Command {
 	var (
-		nodes      []string
-		waves      waveFlags
-		mode       string
-		insecure   bool
-		onlyNew    bool
-		onboard    bool
-		bootstrap  bool
-		yes        bool
-		parallel   int
-		detailed   bool
-		diff       bool
-		hideSecret bool
-		dryRun     bool
-		wait       bool
-		health     bool
-		noRender   bool
-		extraFlags []string
-		stabilize  time.Duration
-		timeout    time.Duration
+		nodes       []string
+		waves       waveFlags
+		mode        string
+		insecure    bool
+		onlyNew     bool
+		onboard     bool
+		bootstrap   bool
+		recoverFrom string
+		yes         bool
+		parallel    int
+		detailed    bool
+		diff        bool
+		hideSecret  bool
+		dryRun      bool
+		wait        bool
+		health      bool
+		noRender    bool
+		extraFlags  []string
+		stabilize   time.Duration
+		timeout     time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -57,14 +58,15 @@ alone; --parallel batches workers.
 New nodes, in maintenance mode, are configured only with --onboard-new-nodes
 or --only-new-nodes: the maintenance service authenticates nothing, and a
 config carries the CA keys. --bootstrap builds a new cluster: the first
-control plane, etcd on it, then the rest.
+control plane, etcd on it, then the rest; with --recover-from, etcd is
+restored from a snapshot.
 
 --dry-run asks each node what would change, --diff prints that before
 applying, and --detailed-exit-code turns it into an exit code (2 changed, 0
 unchanged, 1 error). Printed diffs have this cluster's secrets redacted.
 
-More in the README: "Onboarding new nodes", "Rolling changes out safely" and
-"Exit codes for CI".`,
+More in the README: "Onboarding new nodes", "Restoring etcd", "Rolling changes
+out safely" and "Exit codes for CI".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun
@@ -91,6 +93,12 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 			targets, err := selectNodes(cfg, nodes)
 			if err != nil {
 				return err
+			}
+
+			if recoverFrom != "" {
+				if recoverFrom, err = recoverySnapshot(recoverFrom, bootstrap); err != nil {
+					return err
+				}
 			}
 
 			if bootstrap {
@@ -592,7 +600,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 						stages = []config.Staged{{Nodes: rest}}
 					}
 
-					printBootstrapPlan(tal, tc, first, stages)
+					printBootstrapPlan(tal, tc, first, stages, recoverFrom)
 
 					// A build always changes something: etcd, at the least.
 					if detailed {
@@ -611,7 +619,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 					// shows it: the roll-out below, over every node.
 					fmt.Fprintln(os.Stderr)
 				} else {
-					if err := bootstrapFirst(cmd, tal, tc, first, timeout, func(say func(string)) error {
+					if err := bootstrapFirst(cmd, tal, tc, first, recoverFrom, timeout, func(say func(string)) error {
 						_, err := perNode(first, false, say)
 
 						return err
@@ -628,7 +636,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 						return err
 					}
 
-					ro.hintDrop = []string{"bootstrap"}
+					ro.hintDrop = []string{"bootstrap", "recover-from"}
 					ro.hintAdd = func([]*config.Node) []string { return []string{"--onboard-new-nodes"} }
 				}
 			}
@@ -666,6 +674,8 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 		"configure new nodes (in maintenance mode) too, over the unauthenticated maintenance service")
 	cmd.Flags().BoolVar(&bootstrap, "bootstrap", false,
 		"build a new cluster: configure the first control plane, bootstrap etcd on it, then the rest")
+	cmd.Flags().StringVar(&recoverFrom, "recover-from", "",
+		"with --bootstrap, restore etcd from this snapshot (talman etcd snapshot) rather than start it empty")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false,
 		"with --bootstrap, skip the question asked when control planes are configured but run no etcd")
 	cmd.Flags().BoolVar(&onlyNew, "only-new-nodes", false,
