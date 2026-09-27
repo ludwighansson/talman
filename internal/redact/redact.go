@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -44,11 +45,16 @@ const minPEMLine = 8
 type Set struct {
 	mu   sync.Mutex
 	seen map[string]bool
+	// lines are the lines of multi-line secrets, hidden only where a line
+	// of output holds exactly that: matched anywhere, the lines of a Secret
+	// manifest encrypted whole would blank "apiVersion: v1" inside
+	// "apiVersion: v1alpha1" all over a diff.
+	lines map[string]bool
 }
 
 // NewSet returns an empty set.
 func NewSet() *Set {
-	return &Set{seen: map[string]bool{}}
+	return &Set{seen: map[string]bool{}, lines: map[string]bool{}}
 }
 
 // AddBundle adds every value in a decrypted Talos secrets bundle.
@@ -197,7 +203,7 @@ func (s *Set) Redactor() *Redactor {
 		pairs = append(pairs, v, Marker)
 	}
 
-	return &Redactor{replacer: strings.NewReplacer(pairs...), count: count}
+	return &Redactor{replacer: strings.NewReplacer(pairs...), count: count, lines: maps.Clone(s.lines)}
 }
 
 // addLong adds v if it is at least least long, and, when v runs over several
@@ -222,12 +228,13 @@ func (s *Set) addLong(v string, least int) {
 	for _, line := range strings.Split(v, "\n") {
 		line = strings.TrimSpace(line)
 
-		// The armour lines are the same in every PEM block.
-		if len(line) < least || strings.HasPrefix(line, "-----") {
+		// The armour lines are the same in every PEM block, and a line that
+		// is only a key holds no value.
+		if len(line) < least || strings.HasPrefix(line, "-----") || strings.HasSuffix(line, ":") {
 			continue
 		}
 
-		s.seen[line] = true
+		s.lines[line] = true
 	}
 }
 
@@ -274,6 +281,7 @@ func printable(text string) bool {
 type Redactor struct {
 	replacer *strings.Replacer
 	count    int
+	lines    map[string]bool
 }
 
 // FromBundle builds a redactor from a decrypted Talos secrets bundle alone.
@@ -306,7 +314,30 @@ func (r *Redactor) String(s string) string {
 		return s
 	}
 
+	if len(r.lines) > 0 {
+		s = r.hideLines(s)
+	}
+
 	return r.replacer.Replace(s)
+}
+
+// hideLines replaces each line of s whose content -- past its indentation and
+// a diff's +/- -- is a line of a multi-line secret.
+func (r *Redactor) hideLines(s string) string {
+	out := strings.Split(s, "\n")
+
+	for i, line := range out {
+		content := strings.TrimLeft(line, " \t")
+		content = strings.TrimLeft(strings.TrimPrefix(strings.TrimPrefix(content, "+"), "-"), " \t")
+		content = strings.TrimRight(content, " \t\r")
+
+		if r.lines[content] {
+			at := strings.LastIndex(line, content)
+			out[i] = line[:at] + Marker + line[at+len(content):]
+		}
+	}
+
+	return strings.Join(out, "\n")
 }
 
 // Bytes is String for output captured from a command.
@@ -315,7 +346,7 @@ func (r *Redactor) Bytes(b []byte) []byte {
 		return b
 	}
 
-	return []byte(r.replacer.Replace(string(b)))
+	return []byte(r.String(string(b)))
 }
 
 // walk calls fn for every string leaf.

@@ -247,10 +247,20 @@ sops:
 		t.Fatal(err)
 	}
 
-	got := s.Redactor().String(diff)
+	got := s.Redactor().String(diff + `+apiVersion: v1alpha1
++kind: SecretSomething
+`)
 
 	if strings.Contains(got, "hunter2") {
 		t.Errorf("a line of a multi-line secret survived the diff:\n%s", got)
+	}
+
+	// Its lines are matched whole, so a longer line that starts the same way
+	// is left alone, and a line that is only a key holds nothing to hide.
+	for _, want := range []string{"+apiVersion: v1alpha1\n", "+kind: SecretSomething\n", "+            stringData:\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q was redacted, and holds no secret:\n%s", strings.TrimSpace(want), got)
+		}
 	}
 }
 
