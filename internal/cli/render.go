@@ -29,8 +29,8 @@ func newRenderCmd() *cobra.Command {
 chain, writing complete machine configurations to the output directory.
 
 The secrets bundle is decrypted into a private temporary directory for the
-duration of the run and removed afterwards; plaintext secrets never reach the
-output directory or the repository.`,
+duration of the run and removed afterwards; the decrypted bundle is not written
+to the output directory or the repository.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()

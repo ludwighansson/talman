@@ -51,8 +51,8 @@ This is the entire premise of the project rather than a stylistic preference.
 talhelper embedded upstream `v1alpha1` structs in its own schema and hand-wrote
 a generator for each new Talos document kind, so every Talos minor release
 meant a talhelper release, and eventually meant no talhelper at all. Everything
-Talos-shaped goes through the `talosctl` binary, which means a new Talos
-release needs no talman release.
+Talos-shaped goes through the `talosctl` binary rather than Go types talman
+would have to keep in step with Talos.
 
 There is exactly one place this bites: `internal/factory` re-declares the Image
 Factory schematic type instead of importing `image-factory/pkg/schematic`,
@@ -119,8 +119,7 @@ something fails there and the reason is not obvious, say so in the PR rather
 than fighting it alone.
 
 Small, focused commits are easier to review than one large one, but I would
-much rather have your contribution in an awkward shape than not at all. I am
-happy to help clean it up.
+much rather have your contribution in an awkward shape than not at all.
 
 ## Reporting a bug
 

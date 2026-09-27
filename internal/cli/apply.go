@@ -18,10 +18,10 @@ import (
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
-// applyModes are the apply modes talosctl v1.14 accepts, for the help text.
-// talosctl checks the value itself, so a mode a later release adds works as
-// it is. talman gives two of them a meaning of its own: auto may reboot a
-// node, and staged enacts nothing until the next reboot.
+// applyModes are the apply modes talosctl v1.14 accepts, for the help text;
+// talosctl checks the value itself. talman gives two of them a meaning of its
+// own: auto may reboot a node, and staged enacts nothing until the next
+// reboot.
 var applyModes = []string{"auto", "no-reboot", "staged", "try"}
 
 func newApplyCmd() *cobra.Command {

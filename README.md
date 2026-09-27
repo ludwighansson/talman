@@ -63,8 +63,8 @@ silently orphan its patches and a typo'd path cannot silently apply nothing.
 
 ## No Talos dependency
 
-talman does not link against the Talos API. It shells out to `talosctl`, which
-means a new Talos release needs no talman release.
+talman does not link against the Talos API. It shells out to `talosctl` for
+everything Talos-shaped.
 
 Rendering a node is one `talosctl gen config` call carrying that node's ordered
 patch chain — the workflow Sidero
@@ -126,12 +126,11 @@ $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version"
 v1.14.1
 ```
 
-That pinning is the one cost of the image: talman is built so that a new Talos
-release needs no talman release, and an image ties you to the talosctl it
-shipped with. `talosctl:` in talman.yaml can point at a newer binary mounted
-into the container when that matters.
+That pinning is the one cost of the image: it carries the talosctl it was built
+with. `talosctl:` in talman.yaml can point at another binary mounted into the
+container when that matters.
 
-Every release is signed, keylessly, by the workflow that built it, and each
+Releases are signed, keylessly, by the workflow that builds them, and each
 archive ships a bill of materials beside it:
 
 ```console
@@ -431,8 +430,8 @@ walking up from the secrets file, not from your working directory, so where you
 happen to be standing cannot change whether a bundle gets encrypted.
 
 `render` decrypts it into a private temporary directory for the duration of the
-run and removes it afterwards. Plaintext secrets never reach `clusterconfig/`
-or the repository.
+run and removes it afterwards; the decrypted bundle is not written to
+`clusterconfig/` or the repository.
 
 Generating refuses to overwrite an existing bundle: the CAs and cluster
 identity in it are what a running cluster trusts. To adopt a cluster that

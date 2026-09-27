@@ -108,9 +108,8 @@ Patches are addressed by path, never by directory convention. Each node belongs
 to the reserved groups "all" and its role, plus any groups it declares, and the
 patches for those groups are applied in that order.
 
-talman never links against the Talos API. Everything that touches a cluster
-goes through the talosctl binary, so a new Talos release needs no talman
-release.`,
+talman never links against the Talos API: everything that touches a cluster
+goes through the talosctl binary.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       Version,
