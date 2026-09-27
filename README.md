@@ -79,7 +79,7 @@ registers it with the factory instead.
 ## Install
 
 ```console
-go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-beta.5
+go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-beta.6
 ```
 
 That needs Go 1.27 or later. Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
@@ -92,7 +92,7 @@ Or take the image, which carries `talosctl` and `sops` with it:
 
 ```console
 $ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
-    ghcr.io/ludwighansson/talman:1.0.0-beta.5 validate
+    ghcr.io/ludwighansson/talman:1.0.0-beta.6 validate
 ```
 
 On top of Alpine's base it adds three binaries — talman and the two it drives —
@@ -105,7 +105,7 @@ rather than as the job image itself.
 # .gitlab-ci.yml
 drift:
   image:
-    name: ghcr.io/ludwighansson/talman:1.0.0-beta.5
+    name: ghcr.io/ludwighansson/talman:1.0.0-beta.6
     entrypoint: [""]   # the image's entrypoint is talman; GitLab runs the script with a shell
   script:
     - talman apply --dry-run --detailed-exit-code
@@ -122,7 +122,7 @@ image as a label as well as in `talman version`:
 
 ```console
 $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version" }}' \
-    ghcr.io/ludwighansson/talman:1.0.0-beta.5
+    ghcr.io/ludwighansson/talman:1.0.0-beta.6
 v1.14.1
 ```
 
@@ -138,7 +138,7 @@ $ cosign verify-blob checksums.txt \
     --signature checksums.txt.sig --certificate checksums.txt.pem \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
-$ cosign verify ghcr.io/ludwighansson/talman:1.0.0-beta.5 \
+$ cosign verify ghcr.io/ludwighansson/talman:1.0.0-beta.6 \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
