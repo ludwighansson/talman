@@ -57,9 +57,15 @@ type Renderer struct {
 	secretsMu  sync.Mutex
 	secretsErr error
 
-	// schematicIDs caches resolved schematics for the pass, so a file shared
-	// by fifty nodes is read, templated and hashed once.
+	// schematicIDs caches resolved schematics for the pass, so one shared by
+	// fifty nodes is hashed, and submitted, once.
 	schematicIDs map[string]string
+
+	// schematicFiles caches schematic files as read, so a shared one is
+	// decrypted once -- a KMS call, or a touch of a hardware key, each --
+	// though it is templated per node.
+	schematicFiles map[string][]byte
+	fileMu         sync.Mutex
 
 	// One Renderer serves a whole pass, and a pass may render nodes
 	// concurrently. Everything per node is already separate -- each writes
@@ -436,7 +442,7 @@ func (r *Renderer) loadSchematic(ref *config.SchematicRef, base template.Context
 		return ref.Inline, nil
 	}
 
-	raw, err := sopsx.ReadFile(r.Cfg.ResolvePath(ref.Path))
+	raw, err := r.readSchematicFile(ref.Path)
 	if err != nil {
 		return nil, fmt.Errorf("schematic %q: %w", ref.Path, err)
 	}
@@ -452,6 +458,33 @@ func (r *Renderer) loadSchematic(ref *config.SchematicRef, base template.Context
 	}
 
 	return schematic, nil
+}
+
+// readSchematicFile reads, and decrypts if it is encrypted, a schematic file
+// once for the pass. The lock is held across the read, so nodes rendering
+// together wait for the one decryption rather than each starting their own.
+func (r *Renderer) readSchematicFile(rel string) ([]byte, error) {
+	path := r.Cfg.ResolvePath(rel)
+
+	r.fileMu.Lock()
+	defer r.fileMu.Unlock()
+
+	if raw, ok := r.schematicFiles[path]; ok {
+		return raw, nil
+	}
+
+	raw, err := sopsx.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if r.schematicFiles == nil {
+		r.schematicFiles = map[string][]byte{}
+	}
+
+	r.schematicFiles[path] = raw
+
+	return raw, nil
 }
 
 // Secrets returns a redactor for the secrets a config's machine configs may
