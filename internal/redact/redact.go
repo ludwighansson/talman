@@ -209,6 +209,10 @@ func (s *Set) Redactor() *Redactor {
 	return &Redactor{replacer: strings.NewReplacer(pairs...), count: count}
 }
 
+// addLong adds v if it is at least least long, and, when v runs over several
+// lines, each line of it by the same measure: a diff prints each line with its
+// own prefix and indentation, so a Secret manifest encrypted whole, or a key
+// read from the environment, would otherwise never match.
 func (s *Set) addLong(v string, least int) {
 	v = strings.TrimSpace(v)
 	if len(v) < least {
@@ -216,8 +220,24 @@ func (s *Set) addLong(v string, least int) {
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.seen[v] = true
-	s.mu.Unlock()
+
+	if !strings.Contains(v, "\n") {
+		return
+	}
+
+	for _, line := range strings.Split(v, "\n") {
+		line = strings.TrimSpace(line)
+
+		// The armour lines are the same in every PEM block.
+		if len(line) < least || strings.HasPrefix(line, "-----") {
+			continue
+		}
+
+		s.seen[line] = true
+	}
 }
 
 // addDecoded adds the text a base64 value decodes to, when it decodes to text:

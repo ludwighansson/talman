@@ -214,6 +214,46 @@ func TestAddedValuesAreHidden(t *testing.T) {
 	}
 }
 
+// A value that runs over several lines -- a Secret manifest encrypted whole in
+// an inline manifest -- is hidden line by line, as a diff prints it.
+func TestMultiLineSecretsAreHiddenInADiff(t *testing.T) {
+	ciphertext := `cluster:
+    inlineManifests:
+        - name: db-credentials
+          contents: ENC[AES256_GCM,data:abc,iv:x,tag:y,type:str]
+sops:
+    version: 3.13.3
+`
+	plaintext := `cluster:
+    inlineManifests:
+        - name: db-credentials
+          contents: |
+            apiVersion: v1
+            kind: Secret
+            stringData:
+              password: hunter2-supersecret
+`
+	diff := `@@ -1,3 +1,8 @@
++          contents: |
++            apiVersion: v1
++            kind: Secret
++            stringData:
++              password: hunter2-supersecret
+`
+
+	s := NewSet()
+
+	if err := s.AddEncrypted([]byte(ciphertext), []byte(plaintext)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := s.Redactor().String(diff)
+
+	if strings.Contains(got, "hunter2") {
+		t.Errorf("a line of a multi-line secret survived the diff:\n%s", got)
+	}
+}
+
 // Every document of an encrypted patch is paired, not only the first: sops
 // writes its metadata into each, and a multi-document patch keeps a second
 // document's secret in the second.
