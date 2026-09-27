@@ -909,8 +909,8 @@ talman_run_last_success_timestamp_seconds{cluster,command}
 talman_run_nodes{cluster,command,result}              how many nodes ended in each result
 talman_run_info{cluster,command,talman_version}       1
 talman_node_result{cluster,command,node,role,result}  1, one series per node
-talman_node_success{cluster,command,node,role}        1 or 0, for nodes the run reached
-talman_node_duration_seconds{cluster,command,node,role}
+talman_node_success{cluster,command,node,role}        1 or 0; NaN for nodes the run did not reach
+talman_node_duration_seconds{cluster,command,node,role}  NaN for nodes the run did not reach
 talman_node_info{cluster,command,node,role,from_version,to_version}  1, upgrade only
 ```
 

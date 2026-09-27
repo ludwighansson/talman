@@ -427,20 +427,30 @@ func (r *Run) Text() []byte {
 		sample("talman_node_result", append(nodeLabels(h), [2]string{"result", r.nodes[h].result()}), 1)
 	}
 
-	family("talman_node_success", "Whether talman's work on a node succeeded (1) or failed (0), for nodes it reached.")
+	// NaN for a node the run did not reach, rather than nothing: a push
+	// replaces only the series it sends, so leaving one out would leave the
+	// last run's value for that node standing as this run's.
+	family("talman_node_success",
+		"Whether talman's work on a node succeeded (1) or failed (0); NaN for nodes it did not reach.")
 
 	for _, h := range r.order {
+		value := math.NaN()
 		if n := r.nodes[h]; n.done {
-			sample("talman_node_success", nodeLabels(h), boolValue(n.err == nil))
+			value = boolValue(n.err == nil)
 		}
+
+		sample("talman_node_success", nodeLabels(h), value)
 	}
 
-	family("talman_node_duration_seconds", "How long talman spent on a node, for nodes it reached.")
+	family("talman_node_duration_seconds", "How long talman spent on a node; NaN for nodes it did not reach.")
 
 	for _, h := range r.order {
+		value := math.NaN()
 		if n := r.nodes[h]; n.done && !n.started.IsZero() {
-			sample("talman_node_duration_seconds", nodeLabels(h), seconds(n.duration))
+			value = seconds(n.duration)
 		}
+
+		sample("talman_node_duration_seconds", nodeLabels(h), value)
 	}
 
 	var withInfo []string

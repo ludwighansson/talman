@@ -55,6 +55,10 @@ func TestTextReportsEveryNode(t *testing.T) {
 		`talman_node_result{` + base + `,node="w2",role="worker",result="not_reached"} 1`,
 		`talman_node_success{` + base + `,node="cp1",role="controlplane"} 1`,
 		`talman_node_success{` + base + `,node="w1",role="worker"} 0`,
+		// NaN, not left out, for the node it never reached: a push replaces
+		// only what it sends.
+		`talman_node_success{` + base + `,node="w2",role="worker"} NaN`,
+		`talman_node_duration_seconds{` + base + `,node="w2",role="worker"} NaN`,
 		`talman_node_info{` + base + `,node="cp1",role="controlplane",from_version="v1.14.0",to_version="v1.14.1"} 1`,
 		`talman_run_info{` + base + `,talman_version="1.0.0"} 1`,
 	} {
@@ -63,10 +67,7 @@ func TestTextReportsEveryNode(t *testing.T) {
 		}
 	}
 
-	// A node talman never reached has no success or duration to report.
 	for _, unwanted := range []string{
-		`talman_node_success{` + base + `,node="w2"`,
-		`talman_node_duration_seconds{` + base + `,node="w2"`,
 		"talman_run_last_success_timestamp_seconds",
 	} {
 		if strings.Contains(got, unwanted) {
