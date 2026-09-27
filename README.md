@@ -500,7 +500,7 @@ session dropping stops a run in order rather than on the spot. The talosctl proc
 are removed, metrics are written and a stopped roll-out names the nodes it did
 not reach, as it does for any failure; talman then exits 128 plus the signal,
 as a shell would report it: 130 for Ctrl-C, 143 for SIGTERM, 129 for SIGHUP,
-131 for SIGQUIT. A
+131 for SIGQUIT; a closed output pipe (`| head`) exits 141 the same way. A
 second signal exits at once, killing any talosctl still running and still
 removing the decrypted secrets.
 

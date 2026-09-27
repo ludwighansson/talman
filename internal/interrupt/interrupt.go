@@ -80,17 +80,22 @@ func Interrupted() bool { return Context().Err() != nil }
 // Watch installs the signal handler. The returned function uninstalls it.
 func Watch() (stop func()) {
 	ch := make(chan os.Signal, 2)
-	// SIGHUP is a terminal closing or an ssh session dropping, and SIGQUIT
-	// is Ctrl-\: left to Go's defaults, both end the process on the spot,
-	// with the decrypted bundle still in $TMPDIR.
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
+	// SIGHUP is a terminal closing or an ssh session dropping, SIGQUIT is
+	// Ctrl-\, and SIGPIPE is whatever read talman's output going away --
+	// `render --stdout | head`, or quitting a pager. Left to Go's defaults,
+	// each ends the process on the spot, with the decrypted bundle still in
+	// $TMPDIR.
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGPIPE)
 
 	done := make(chan struct{})
 
 	go func() {
 		select {
 		case sig := <-ch:
-			fmt.Fprintf(os.Stderr, "\n%s: stopping (again to exit immediately)\n", sig)
+			// Nobody is reading to be told, when the output has gone.
+			if sig != syscall.SIGPIPE {
+				fmt.Fprintf(os.Stderr, "\n%s: stopping (again to exit immediately)\n", sig)
+			}
 
 			mu.Lock()
 			interruptedBy = sig

@@ -1,10 +1,13 @@
 package interrupt
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -186,5 +189,55 @@ func TestStartedDuringForcedExitIsKilled(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a process started during a forced exit was left running")
+	}
+}
+
+// A reader that goes away -- `render --stdout | head` -- stops the run in order,
+// like any other signal, rather than killing it before the decrypted bundle is
+// removed. Only a write to a closed stdout raises SIGPIPE the way that happens,
+// so the test runs itself again with one.
+func TestBrokenPipeStopsTheRun(t *testing.T) {
+	if os.Getenv("TALMAN_SIGPIPE_CHILD") == "1" {
+		stop := Watch()
+		defer stop()
+
+		deadline := time.Now().Add(5 * time.Second)
+		for !Interrupted() && time.Now().Before(deadline) {
+			_, _ = os.Stdout.WriteString("output nobody reads\n")
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		fmt.Fprintf(os.Stderr, "interrupted=%t exit=%d\n", Interrupted(), ExitCode())
+		os.Exit(0)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("no SIGPIPE")
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = r.Close()
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestBrokenPipeStopsTheRun$")
+	cmd.Env = append(os.Environ(), "TALMAN_SIGPIPE_CHILD=1")
+	cmd.Stdout = w
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	_ = w.Close()
+
+	if err != nil {
+		t.Fatalf("the child died instead of stopping: %v\n%s", err, stderr.String())
+	}
+
+	if !strings.Contains(stderr.String(), "interrupted=true exit=141") {
+		t.Errorf("want a run stopped by SIGPIPE, exit 141:\n%s", stderr.String())
 	}
 }
