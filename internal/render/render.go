@@ -436,12 +436,7 @@ func (r *Renderer) loadSchematic(ref *config.SchematicRef, base template.Context
 		return ref.Inline, nil
 	}
 
-	path := ref.Path
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(r.Cfg.Dir, path)
-	}
-
-	raw, err := sopsx.ReadFile(path)
+	raw, err := sopsx.ReadFile(r.Cfg.ResolvePath(ref.Path))
 	if err != nil {
 		return nil, fmt.Errorf("schematic %q: %w", ref.Path, err)
 	}

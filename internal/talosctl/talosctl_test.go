@@ -333,7 +333,7 @@ func TestEnsureRefusesAnOldTalosctl(t *testing.T) {
 		t.Fatal("expected an error for a talosctl older than the floor")
 	}
 
-	for _, want := range []string{"v1.9.5", MinVersion, "--wipe-labels"} {
+	for _, want := range []string{"v1.9.5", MinVersion, "--system-labels-to-wipe"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q: %v", want, err)
 		}

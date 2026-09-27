@@ -18,9 +18,9 @@ type PatchRef struct {
 // SourceNode is the Group value used for per-node patches.
 const SourceNode = "node"
 
-// resolvePath makes a config-relative path absolute against the config dir.
+// ResolvePath makes a config-relative path absolute against the config dir.
 // An already-absolute path is returned unchanged.
-func (c *Config) resolvePath(rel string) string {
+func (c *Config) ResolvePath(rel string) string {
 	if filepath.IsAbs(rel) {
 		return filepath.Clean(rel)
 	}
@@ -42,7 +42,7 @@ func (c *Config) PatchChain(n *Node) []PatchRef {
 
 	add := func(group string, paths []string) {
 		for _, rel := range paths {
-			chain = append(chain, PatchRef{Group: group, Rel: rel, Path: c.resolvePath(rel)})
+			chain = append(chain, PatchRef{Group: group, Rel: rel, Path: c.ResolvePath(rel)})
 		}
 	}
 
@@ -76,7 +76,7 @@ func (c *Config) AllPatchPaths() []PatchRef {
 
 	for _, group := range groups {
 		for _, rel := range c.Patches[group] {
-			out = append(out, PatchRef{Group: group, Rel: rel, Path: c.resolvePath(rel)})
+			out = append(out, PatchRef{Group: group, Rel: rel, Path: c.ResolvePath(rel)})
 		}
 	}
 
@@ -85,7 +85,7 @@ func (c *Config) AllPatchPaths() []PatchRef {
 			out = append(out, PatchRef{
 				Group: "nodes[" + c.Nodes[i].Hostname + "]",
 				Rel:   rel,
-				Path:  c.resolvePath(rel),
+				Path:  c.ResolvePath(rel),
 			})
 		}
 	}

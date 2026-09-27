@@ -42,7 +42,7 @@ func (c *Config) readValues(files []string, inline map[string]any) (map[string]a
 	out := map[string]any{}
 
 	for _, rel := range files {
-		data, err := os.ReadFile(c.resolvePath(rel))
+		data, err := os.ReadFile(c.ResolvePath(rel))
 		if err != nil {
 			return nil, fmt.Errorf("valuesFiles: %w", err)
 		}

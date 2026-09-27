@@ -163,20 +163,9 @@ func (s *Set) Redactor() *Redactor {
 		values = append(values, v)
 	}
 
-	// Longest first, so a secret that contains another is replaced whole
-	// rather than leaving a tail of the shorter one behind.
-	sort.Slice(values, func(i, j int) bool {
-		if len(values[i]) != len(values[j]) {
-			return len(values[i]) > len(values[j])
-		}
-
-		return values[i] < values[j]
-	})
-
 	// With their base64 forms: a secret written into an inline manifest's
 	// Secret, or anywhere a template piped it through b64enc, appears only
-	// encoded. The encodings are no shorter than the value, so the order
-	// above still holds for them.
+	// encoded.
 	var encoded []string
 
 	// Count is of secrets; their encodings are only more ways to find them.
@@ -190,6 +179,8 @@ func (s *Set) Redactor() *Redactor {
 		}
 	}
 
+	// Longest first, so a secret that contains another is replaced whole
+	// rather than leaving a tail of the shorter one behind.
 	values = append(values, encoded...)
 	sort.Slice(values, func(i, j int) bool {
 		if len(values[i]) != len(values[j]) {

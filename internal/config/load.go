@@ -35,21 +35,6 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Rel shortens a path against the working directory for a message.
-func Rel(path string) string {
-	wd, err := os.Getwd()
-	if err != nil {
-		return path
-	}
-
-	rel, err := filepath.Rel(wd, path)
-	if err != nil || len(rel) > len(path) {
-		return path
-	}
-
-	return rel
-}
-
 // LoadNoValidate reads and decodes without running semantic validation. Used
 // by commands that want to report every problem themselves.
 func LoadNoValidate(path string) (*Config, error) {
@@ -129,10 +114,10 @@ func (c *Config) applyDefaults() {
 }
 
 // OutputPath is the absolute output directory.
-func (c *Config) OutputPath() string { return c.resolvePath(c.OutputDir) }
+func (c *Config) OutputPath() string { return c.ResolvePath(c.OutputDir) }
 
 // SecretPath is the absolute path of the secrets bundle.
-func (c *Config) SecretPath() string { return c.resolvePath(c.SecretFile) }
+func (c *Config) SecretPath() string { return c.ResolvePath(c.SecretFile) }
 
 // MachineConfigPath is where a node's rendered machine config is written.
 //

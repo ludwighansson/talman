@@ -306,12 +306,12 @@ func (c *Config) validateValuesFiles(add func(string, ...any)) {
 	const notDir = "valuesFiles lists files, merged in the order given"
 
 	for _, rel := range c.ValuesFiles {
-		checkFile(add, "valuesFiles", rel, c.resolvePath(rel), notDir)
+		checkFile(add, "valuesFiles", rel, c.ResolvePath(rel), notDir)
 	}
 
 	for i := range c.Nodes {
 		for _, rel := range c.Nodes[i].ValuesFiles {
-			checkFile(add, "node "+c.Nodes[i].Hostname+": valuesFiles", rel, c.resolvePath(rel), notDir)
+			checkFile(add, "node "+c.Nodes[i].Hostname+": valuesFiles", rel, c.ResolvePath(rel), notDir)
 		}
 	}
 }
@@ -359,22 +359,22 @@ func (c *Config) validateOutputDir(add func(string, ...any)) {
 	}
 
 	for _, rel := range c.ValuesFiles {
-		inside("valuesFiles", rel, c.resolvePath(rel))
+		inside("valuesFiles", rel, c.ResolvePath(rel))
 	}
 
 	if c.Schematic != nil && c.Schematic.Path != "" {
-		inside("schematic", c.Schematic.Path, c.resolvePath(c.Schematic.Path))
+		inside("schematic", c.Schematic.Path, c.ResolvePath(c.Schematic.Path))
 	}
 
 	for i := range c.Nodes {
 		n := &c.Nodes[i]
 
 		for _, rel := range n.ValuesFiles {
-			inside("node "+n.Hostname+": valuesFiles", rel, c.resolvePath(rel))
+			inside("node "+n.Hostname+": valuesFiles", rel, c.ResolvePath(rel))
 		}
 
 		if n.Schematic != nil && n.Schematic.Path != "" {
-			inside("node "+n.Hostname+": schematic", n.Schematic.Path, c.resolvePath(n.Schematic.Path))
+			inside("node "+n.Hostname+": schematic", n.Schematic.Path, c.ResolvePath(n.Schematic.Path))
 		}
 	}
 }

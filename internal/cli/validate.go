@@ -98,7 +98,7 @@ cannot, so validate runs without decryption keys too.`,
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "%s is valid: %d nodes, %d patch files\n",
-				filepath.Base(cfg.Path), len(cfg.Nodes), countPatches(cfg))
+				filepath.Base(cfg.Path), len(cfg.Nodes), len(cfg.AllPatchPaths()))
 
 			return nil
 		},
@@ -158,8 +158,4 @@ func checkPatch(ref config.PatchRef, raw []byte, ctx template.Context) error {
 	}
 
 	return patch.CheckStrategicMerge(ref.Rel, rendered)
-}
-
-func countPatches(cfg *config.Config) int {
-	return len(cfg.AllPatchPaths())
 }

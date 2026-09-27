@@ -251,8 +251,6 @@ func gerund(verb string) string {
 	switch verb {
 	case "upgrade":
 		return "upgrading"
-	case "reboot":
-		return "rebooting"
 	default:
 		return verb + "ing"
 	}

@@ -61,11 +61,7 @@ func (e *ExitError) Error() string {
 		msg = e.Err.Error()
 	}
 
-	return fmt.Sprintf("talosctl %s: %s", e.subcommand(), msg)
-}
-
-func (e *ExitError) subcommand() string {
-	return subcommand(e.Args)
+	return fmt.Sprintf("talosctl %s: %s", subcommand(e.Args), msg)
 }
 
 // boolFlags are the talosctl flags that take no value and turn up before a
@@ -141,9 +137,9 @@ func exitStatus(e *exec.ExitError) int {
 //
 // Not a guess at what happens to work: talman relies on flags and resources
 // that arrived over time -- `version --insecure` for the maintenance probe,
-// `get services` for whether etcd is up, `reset --wipe-labels`. An older
-// binary fails in the middle of an operation with talosctl's own words about
-// an unknown flag, which is a worse way to learn this than being told.
+// `get services` for whether etcd is up, `reset --system-labels-to-wipe`. An
+// older binary fails in the middle of an operation with talosctl's own words
+// about an unknown flag, which is a worse way to learn this than being told.
 //
 // It is also the version CI tests against, so it is a claim talman keeps
 // rather than one it hopes for.
@@ -175,7 +171,7 @@ func (r *Runner) check() error {
 
 	if olderThan(version, MinVersion) {
 		return fmt.Errorf("talosctl %s is too old: talman needs %s or newer "+
-			"(it uses `version --insecure`, `get services` and `reset --wipe-labels`)",
+			"(it uses `version --insecure`, `get services` and `reset --system-labels-to-wipe`)",
 			version, MinVersion)
 	}
 
@@ -276,15 +272,22 @@ func (r *Runner) Combined(args ...string) ([]byte, error) {
 	r.echo(args)
 
 	if err := interrupt.Run(cmd); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return buf.Bytes(), &StatusError{Subcommand: subcommand(args), Code: exitStatus(exitErr), err: exitErr}
-		}
-
-		return buf.Bytes(), fmt.Errorf("talosctl %s: %w", subcommand(args), err)
+		return buf.Bytes(), runErr(args, err)
 	}
 
 	return buf.Bytes(), nil
+}
+
+// runErr names a failed talosctl run by its subcommand, not its argv: what the
+// command printed has already said what went wrong, and an argv full of
+// config paths only buries it.
+func runErr(args []string, err error) error {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return &StatusError{Subcommand: subcommand(args), Code: exitStatus(exitErr), err: exitErr}
+	}
+
+	return fmt.Errorf("talosctl %s: %w", subcommand(args), err)
 }
 
 // Stream runs talosctl with the caller's stdio attached, for interactive and
@@ -308,15 +311,7 @@ func (r *Runner) StreamTee(tee io.Writer, args ...string) error {
 	r.echo(args)
 
 	if err := interrupt.Run(cmd); err != nil {
-		// Named the same way as a captured failure: the streamed output has
-		// already shown the operator what went wrong, so repeating the argv
-		// only buries it.
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return &StatusError{Subcommand: subcommand(args), Code: exitStatus(exitErr), err: exitErr}
-		}
-
-		return fmt.Errorf("talosctl %s: %w", subcommand(args), err)
+		return runErr(args, err)
 	}
 
 	return nil
@@ -451,8 +446,8 @@ func (r *Runner) Validate(file, mode string) error {
 
 // ClientVersion returns the talosctl client version tag.
 //
-// There is no --short flag, so this parses the Tag line out of the block
-// `talosctl version --client` prints:
+// This parses the Tag line out of the block `talosctl version --client`
+// prints (--short prints "Talos v1.14.0", which is no easier to read):
 //
 //	Client:
 //	        Tag:         v1.14.0

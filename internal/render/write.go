@@ -32,7 +32,7 @@ func (r *Renderer) WriteAll(results []*Result, writeTalosconfig bool) error {
 	}
 
 	for _, res := range results {
-		if err := writeAtomic(res.Path, res.Content); err != nil {
+		if err := WriteAtomic(res.Path, res.Content); err != nil {
 			return fmt.Errorf("writing %s: %w", res.Path, err)
 		}
 
@@ -171,20 +171,14 @@ func (r *Renderer) WriteTalosconfig() (string, error) {
 
 	path := r.Cfg.TalosconfigPath()
 
-	if err := writeAtomic(path, final); err != nil {
+	if err := WriteAtomic(path, final); err != nil {
 		return "", fmt.Errorf("writing %s: %w", path, err)
 	}
 
 	return path, nil
 }
 
-// WriteAtomic replaces path in one step, for callers outside this package --
-// the secrets bundle above all, whose truncation orphans a live cluster.
-func WriteAtomic(path string, content []byte) error {
-	return writeAtomic(path, content)
-}
-
-// writeAtomic replaces path in one step, via a temporary file in the same
+// WriteAtomic replaces path in one step, via a temporary file in the same
 // directory.
 //
 // os.WriteFile truncates first, so a full disk or an interrupt between
@@ -192,7 +186,7 @@ func WriteAtomic(path string, content []byte) error {
 // with no endpoints -- where the operator's working one used to be. The temp
 // file is created 0600 and renamed, so the destination is never observable in
 // a partial state and never briefly world-readable.
-func writeAtomic(path string, content []byte) error {
+func WriteAtomic(path string, content []byte) error {
 	dir := filepath.Dir(path)
 
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp*")

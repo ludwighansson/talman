@@ -90,17 +90,27 @@ func parseServerTag(out string) string {
 // resource layout is Talos', not talman's, and a version bump that nests it
 // differently should degrade to "unknown" rather than to a wrong answer.
 func parseSchematicID(out []byte) string {
+	var id string
+
+	eachDoc(out, func(doc any) bool {
+		id = findSchematic(doc)
+
+		return id != ""
+	})
+
+	return id
+}
+
+// eachDoc hands fn the YAML documents in out in turn, until it returns true or
+// they run out. A document that does not decode ends the walk.
+func eachDoc(out []byte, fn func(doc any) bool) {
 	dec := yaml.NewDecoder(bytes.NewReader(out))
 
 	for {
 		var doc any
 
-		if err := dec.Decode(&doc); err != nil {
-			return ""
-		}
-
-		if id := findSchematic(doc); id != "" {
-			return id
+		if err := dec.Decode(&doc); err != nil || fn(doc) {
+			return
 		}
 	}
 }
@@ -161,19 +171,15 @@ var kubeletImage = regexp.MustCompile(`(?:^|/)kubelet:(v?\d+\.\d+\.\d+[^\s@]*)`)
 // differently should degrade to "unknown" rather than to a wrong answer. Only
 // the kubelet's own image can match, so finding it anywhere is enough.
 func parseKubeletVersion(out []byte) string {
-	dec := yaml.NewDecoder(bytes.NewReader(out))
+	var v string
 
-	for {
-		var doc any
+	eachDoc(out, func(doc any) bool {
+		v = findKubeletVersion(doc)
 
-		if err := dec.Decode(&doc); err != nil {
-			return ""
-		}
+		return v != ""
+	})
 
-		if v := findKubeletVersion(doc); v != "" {
-			return v
-		}
-	}
+	return v
 }
 
 func findKubeletVersion(node any) string {
@@ -392,25 +398,23 @@ func (r *Runner) Etcd(talosconfig, node string) EtcdState {
 // -- a nested per-instance block saying no must not outvote the one saying
 // yes.
 func parseServiceRunning(out []byte) EtcdState {
-	dec := yaml.NewDecoder(bytes.NewReader(out))
-
 	state := EtcdUnknown
 
-	for {
-		var doc any
-
-		if err := dec.Decode(&doc); err != nil {
-			return state
-		}
-
-		switch found := running(doc); found {
+	eachDoc(out, func(doc any) bool {
+		switch running(doc) {
 		case EtcdRunning:
-			return EtcdRunning
+			state = EtcdRunning
+
+			return true
 		case EtcdStopped:
 			state = EtcdStopped
 		case EtcdUnknown:
 		}
-	}
+
+		return false
+	})
+
+	return state
 }
 
 func running(node any) EtcdState {
@@ -566,19 +570,18 @@ func (r *Runner) MachineConfig(talosconfig, node string) ([]byte, error) {
 		return nil, err
 	}
 
-	dec := yaml.NewDecoder(bytes.NewReader(out))
+	var spec string
 
-	for {
-		var doc struct {
-			Spec string `yaml:"spec"`
-		}
+	eachDoc(out, func(doc any) bool {
+		m, _ := doc.(map[string]any)
+		spec, _ = m["spec"].(string)
 
-		if err := dec.Decode(&doc); err != nil {
-			return nil, fmt.Errorf("talosctl get machineconfig on %s returned no machine config", node)
-		}
+		return strings.TrimSpace(spec) != ""
+	})
 
-		if strings.TrimSpace(doc.Spec) != "" {
-			return []byte(doc.Spec), nil
-		}
+	if strings.TrimSpace(spec) == "" {
+		return nil, fmt.Errorf("talosctl get machineconfig on %s returned no machine config", node)
 	}
+
+	return []byte(spec), nil
 }

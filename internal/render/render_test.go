@@ -464,7 +464,7 @@ func TestWriteAtomicReplacesInPlace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := writeAtomic(path, []byte("replacement")); err != nil {
+	if err := WriteAtomic(path, []byte("replacement")); err != nil {
 		t.Fatal(err)
 	}
 
