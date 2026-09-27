@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"text/template"
 
@@ -140,7 +139,7 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 				}
 			}
 
-			if !versionPattern.MatchString(talosVersion) {
+			if !config.VersionPattern.MatchString(talosVersion) {
 				return fmt.Errorf("%q is not a Talos version: pass --talos-version", talosVersion)
 			}
 
@@ -302,8 +301,6 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 
 	return cmd
 }
-
-var versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
 // yamlScalar writes s as YAML does -- plain where that reads back the same,
 // quoted where it would not -- so a value with a '#' or a ': ' in it lands in

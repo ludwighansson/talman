@@ -271,9 +271,12 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 // schemaRules are Validate's checks that a schema can express, by type and
 // key, so that an editor refuses what talman would.
 var schemaRules = map[string]map[string]any{
-	"Config.endpoint":       {"type": "string", "pattern": `^https://[^/?#]+:[0-9]+([/?#].*)?$`},
-	"Config.clusterName":    {"pattern": clusterNamePattern.String(), "maxLength": 253},
-	"Config.validationMode": {"enum": validValidationModes},
+	"Config.endpoint":          {"type": "string", "pattern": `^https://[^/?#]+:[0-9]+([/?#].*)?$`},
+	"Config.talosVersion":      {"type": "string", "pattern": versionRE},
+	"Config.kubernetesVersion": {"type": "string", "pattern": versionRE},
+	"Node.talosVersion":        {"type": "string", "pattern": versionRE},
+	"Config.clusterName":       {"pattern": clusterNamePattern.String(), "maxLength": 253},
+	"Config.validationMode":    {"enum": validValidationModes},
 	"Node.hostname": {
 		"pattern":   `^` + hostnameLabelRE + `(\.` + hostnameLabelRE + `)*$`,
 		"maxLength": 253,

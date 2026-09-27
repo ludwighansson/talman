@@ -20,6 +20,12 @@ var validValidationModes = []string{"metal", "cloud", "container"}
 // inside a file name.
 var clusterNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
 
+// VersionPattern is a full version, as Talos and Kubernetes images are tagged:
+// v1.14.1, or 1.14.1, with an optional pre-release suffix.
+var VersionPattern = regexp.MustCompile(versionRE)
+
+const versionRE = `^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`
+
 // hostnameLabelRE is one RFC 1123 label, lower case: what Kubernetes accepts
 // as a node name, and safe as the file name the rendered config is written to.
 const hostnameLabelRE = `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?`
@@ -82,6 +88,9 @@ func (c *Config) Validate() error {
 	if c.TalosVersion == "" {
 		add("talosVersion is required: pinning it is what makes renders reproducible " +
 			"(an unset version silently adopts whatever contract the local talosctl defaults to)")
+	} else if !VersionPattern.MatchString(c.TalosVersion) {
+		add("talosVersion %q is not a full version: installer images are tagged vMAJOR.MINOR.PATCH, "+
+			"such as v1.14.1", c.TalosVersion)
 	}
 
 	// A config naming a schema talman does not know is refused rather than
@@ -98,6 +107,9 @@ func (c *Config) Validate() error {
 
 	if c.KubernetesVersion == "" {
 		add("kubernetesVersion is required")
+	} else if !VersionPattern.MatchString(c.KubernetesVersion) {
+		add("kubernetesVersion %q is not a full version: Kubernetes images are tagged "+
+			"vMAJOR.MINOR.PATCH, such as v1.37.1", c.KubernetesVersion)
 	}
 
 	if c.ValidationMode != "" && !slices.Contains(validValidationModes, c.ValidationMode) {
@@ -202,6 +214,10 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 
 		if n.Role == "" {
 			add("%s: role is required: %s or %s", where, RoleControlPlane, RoleWorker)
+		}
+
+		if n.TalosVersion != "" && !VersionPattern.MatchString(n.TalosVersion) {
+			add("%s: talosVersion %q is not a full version, such as v1.14.1", where, n.TalosVersion)
 		}
 
 		seenGroup := map[string]bool{}

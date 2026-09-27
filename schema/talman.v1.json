@@ -275,9 +275,9 @@
         },
         "talosVersion": {
           "description": "Overrides the cluster's talosVersion for this node.",
+          "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
           "type": [
             "string",
-            "number",
             "null"
           ]
         },
@@ -490,10 +490,8 @@
     },
     "kubernetesVersion": {
       "description": "The Kubernetes version configs are rendered for, and upgrade-k8s upgrades to.",
-      "type": [
-        "string",
-        "number"
-      ]
+      "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
+      "type": "string"
     },
     "nodes": {
       "description": "Every machine in the cluster.",
@@ -586,10 +584,8 @@
     },
     "talosVersion": {
       "description": "The Talos version contract configs are rendered for. Pinning it makes renders reproducible.",
-      "type": [
-        "string",
-        "number"
-      ]
+      "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
+      "type": "string"
     },
     "talosctl": {
       "description": "The talosctl binary talman drives. Default: talosctl on PATH.",
