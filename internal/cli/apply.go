@@ -462,7 +462,10 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				// what talosctl said under it arrive together: eight nodes in
 				// flight would otherwise interleave, and one node's apply
 				// returns in a breath anyway.
-				var out []byte
+				var (
+					out []byte
+					err error
+				)
 
 				if isNew && dryRun {
 					out, err = newNodeDiff(file)
