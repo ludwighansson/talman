@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -112,7 +111,7 @@ More in the README: "Rolling changes out safely".`,
 
 			tal := runner(cfg)
 
-			resetOne := func(n *config.Node, grouped bool, say func(string)) error {
+			resetOne := func(n *config.Node, grouped bool, say func(string)) (bool, error) {
 				args := []string{"--talosconfig", tc}
 
 				// Ahead of the subcommand: --endpoints is one of talosctl's
@@ -141,81 +140,43 @@ More in the README: "Rolling changes out safely".`,
 
 				header := fmt.Sprintf("== resetting %s (%s)\n", n.Hostname, n.IPAddress)
 
-				if grouped {
-					out, err := tal.Combined(args...)
-					if err != nil {
-						say(header + string(out) + "   error: " + err.Error() + "\n")
-					} else {
-						say(header + string(out))
-					}
-
-					return err
+				err := runTalosctl(tal, grouped, header, say, args)
+				if err == nil {
+					rec.NodeChanged(n.Hostname, true)
 				}
 
-				say(header)
-
-				return tal.Stream(args...)
+				return true, err
 			}
 
-			// Control planes one at a time whatever --parallel says. A batch
-			// of workers can be wiped together; two control planes cannot,
-			// and the ordering above puts them last for the same reason.
-			done := 0
-
-			var (
-				okMu      sync.Mutex
-				succeeded = map[string]bool{}
-			)
-
-			for _, batch := range batches(targets, parallel) {
-				grouped := len(batch) > 1
-				out := newInOrder(os.Stderr, batch)
-
-				if _, err := eachNode(batch, len(batch), func(n *config.Node) (struct{}, error) {
-					defer out.finish(n)
-
-					rec.NodeStart(n.Hostname, string(n.Role))
-
-					err := resetOne(n, grouped, func(s string) { out.say(n, s) })
-					if err == nil {
-						rec.NodeChanged(n.Hostname, true)
+			// Control planes one at a time whatever --parallel says, workers
+			// in batches; the ordering above puts control planes last. Each
+			// reset returns only once its node is done, so there is nothing
+			// for the roll-out to wait for.
+			ro := rollOut{
+				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
+				verb: "reset", done: "reset",
+				targets: targets, parallel: parallel, waits: true,
+				// --yes is left off: the resumed reset wipes a different set
+				// of machines, and should ask about them.
+				hintDrop: []string{"yes"},
+				hintAdd: func(left []*config.Node) []string {
+					// This run skipped leaving etcd because it was destroying
+					// the cluster. Once only some control planes are left
+					// they are no longer every control plane, so the resumed
+					// run has to be told, or it would try to leave a cluster
+					// too small to let it. While workers remain, every control
+					// plane does too, and the resumed run sees the teardown
+					// for itself.
+					if destroying && !cmd.Flags().Changed("graceful") && onlyControlPlanes(left) {
+						return []string{"--graceful=false"}
 					}
 
-					rec.NodeDone(n.Hostname, err)
+					return nil
+				},
+			}
 
-					if err != nil {
-						return struct{}{}, err
-					}
-
-					okMu.Lock()
-					succeeded[n.IPAddress] = true
-					okMu.Unlock()
-
-					return struct{}{}, nil
-				}); err != nil {
-					// --yes is left off: the resumed reset wipes a
-					// different set of machines, and should ask about them.
-					flags := replayFlags(cmd, "node", "yes")
-
-					remaining := without(targets[done:], succeeded)
-
-					// This run chose to skip leaving etcd because it was
-					// destroying the cluster. Once only some control planes
-					// are left they are no longer every control plane, so
-					// without saying so the resumed run would try to leave a
-					// cluster with too few members to let it. While workers
-					// remain it is not needed -- workers go first, so every
-					// control plane remains too, and the resumed run sees the
-					// teardown for itself -- and it would cost the workers
-					// the graceful leave this run was giving them.
-					if destroying && !cmd.Flags().Changed("graceful") && onlyControlPlanes(remaining) {
-						flags = append(flags, "--graceful=false")
-					}
-
-					return fmt.Errorf("%w\n%s", err, resumeHint("reset", "reset", remaining, flags...))
-				}
-
-				done += len(batch)
+			if err := ro.run(resetOne); err != nil {
+				return err
 			}
 
 			fmt.Fprintf(os.Stderr, "%d node(s) reset successfully\n", len(targets))

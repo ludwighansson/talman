@@ -653,7 +653,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 					}
 
 					ro.hintDrop = []string{"bootstrap"}
-					ro.hintAdd = []string{"--onboard-new-nodes"}
+					ro.hintAdd = func([]*config.Node) []string { return []string{"--onboard-new-nodes"} }
 				}
 			}
 

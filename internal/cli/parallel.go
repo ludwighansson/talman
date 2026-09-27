@@ -117,20 +117,9 @@ func without(nodes []*config.Node, done map[string]bool) []*config.Node {
 	return out
 }
 
-// batches groups nodes that may be worked on at the same time.
-//
-// A control plane is always alone in its batch. Rebooting two at once is how a
-// three-node control plane loses quorum, and --parallel is asked for to get
-// through a hundred workers rather than to take chances with etcd. Config
-// order is preserved: a run of workers batches up to the limit, and a control
-// plane interrupts the run.
-func batches(nodes []*config.Node, parallel int) [][]*config.Node {
-	return batchesFor(nodes, parallel, false)
-}
-
-// batchesFor is batches for a pass that may not be enacting anything: a dry
-// run has no reboots to stagger, so control planes have nothing to be kept
-// apart from.
+// batchesFor groups nodes that may be worked on at the same time. A pass that
+// enacts nothing, a dry run, has no reboots to stagger, so it only chunks by
+// --parallel; any other keeps control planes alone (controlPlanesAlone).
 func batchesFor(nodes []*config.Node, parallel int, inert bool) [][]*config.Node {
 	if inert {
 		return chunks(nodes, parallel)
@@ -154,6 +143,11 @@ func chunks(nodes []*config.Node, parallel int) [][]*config.Node {
 	return out
 }
 
+// controlPlanesAlone batches nodes with each control plane alone in its batch.
+// Rebooting two at once is how a three-node control plane loses quorum, and
+// --parallel is asked for to get through a hundred workers rather than to take
+// chances with etcd. Config order is preserved: a run of workers batches up to
+// the limit, and a control plane interrupts the run.
 func controlPlanesAlone(nodes []*config.Node, parallel int) [][]*config.Node {
 	if parallel < 1 {
 		parallel = 1

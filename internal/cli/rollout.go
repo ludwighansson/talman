@@ -55,15 +55,27 @@ type rollOut struct {
 	// carries on from it.
 	thenFrom string
 
-	// hintDrop and hintAdd adjust the flags a resume hint repeats: after
-	// apply --bootstrap has built the cluster, carrying on is not a second
-	// bootstrap, and the nodes left still need onboarding.
-	hintDrop, hintAdd []string
+	// hintDrop and hintAdd adjust the flags a resume hint repeats, given the
+	// nodes it names: after apply --bootstrap has built the cluster,
+	// carrying on is not a second bootstrap, and the nodes left still need
+	// onboarding.
+	hintDrop []string
+	hintAdd  func(left []*config.Node) []string
 }
 
-// hintFlags are the flags a resume hint that names the nodes left repeats.
-func (ro rollOut) hintFlags() []string {
-	return append(replayFlags(ro.cmd, append([]string{"node"}, ro.hintDrop...)...), ro.hintAdd...)
+// hintFlags are the flags a resume hint naming the nodes left repeats.
+func (ro rollOut) hintFlags(left []*config.Node) []string {
+	flags := replayFlags(ro.cmd, append([]string{"node"}, ro.hintDrop...)...)
+	if ro.hintAdd != nil {
+		flags = append(flags, ro.hintAdd(left)...)
+	}
+
+	return flags
+}
+
+// hint is the resume hint naming the nodes left.
+func (ro rollOut) hint(left []*config.Node) string {
+	return resumeHint(ro.verb, ro.done, left, ro.hintFlags(left)...)
 }
 
 // one does a single node's work. grouped says its output is captured with a
@@ -116,7 +128,7 @@ func (ro rollOut) run(do one) error {
 		if err := clusterHealth(ro.cfg, ro.tal, ro.tc, ro.timeout); err != nil {
 			return fmt.Errorf("cluster is unhealthy after %s %s: %w\n%s",
 				gerund(ro.verb), names(after), err,
-				resumeHint(ro.verb, ro.done, ro.targets[done:], ro.hintFlags()...))
+				ro.hint(ro.targets[done:]))
 		}
 
 		return nil
@@ -155,9 +167,7 @@ func (ro rollOut) run(do one) error {
 
 				return struct{}{}, nil
 			}); err != nil {
-				return fmt.Errorf("%w\n%s", err,
-					resumeHint(ro.verb, ro.done, without(ro.targets[done:], succeeded),
-						ro.hintFlags()...))
+				return fmt.Errorf("%w\n%s", err, ro.hint(without(ro.targets[done:], succeeded)))
 			}
 
 			done += len(batch)
@@ -194,7 +204,7 @@ func (ro rollOut) run(do one) error {
 
 				if err := interrupt.Sleep(ro.soak); err != nil {
 					return fmt.Errorf("stopped soaking after wave %s: %w\n%s", st.Name(), err,
-						resumeHint(ro.verb, ro.done, ro.targets[done:], ro.hintFlags()...))
+						ro.hint(ro.targets[done:]))
 				}
 			}
 

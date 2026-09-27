@@ -58,12 +58,12 @@ func TestBatches(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []string
-			for _, batch := range batches(nodesOf(tt.nodes...), tt.parallel) {
+			for _, batch := range controlPlanesAlone(nodesOf(tt.nodes...), tt.parallel) {
 				got = append(got, names(batch))
 			}
 
 			if strings.Join(got, " | ") != tt.want {
-				t.Errorf("batches() = %q, want %q", strings.Join(got, " | "), tt.want)
+				t.Errorf("controlPlanesAlone() = %q, want %q", strings.Join(got, " | "), tt.want)
 			}
 		})
 	}
