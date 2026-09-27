@@ -95,13 +95,15 @@ func TestNotInCluster(t *testing.T) {
 		},
 	}
 
-	t.Run("half-built cluster names who is missing", func(t *testing.T) {
+	// A node that answers nothing is not counted: it may be a member that
+	// is down, which is what the gate is there to stop on.
+	t.Run("half-built cluster names the new nodes", func(t *testing.T) {
 		tal := fakeCluster(t, []string{"10.0.0.11"}, []string{"10.0.0.12"})
 
 		got := strings.Join(notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}, 4), ", ")
 
-		if !strings.Contains(got, "c02 is maintenance mode") || !strings.Contains(got, "w01 is unreachable") {
-			t.Errorf("notInCluster() = %q", got)
+		if got != "c02 is maintenance mode" {
+			t.Errorf("notInCluster() = %q, want only the node in maintenance mode", got)
 		}
 	})
 
