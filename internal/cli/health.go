@@ -26,8 +26,9 @@ func newHealthCmd() *cobra.Command {
 		Long: `Health runs "talosctl health", which checks etcd, the control plane static
 pods and every node's readiness.
 
-The check runs from one control plane node -- the first in the config unless
---node names another -- and reports on the whole cluster, not on that node.`,
+The check runs from one control plane node -- the first in the config that
+answers, unless --node names another -- and reports on the whole cluster, not
+on that node.`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
@@ -54,7 +55,7 @@ The check runs from one control plane node -- the first in the config unless
 		},
 	}
 
-	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to run the check from (default: the first one)")
+	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to run the check from (default: the first that answers)")
 	cmd.Flags().BoolVar(&serverSide, "server", true, "run the health check on the node rather than the client")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0,
 		"how long to wait for the cluster to become healthy (0: talosctl's own default)")

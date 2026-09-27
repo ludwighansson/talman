@@ -223,7 +223,7 @@ patches:
 
 nodes:
   - hostname: development-worker-01
-    ipAddress: 10.0.0.21
+    ipAddress: 10.0.0.21         # one IP address or DNS name
     role: worker                 # controlplane | worker
     groups:
       - db
@@ -372,9 +372,10 @@ Template scope:
 | `.Values` | the cluster-wide `values:` map; the per-node one is `.Node.Values` |
 
 `.Node.TalosVersion` is the *resolved* version and `.Node.HasGroup "db"` reads
-better than sprig's `has`; as in `patches` and `-g`, the node's role and `all`
-count as groups for it, though `.Node.Groups` lists only the declared ones. Missing map keys are an error, not `<no value>` — a
-typo must not become a subtly wrong machine config.
+better than sprig's `has`; as in `patches`, the node's role and `all` count as
+groups for it, though `.Node.Groups` lists only the declared ones. Missing map
+keys are an error, not `<no value>` — a typo must not become a subtly wrong
+machine config.
 
 **Order matters.** Talos applies strategic merge patches in sequence, last
 writer wins:
@@ -919,7 +920,8 @@ it changed is not known), `failed`, or `not_reached` (the run stopped before
 it got there). With metrics on, `apply` asks each node what would change before
 changing it, the same way `--detailed-exit-code` does, so its nodes report
 `changed` or `unchanged` rather than `done`. `apply --dry-run`,
-`upgrade --dry-run` and `upgrade-k8s --dry-run` add `dry_run="true"`, so a
+`upgrade --dry-run`, `upgrade-k8s --dry-run` and `rotate-ca --dry-run` add
+`dry_run="true"`, so a
 drift check and a roll-out of the same cluster are kept apart.
 
 A push goes to `<url>/metrics/job/talman/cluster/<cluster>/command/<command>`,
