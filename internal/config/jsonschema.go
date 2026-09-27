@@ -127,10 +127,11 @@ func (g *schemaGen) schema(t reflect.Type) any {
 			"description": "none, dual-boot, sd-boot or grub, in any case.",
 		}
 	case reflect.TypeFor[Wave]():
-		groups := map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1}
+		// Numbers too, as a group may be named with one.
+		groups := map[string]any{"type": "array", "items": map[string]any{"type": []string{"string", "number"}}, "minItems": 1}
 
 		return map[string]any{"oneOf": []any{
-			map[string]any{"type": "string", "description": "One group, or a role."},
+			map[string]any{"type": []string{"string", "number"}, "description": "One group, or a role."},
 			withDescription(groups, "Several groups, rolled out together."),
 		}}
 	case reflect.TypeFor[SchematicRef]():
@@ -225,6 +226,11 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 			}
 		}
 
+		// A list item left empty (`- `) is dropped as Load decodes it.
+		if schemaNullItems[t.Name()+"."+name] {
+			s = nullItems(s)
+		}
+
 		if n, ok := schemaMinItems[t.Name()+"."+name]; ok {
 			if m, isMap := s.(map[string]any); isMap {
 				m["minItems"] = n
@@ -262,7 +268,14 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 	// schematic and schematicID are two ways of saying one thing, and Validate
 	// refuses both at once, at the cluster level and on a node.
 	if t == reflect.TypeFor[Config]() || t == reflect.TypeFor[Node]() {
-		obj["not"] = map[string]any{"required": []string{"schematic", "schematicID"}}
+		// Set, that is: either left empty is as good as absent to Load.
+		obj["not"] = map[string]any{
+			"required": []string{"schematic", "schematicID"},
+			"properties": map[string]any{
+				"schematic":   map[string]any{"not": map[string]any{"type": "null"}},
+				"schematicID": map[string]any{"type": "string", "minLength": 1},
+			},
+		}
 	}
 
 	return obj
@@ -271,18 +284,23 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 // schemaRules are Validate's checks that a schema can express, by type and
 // key, so that an editor refuses what talman would.
 var schemaRules = map[string]map[string]any{
-	"Config.endpoint":          {"type": "string", "pattern": `^https://[^/?#]+:[0-9]+([/?#].*)?$`},
+	"Config.endpoint":          {"type": "string", "pattern": `^` + anyCase("https") + `://[^/?#]+:[0-9]+([/?#].*)?$`},
 	"Config.talosVersion":      {"type": "string", "pattern": versionRE},
 	"Config.kubernetesVersion": {"type": "string", "pattern": versionRE},
 	"Node.talosVersion":        {"type": "string", "pattern": versionRE},
-	"Config.clusterName":       {"pattern": clusterNamePattern.String(), "maxLength": 253},
+	"Config.clusterName":       {"pattern": clusterNamePattern.String(), "maxLength": 253, "not": map[string]any{"type": "string", "pattern": `\.\.`}},
 	"Config.validationMode":    {"enum": validValidationModes},
 	"Node.hostname": {
 		"pattern":   `^` + hostnameLabelRE + `(\.` + hostnameLabelRE + `)*$`,
 		"maxLength": 253,
 	},
 	"Node.ipAddress": {"type": "string", "pattern": `^(` + ipv4RE + `|` + ipv6RE + `|` + dnsNameRE + `)$`},
-	"Rollout.soak":   {"type": "string", "pattern": `^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`},
+	// As time.ParseDuration reads it, not negative; a bare number only as 0.
+	"Rollout.soak": {
+		"type":    []string{"string", "integer"},
+		"pattern": `^([+-]?0|\+?(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$`,
+		"not":     map[string]any{"type": "integer", "not": map[string]any{"const": 0}},
+	},
 }
 
 // The shapes an ipAddress may take, loosely: Validate checks each properly.
@@ -298,6 +316,43 @@ const (
 // schemaReservedItems are the lists whose items Validate refuses by name.
 var schemaReservedItems = map[string][]string{
 	"Node.groups": {GroupAll, GroupControlPlane, GroupWorker, RestWave},
+}
+
+// schemaNullItems are the lists, or maps of lists, whose items may be left
+// empty.
+var schemaNullItems = map[string]bool{
+	"Config.patches": true,
+	"Node.patches":   true,
+}
+
+// nullItems lets the items of a list schema -- or of the lists a map schema
+// holds -- be null.
+func nullItems(s any) any {
+	m, ok := s.(map[string]any)
+	if !ok {
+		return s
+	}
+
+	out := maps.Clone(m)
+
+	if items, has := out["items"]; has {
+		out["items"] = nullable(items)
+	}
+
+	if ap, has := out["additionalProperties"]; has {
+		out["additionalProperties"] = nullItems(ap)
+	}
+
+	if anyOf, has := out["anyOf"].([]any); has {
+		alts := make([]any, len(anyOf))
+		for i, alt := range anyOf {
+			alts[i] = nullItems(alt)
+		}
+
+		out["anyOf"] = alts
+	}
+
+	return out
 }
 
 // schemaNullable are required keys that Load takes left empty, as the zero

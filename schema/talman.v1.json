@@ -163,6 +163,17 @@
     "node": {
       "additionalProperties": false,
       "not": {
+        "properties": {
+          "schematic": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "schematicID": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
         "required": [
           "schematic",
           "schematicID"
@@ -224,7 +235,8 @@
           "items": {
             "type": [
               "string",
-              "number"
+              "number",
+              "null"
             ]
           },
           "type": [
@@ -337,9 +349,16 @@
       "properties": {
         "soak": {
           "description": "How long to wait after each wave before the next, e.g. 10m.",
-          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "not": {
+            "not": {
+              "const": 0
+            },
+            "type": "integer"
+          },
+          "pattern": "^([+-]?0|\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
           "type": [
             "string",
+            "integer",
             "null"
           ]
         },
@@ -349,12 +368,18 @@
             "oneOf": [
               {
                 "description": "One group, or a role.",
-                "type": "string"
+                "type": [
+                  "string",
+                  "number"
+                ]
               },
               {
                 "description": "Several groups, rolled out together.",
                 "items": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "number"
+                  ]
                 },
                 "minItems": 1,
                 "type": "array"
@@ -446,6 +471,17 @@
   "additionalProperties": false,
   "description": "A talman cluster config, schema talman.dev/v1.",
   "not": {
+    "properties": {
+      "schematic": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "schematicID": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
     "required": [
       "schematic",
       "schematicID"
@@ -459,6 +495,10 @@
     "clusterName": {
       "description": "The cluster's name, as talosctl gen config takes it.",
       "maxLength": 253,
+      "not": {
+        "pattern": "\\.\\.",
+        "type": "string"
+      },
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$",
       "type": [
         "string",
@@ -467,7 +507,7 @@
     },
     "endpoint": {
       "description": "The Kubernetes API URL: https, with a port.",
-      "pattern": "^https://[^/?#]+:[0-9]+([/?#].*)?$",
+      "pattern": "^[hH][tT][tT][pP][sS]://[^/?#]+:[0-9]+([/?#].*)?$",
       "type": "string"
     },
     "imageFactory": {
@@ -511,7 +551,8 @@
         "items": {
           "type": [
             "string",
-            "number"
+            "number",
+            "null"
           ]
         },
         "type": [
