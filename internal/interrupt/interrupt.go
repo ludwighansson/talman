@@ -107,12 +107,21 @@ func Watch() (stop func()) {
 			return
 		}
 
-		select {
-		case <-ch:
-			killRunning()
-			RunCleanups()
-			os.Exit(ExitCode())
-		case <-done:
+		for {
+			select {
+			case sig := <-ch:
+				// Another write to output that has gone away, not a second
+				// ask to stop: the run is already stopping in order.
+				if sig == syscall.SIGPIPE {
+					continue
+				}
+
+				killRunning()
+				RunCleanups()
+				os.Exit(ExitCode())
+			case <-done:
+				return
+			}
 		}
 	}()
 

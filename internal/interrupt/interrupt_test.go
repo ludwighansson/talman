@@ -201,10 +201,15 @@ func TestBrokenPipeStopsTheRun(t *testing.T) {
 		stop := Watch()
 		defer stop()
 
+		// Writes keep coming after the first fails, as they do from a run
+		// that has not noticed yet; each raises SIGPIPE again, and none of
+		// those may count as a second ask to stop.
+		for range 200 {
+			_, _ = os.Stdout.WriteString("output nobody reads\n")
+		}
+
 		deadline := time.Now().Add(5 * time.Second)
 		for !Interrupted() && time.Now().Before(deadline) {
-			_, _ = os.Stdout.WriteString("output nobody reads\n")
-
 			time.Sleep(10 * time.Millisecond)
 		}
 
