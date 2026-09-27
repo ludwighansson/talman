@@ -189,9 +189,14 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 						return err
 					}
 				}
-			case allNew(states):
+			case allNew(states) && !dryRun:
 				return fmt.Errorf("every control plane is new, in maintenance mode: this cluster has not been "+
 					"built yet\n  %s", talmanCmd("apply --bootstrap"))
+			case allNew(states):
+				// A dry run sends a new node nothing, so it can still say
+				// what each would be given.
+				fmt.Fprintf(os.Stderr, "every control plane is new, in maintenance mode: this cluster has not "+
+					"been built yet, and a real run is\n  %s\n", talmanCmd("apply --bootstrap"))
 			case noEtcd(states):
 				// Never bootstrapped, or etcd broken: talman cannot tell, and
 				// refusing would stand in the way of the apply that fixes a
@@ -206,8 +211,9 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 
 			// New nodes found before anything is sent, not when the roll-out
 			// reaches them: by then the nodes before them have been applied
-			// and rebooted, and the run stops halfway.
-			if !onboard && !onlyNew && !forced {
+			// and rebooted, and the run stops halfway. A dry run sends a new
+			// node nothing, so it goes ahead and shows what each would get.
+			if !onboard && !onlyNew && !forced && !dryRun {
 				if err := refuseNewNodes(tal, tc, targets, states); err != nil {
 					return err
 				}
@@ -301,6 +307,10 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				// onboarding a node and failing the run.
 				maintenance := insecure
 
+				// Seen to be new, rather than only told to use the
+				// maintenance service with --insecure.
+				isNew := false
+
 				if !forced {
 					state := tal.Mode(tc, n.IPAddress)
 
@@ -313,16 +323,26 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 						// Unauthenticated: a reused address, a spoofed host or
 						// a passing TLS failure on a real node all look like
 						// this, and each would be handed the cluster's keys.
-						if !onboard && !onlyNew {
+						if !onboard && !onlyNew && !dryRun {
 							return fmt.Errorf("%s (%s) is a new node: it answers only the maintenance service, "+
 								"which authenticates nothing, so it gets its config, CA keys included, only when "+
 								"asked\n  %s", n.Hostname, n.IPAddress, talmanCmd("apply --onboard-new-nodes -n "+n.Hostname))
 						}
 
 						maintenance = true
+						isNew = true
 					case talosctl.ModeRunning:
 						maintenance = false
 					case talosctl.ModeUnreachable:
+						// The plan above already says it is not answering;
+						// there is no diff to show for it.
+						if dryRun && bootstrap {
+							say(fmt.Sprintf("== [%d/%d] %s (%s) is not answering; nothing to compare\n",
+								position, len(targets), n.Hostname, n.IPAddress))
+
+							return nil
+						}
+
 						// A node that was given its config before the cluster
 						// existed sits quiet until there is one to join. Once
 						// this run has bootstrapped it, that node is on its
@@ -370,8 +390,12 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				switch {
 				case maintenance && forced:
 					note = " · through the maintenance service (--insecure)"
-				case maintenance:
+				case maintenance && (onboard || onlyNew):
 					note = " · onboarding"
+				case maintenance && allNew(states):
+					note = " · new"
+				case maintenance:
+					note = " · new: a real run configures it only with --onboard-new-nodes"
 				}
 
 				header := fmt.Sprintf("== [%d/%d] %s (%s)%s\n",
@@ -390,7 +414,17 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				if askFirst(dryRun, wantsAnswer, diff) {
 					probe := append(slices.Clone(args), "--dry-run")
 
-					out, err := tal.Combined(probe...)
+					var (
+						out []byte
+						err error
+					)
+
+					if isNew {
+						out, err = newNodeDiff(file)
+					} else {
+						out, err = tal.Combined(probe...)
+					}
+
 					if err == nil {
 						rec.NodeChanged(n.Hostname, dryRunChanged(out))
 
@@ -428,7 +462,14 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				// what talosctl said under it arrive together: eight nodes in
 				// flight would otherwise interleave, and one node's apply
 				// returns in a breath anyway.
-				out, err := tal.Combined(args...)
+				var out []byte
+
+				if isNew && dryRun {
+					out, err = newNodeDiff(file)
+				} else {
+					out, err = tal.Combined(args...)
+				}
+
 				changes := dryRun && dryRunChanged(out)
 
 				if dryRun && err == nil {
@@ -576,34 +617,41 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 
 					printBootstrapPlan(tal, tc, first, stages)
 
-					return nil
-				}
-
-				if err := bootstrapFirst(cmd, tal, tc, first, timeout, func(say func(string)) error {
-					_, err := perNode(first, false, say)
-
-					return err
-				}); err != nil {
-					return err
-				}
-
-				bootstrapped.Store(true)
-
-				rest := make([]*config.Node, 0, len(targets)-1)
-				for _, n := range targets {
-					if n != first {
-						rest = append(rest, n)
+					if !diff {
+						return nil
 					}
-				}
 
-				// A resume carries on in the cluster this run made: it is
-				// not a second bootstrap, and its nodes are still onboarded.
-				if ro.stages, ro.targets, ro.thenFrom, err = waves.plan(cfg, rest); err != nil {
-					return err
-				}
+					// Then what each node would be given, as any dry run
+					// shows it: the roll-out below, over every node.
+					fmt.Fprintln(os.Stderr)
+				} else {
+					if err := bootstrapFirst(cmd, tal, tc, first, timeout, func(say func(string)) error {
+						_, err := perNode(first, false, say)
 
-				ro.hintDrop = []string{"bootstrap"}
-				ro.hintAdd = []string{"--onboard-new-nodes"}
+						return err
+					}); err != nil {
+						return err
+					}
+
+					bootstrapped.Store(true)
+
+					rest := make([]*config.Node, 0, len(targets)-1)
+					for _, n := range targets {
+						if n != first {
+							rest = append(rest, n)
+						}
+					}
+
+					// A resume carries on in the cluster this run made: it
+					// is not a second bootstrap, and its nodes are still
+					// onboarded.
+					if ro.stages, ro.targets, ro.thenFrom, err = waves.plan(cfg, rest); err != nil {
+						return err
+					}
+
+					ro.hintDrop = []string{"bootstrap"}
+					ro.hintAdd = []string{"--onboard-new-nodes"}
+				}
 			}
 
 			if len(ro.targets) > 0 {
@@ -787,6 +835,31 @@ func indent(out []byte) string {
 	}
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// newNodeDiff is a dry run for a new node, worked out here rather than asked
+// of the node. One in maintenance mode has no machine config yet, so all of
+// the rendered one is new; and asking it would send that config, CA keys
+// included, over a service that authenticates nothing, for an answer talman
+// already has. It reads as Talos' own dry run does.
+func newNodeDiff(file string) ([]byte, error) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+
+	var b strings.Builder
+
+	b.WriteString("Dry run summary:\nNew node, in maintenance mode, with no machine config yet: all of it is new.\n")
+	fmt.Fprintf(&b, "Config diff:\n\n--- a\n+++ b\n@@ -0,0 +1,%d @@\n", len(lines))
+
+	for _, l := range lines {
+		b.WriteString("+" + l + "\n")
+	}
+
+	return []byte(b.String()), nil
 }
 
 // askFirst reports whether a node should be asked what would change before it

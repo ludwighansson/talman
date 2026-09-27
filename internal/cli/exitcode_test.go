@@ -1259,18 +1259,29 @@ func TestApplyOnboardsOnlyWhenAsked(t *testing.T) {
 
 	apply := []string{"apply", "--no-render", "--redact-secrets=false", "--wait=false"}
 
-	for _, args := range [][]string{apply, append(slices.Clone(apply), "--dry-run")} {
+	// A real run refuses; a dry run sends nothing either, but shows what the
+	// node would get and what a real run needs to give it that.
+	for _, tt := range []struct {
+		args []string
+		code int
+		hint string
+	}{
+		{apply, 1, "talman apply --onboard-new-nodes -n w1"},
+		{append(slices.Clone(apply), "--dry-run"), 0, "a real run configures it only with --onboard-new-nodes"},
+	} {
+		args := tt.args
+
 		_ = os.WriteFile(log, nil, 0o644)
 
 		var got int
 
 		stderr := captureStderr(t, func() { got = run(args) })
 
-		if got != 1 {
-			t.Errorf("%v: exit %d, want 1", args, got)
+		if got != tt.code {
+			t.Errorf("%v: exit %d, want %d", args, got, tt.code)
 		}
 
-		if !strings.Contains(stderr, "talman apply --onboard-new-nodes -n w1") {
+		if !strings.Contains(stderr, tt.hint) {
 			t.Errorf("%v: no --onboard-new-nodes hint:\n%s", args, stderr)
 		}
 
@@ -1460,6 +1471,54 @@ func TestApplyOnAnUnbootstrappedClusterPointsAtBootstrap(t *testing.T) {
 
 	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "apply-config") {
 		t.Errorf("a config was sent:\n%s", calls)
+	}
+}
+
+// A dry run on a cluster of new nodes shows what each would be given -- all of
+// its config, since it has none -- without sending any of them anything: the
+// maintenance service authenticates nothing, and the config holds the CA keys.
+func TestDryRunDiffOfNewNodes(t *testing.T) {
+	for name, args := range map[string][]string{
+		"apply":     {"apply", "--dry-run", "--diff", "--no-render", "--redact-secrets=false"},
+		"bootstrap": {"apply", "--bootstrap", "--dry-run", "--diff", "--no-render", "--redact-secrets=false"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, log := bootstrapFixture(t)
+
+			if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"),
+				[]byte("version: v1alpha1\nmachine:\n  type: worker\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			var got int
+
+			stderr := captureStderr(t, func() { got = run(args) })
+			if got != 0 {
+				t.Fatalf("exit %d\n%s", got, stderr)
+			}
+
+			if !strings.Contains(stderr, "+machine:\n") || !strings.Contains(stderr, "+  type: worker") {
+				t.Errorf("w1's config is not shown as its diff:\n%s", stderr)
+			}
+
+			calls, _ := os.ReadFile(log)
+			if strings.Contains(string(calls), "apply-config") || strings.Contains(string(calls), " bootstrap") {
+				t.Errorf("a dry run sent something:\n%s", calls)
+			}
+		})
+	}
+}
+
+// Without --diff, --bootstrap --dry-run is the plan alone.
+func TestBootstrapDryRunIsThePlan(t *testing.T) {
+	_, _ = bootstrapFixture(t)
+
+	stderr := captureStderr(t, func() {
+		run([]string{"apply", "--bootstrap", "--dry-run", "--no-render", "--redact-secrets=false"})
+	})
+
+	if !strings.Contains(stderr, "nothing was sent") || strings.Contains(stderr, "Config diff") {
+		t.Errorf("want the plan and no diffs:\n%s", stderr)
 	}
 }
 

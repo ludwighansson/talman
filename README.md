@@ -577,10 +577,18 @@ bootstrap sent to a broken one stops its etcd — so it asks for the cluster
 name first (`-y` skips the question). It builds the whole cluster, so it takes
 no `-n`, `-g` or wave flags, and no `--wait=false`. `--bootstrap --dry-run`
 prints the plan — which node is bootstrapped, the order the rest follow in,
-which nodes are new — and sends nothing.
+which nodes are new — and sends nothing; with `--diff` it goes on to each
+node's diff.
+
+A new node's diff is worked out by talman rather than asked of the node: it
+has no machine config yet, so all of the rendered one is new, and asking would
+send that config, CA keys included, over the unauthenticated maintenance
+service. So any dry run shows it, `--onboard-new-nodes` or not, and says when a
+real run would need that flag.
 
 A plain `apply` on a cluster whose control planes are all new stops and says
-to use `--bootstrap`. One whose control planes are configured but run no etcd
+to use `--bootstrap`; a plain `apply --dry-run` says the same and shows the
+diffs anyway. One whose control planes are configured but run no etcd
 gets a warning and goes ahead, since that is also what a broken cluster looks
 like, and refusing would stand in the way of the apply that fixes it.
 
