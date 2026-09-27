@@ -441,7 +441,13 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				}
 
 				out, err := run(args...)
-				changes := dryRun && dryRunChanged(out)
+
+				// A new node the real run would refuse is shown, but it is not
+				// a change the run would make: a drift check stays quiet
+				// about a machine waiting to be onboarded. -i configures one
+				// as asked, like --onboard-new-nodes.
+				configuresNew := onboard || onlyNew || forced
+				changes := dryRun && dryRunChanged(out) && (!isNew || configuresNew)
 
 				if dryRun && err == nil {
 					rec.NodeChanged(n.Hostname, changes)

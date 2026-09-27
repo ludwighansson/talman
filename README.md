@@ -584,7 +584,10 @@ A new node's diff is worked out by talman rather than asked of the node: it
 has no machine config yet, so all of the rendered one is new, and asking would
 send that config, CA keys included, over the unauthenticated maintenance
 service. So any dry run shows it, `--onboard-new-nodes` or not, and says when a
-real run would need that flag.
+real run would need that flag. It counts as a change — for
+`--detailed-exit-code` and the metrics — only when the run would configure the
+node: with `--onboard-new-nodes`, `--only-new-nodes`, `--bootstrap` or `-i`. A
+drift check stays quiet about a machine waiting to be onboarded.
 
 A plain `apply` on a cluster whose control planes are all new stops and says
 to use `--bootstrap`; a plain `apply --dry-run` says the same and shows the

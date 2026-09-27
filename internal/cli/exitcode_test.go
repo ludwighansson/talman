@@ -1564,6 +1564,38 @@ func TestBootstrapDryRunIsAChange(t *testing.T) {
 	}
 }
 
+// A new node is a change in a dry run only when the real run would configure
+// it: a drift check must not fire for a machine waiting to be onboarded.
+func TestDryRunCountsANewNodeOnlyWhenOnboarding(t *testing.T) {
+	for _, tt := range []struct {
+		extra []string
+		want  int
+	}{
+		{nil, 0},
+		{[]string{"--onboard-new-nodes"}, 2},
+		{[]string{"--only-new-nodes"}, 2},
+	} {
+		dir, _ := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+		if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		// c1 is running and would change nothing; w1 is new.
+		t.Setenv("STUB_MAINTENANCE", "10.0.0.2")
+		t.Setenv("STUB_DIFF", "No changes.")
+
+		args := append([]string{"apply", "--dry-run", "--detailed-exit-code", "--no-render", "--redact-secrets=false"},
+			tt.extra...)
+		if got := run(args); got != tt.want {
+			t.Errorf("%v: exit %d, want %d", tt.extra, got, tt.want)
+		}
+	}
+}
+
 // Without --diff, --bootstrap --dry-run is the plan alone.
 func TestBootstrapDryRunIsThePlan(t *testing.T) {
 	_, _ = bootstrapFixture(t)
