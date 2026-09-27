@@ -333,9 +333,54 @@ func (c *Config) validateOutputDir(add func(string, ...any)) {
 		return
 	}
 
-	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+	if within(rel) {
 		add("outputDir %q holds the config itself: talman ignores it whole in git, which would hide "+
 			"talman.yaml and the bundle too; use a directory of its own, such as the default %q",
 			c.OutputDir, DefaultOutputDir)
+
+		return
 	}
+
+	// Nor may anything talman reads live in it: the bundle there would be
+	// the only copy of the cluster's CAs, and git would never see it.
+	inside := func(what, rel, path string) {
+		if r, err := filepath.Rel(out, path); err == nil && within(r) {
+			add("%s %q is inside outputDir %q, which talman ignores whole in git; keep it beside talman.yaml",
+				what, rel, c.OutputDir)
+		}
+	}
+
+	if c.SecretFile != "" {
+		inside("secretFile", c.SecretFile, c.SecretPath())
+	}
+
+	for _, ref := range c.AllPatchPaths() {
+		inside("patch", ref.Rel, ref.Path)
+	}
+
+	for _, rel := range c.ValuesFiles {
+		inside("valuesFiles", rel, c.resolvePath(rel))
+	}
+
+	if c.Schematic != nil && c.Schematic.Path != "" {
+		inside("schematic", c.Schematic.Path, c.resolvePath(c.Schematic.Path))
+	}
+
+	for i := range c.Nodes {
+		n := &c.Nodes[i]
+
+		for _, rel := range n.ValuesFiles {
+			inside("node "+n.Hostname+": valuesFiles", rel, c.resolvePath(rel))
+		}
+
+		if n.Schematic != nil && n.Schematic.Path != "" {
+			inside("node "+n.Hostname+": schematic", n.Schematic.Path, c.resolvePath(n.Schematic.Path))
+		}
+	}
+}
+
+// within reports whether a path relative to a directory, as filepath.Rel gives
+// it, is that directory or inside it.
+func within(rel string) bool {
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }

@@ -916,6 +916,43 @@ func TestRenameHints(t *testing.T) {
 // outputDir is ignored whole by the .gitignore talman writes there, so one
 // that holds the config -- "." or a parent -- would hide talman.yaml and the
 // bundle from git.
+// Nothing talman reads may live in outputDir: it is ignored whole in git, so a
+// bundle there would be the only copy of the cluster's CAs, and uncommitted.
+func TestInputsOutsideOutputDir(t *testing.T) {
+	nodes := `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`
+
+	for name, extra := range map[string]string{
+		"secretFile":  "secretFile: clusterconfig/secrets.sops.yaml\n",
+		"patch":       "patches:\n  all: [clusterconfig/p.yaml]\n",
+		"valuesFiles": "valuesFiles: [clusterconfig/v.yaml]\n",
+		"schematic":   "schematic: clusterconfig/s.yaml\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := write(t, validBase+extra+nodes)
+			dir := filepath.Dir(path)
+
+			if err := os.MkdirAll(filepath.Join(dir, "clusterconfig"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, f := range []string{"p.yaml", "v.yaml", "s.yaml"} {
+				if err := os.WriteFile(filepath.Join(dir, "clusterconfig", f), []byte("{}\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), "inside outputDir") {
+				t.Errorf("Load() = %v, want it refused as inside outputDir", err)
+			}
+		})
+	}
+}
+
 func TestOutputDirMustBeItsOwn(t *testing.T) {
 	for _, dir := range []string{".", "./", "..", "../.."} {
 		_, err := Load(write(t, validBase+"outputDir: "+dir+"\n"+`nodes:
