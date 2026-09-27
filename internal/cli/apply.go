@@ -498,10 +498,11 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 			// been onboarded yet answers with a self-signed maintenance
 			// certificate, which the check reports as "certificate signed by
 			// unknown authority" -- a build-out step read as a broken
-			// cluster. So while any node is outside the cluster, the gate
-			// stands down and says which nodes those are. Once they have all
-			// joined it gates every node, which is the roll-out case it
-			// exists for.
+			// cluster. So while any node is still new, the gate stands down
+			// and says which nodes those are. Once they have all joined it
+			// gates every node, which is the roll-out case it exists for. A
+			// node that answers nothing does not stand it down: a node that
+			// is down is what the gate is there to stop on.
 			standDown := func() bool {
 				outside := notInCluster(cfg, tal, tc, modes, parallel)
 				if len(outside) == 0 {
@@ -706,8 +707,9 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node, 
 	return out, nil
 }
 
-// notInCluster describes the configured nodes that are not part of the cluster
-// yet, empty when every one of them is.
+// notInCluster describes the configured nodes that are new -- in maintenance
+// mode, not part of the cluster yet -- empty when there are none. A node that
+// answers neither API is not counted: it may be a member that is down.
 //
 // Nodes this run has already asked about are not asked again: the answers are
 // carried in modes, including for a node this run just onboarded and watched
@@ -738,7 +740,7 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 	for i := range cfg.Nodes {
 		n := &cfg.Nodes[i]
 
-		if modes[n.IPAddress] != talosctl.ModeRunning {
+		if modes[n.IPAddress] == talosctl.ModeMaintenance {
 			outside = append(outside, fmt.Sprintf("%s is %s", n.Hostname, modes[n.IPAddress]))
 		}
 	}

@@ -776,6 +776,36 @@ func TestApplyGatesBetweenBatches(t *testing.T) {
 	}
 }
 
+// TestApplyGatesPastADownNode: a node that answers nothing -- here one the run
+// did not even select -- is not a new node, and does not stand the gate down.
+func TestApplyGatesPastADownNode(t *testing.T) {
+	dir, log := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+  - hostname: w9
+    ipAddress: 10.0.0.9
+    role: worker
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_DIFF", "+  hostname: new")
+	t.Setenv("STUB_FAIL", "10.0.0.9")
+
+	if got := run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "--health",
+		"-n", "c1", "-n", "w1"}); got != 0 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d\n%s", got, calls)
+	}
+
+	calls, _ := os.ReadFile(log)
+	if n := strings.Count(string(calls), " health "); n != 1 {
+		t.Errorf("health gate ran %d time(s), want once, between c1 and w1:\n%s", n, calls)
+	}
+}
+
 const waveNodes = `  - hostname: g1
     ipAddress: 10.0.0.3
     role: worker

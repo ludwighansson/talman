@@ -611,7 +611,9 @@ error: talos-w02 (10.164.0.29) answers neither the Talos API nor the maintenance
 ```
 
 With `--health`, the gate stands down while any node in the config is still
-outside the cluster, said once for the run — `-v` names them:
+new, in maintenance mode, said once for the run — `-v` names them. A node that
+answers nothing does not stand it down: a member that is down is what the gate
+stops on.
 
 ```console
 not gating on health: nodes not in the cluster yet
