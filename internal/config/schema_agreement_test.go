@@ -98,6 +98,17 @@ nodes:
 		"cluster name with a slash": {from: "clusterName: c", to: "clusterName: a/b"},
 		"no nodes":                  {from: base[strings.Index(base, "nodes:"):], to: "nodes: []\n"},
 		"an unknown role":           {from: "role: controlplane", to: "role: master"},
+		"empty validationMode":      {top: "validationMode:\n", wantAccepts: true},
+		"numeric hostname":          {from: "hostname: cp-01", to: "hostname: 123", wantAccepts: true},
+		"numeric cluster name":      {from: "clusterName: c", to: "clusterName: 123", wantAccepts: true},
+		"numeric schematic path":    {top: "schematic: 123\n", wantAccepts: true},
+		"empty meta value":          {top: "schematic:\n  customization:\n    meta:\n      - key: 1\n        value:\n", wantAccepts: true},
+		"endpoint with a query":     {from: "https://10.0.0.1:6443", to: "https://10.0.0.1:6443?x=1", wantAccepts: true},
+		"a reserved group":          {node: "    groups: [all]\n"},
+		"the rest wave as a group":  {node: "    groups: [rest]\n"},
+		"two addresses in one":      {from: "ipAddress: 10.0.0.11", to: "ipAddress: 10.0.0.11,10.0.0.12"},
+		"an IPv6 address":           {from: "ipAddress: 10.0.0.11", to: "ipAddress: \"fd00::11\"", wantAccepts: true},
+		"a DNS name as address":     {from: "ipAddress: 10.0.0.11", to: "ipAddress: cp-01.example.com", wantAccepts: true},
 	}
 
 	for name, tt := range cases {

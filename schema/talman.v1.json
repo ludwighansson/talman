@@ -149,7 +149,8 @@
         "value": {
           "type": [
             "string",
-            "number"
+            "number",
+            "null"
           ]
         }
       },
@@ -171,6 +172,14 @@
         "groups": {
           "description": "Groups whose patches this node receives, applied in this order after its role's.",
           "items": {
+            "not": {
+              "enum": [
+                "all",
+                "controlplane",
+                "worker",
+                "rest"
+              ]
+            },
             "type": [
               "string",
               "number"
@@ -185,7 +194,10 @@
           "description": "An RFC 1123 host name: the Kubernetes node name, and the rendered file's name.",
           "maxLength": 253,
           "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
-          "type": "string"
+          "type": [
+            "string",
+            "number"
+          ]
         },
         "imageFactory": {
           "anyOf": [
@@ -203,7 +215,8 @@
           ]
         },
         "ipAddress": {
-          "description": "The address talman reaches the node at.",
+          "description": "The IP address or DNS name talman reaches the node at: one, since talosctl splits --nodes on commas.",
+          "pattern": "^[0-9A-Za-z.:%-]+$",
           "type": [
             "string",
             "number"
@@ -237,7 +250,10 @@
                 {
                   "description": "A path to a schematic file.",
                   "minLength": 1,
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "number"
+                  ]
                 },
                 {
                   "$ref": "#/$defs/schematic"
@@ -447,11 +463,14 @@
       "description": "The cluster's name, as talosctl gen config takes it.",
       "maxLength": 253,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$",
-      "type": "string"
+      "type": [
+        "string",
+        "number"
+      ]
     },
     "endpoint": {
       "description": "The Kubernetes API URL: https, with a port.",
-      "pattern": "^https://[^/]+:[0-9]+(/.*)?$",
+      "pattern": "^https://[^/?#]+:[0-9]+([/?#].*)?$",
       "type": "string"
     },
     "imageFactory": {
@@ -534,7 +553,10 @@
             {
               "description": "A path to a schematic file.",
               "minLength": 1,
-              "type": "string"
+              "type": [
+                "string",
+                "number"
+              ]
             },
             {
               "$ref": "#/$defs/schematic"
@@ -582,10 +604,12 @@
       "enum": [
         "metal",
         "cloud",
-        "container"
+        "container",
+        null
       ],
       "type": [
         "string",
+        "number",
         "null"
       ]
     },

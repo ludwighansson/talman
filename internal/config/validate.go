@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -37,6 +38,16 @@ func validHostname(h string) bool {
 	}
 
 	return true
+}
+
+// validAddress reports whether a is one address talosctl can reach a node at:
+// an IP address, or a DNS name.
+func validAddress(a string) bool {
+	if _, err := netip.ParseAddr(a); err == nil {
+		return true
+	}
+
+	return validHostname(strings.ToLower(a))
 }
 
 // Validate checks the whole config and reports every problem at once.
@@ -177,6 +188,10 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 
 		if n.IPAddress == "" {
 			add("%s: ipAddress is required (talman passes it verbatim to talosctl --nodes)", where)
+		} else if !validAddress(n.IPAddress) {
+			// talosctl splits --nodes on commas, so "a,b" would send this
+			// node's config to two machines.
+			add("%s: ipAddress %q is not an IP address or a host name", where, n.IPAddress)
 		} else if prev, dup := seenIP[n.IPAddress]; dup {
 			add("%s: duplicate ipAddress %q (also on %s)", where, n.IPAddress, prev)
 		} else {

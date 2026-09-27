@@ -91,7 +91,7 @@ var schemaDescriptions = map[string]string{
 	"Rollout.soak":             "How long to wait after each wave before the next, e.g. 10m.",
 	"Rollout.waves":            "Waves in order. A node goes in the first that names its role or a group of its; the rest go last.",
 	"Node.hostname":            "An RFC 1123 host name: the Kubernetes node name, and the rendered file's name.",
-	"Node.ipAddress":           "The address talman reaches the node at.",
+	"Node.ipAddress":           "The IP address or DNS name talman reaches the node at: one, since talosctl splits --nodes on commas.",
 	"Node.role":                "controlplane or worker.",
 	"Node.groups":              "Groups whose patches this node receives, applied in this order after its role's.",
 	"Node.values":              "Free-form data, available to this node's patch templates as .Node.Values.",
@@ -137,7 +137,7 @@ func (g *schemaGen) schema(t reflect.Type) any {
 		}}
 	case reflect.TypeFor[SchematicRef]():
 		return map[string]any{"oneOf": []any{
-			map[string]any{"type": "string", "minLength": 1, "description": "A path to a schematic file."},
+			map[string]any{"type": []string{"string", "number"}, "minLength": 1, "description": "A path to a schematic file."},
 			g.schema(reflect.TypeFor[factory.Schematic]()),
 		}}
 	}
@@ -204,23 +204,27 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 
 		s := g.schema(f.Type)
 
-		// Validate's own rules, where a pattern or an enum can say them.
+		// Validate's own rules, where a pattern or an enum can say them. A
+		// pattern holds only for a string, so a number -- which Load reads
+		// as the text it was written as -- stays allowed unless the rule
+		// says otherwise.
 		if rule, ok := schemaRules[t.Name()+"."+name]; ok {
 			m, _ := s.(map[string]any)
 
-			out := map[string]any{"type": "string"}
-
-			for k, v := range m {
-				if k != "type" {
-					out[k] = v
-				}
+			out := maps.Clone(m)
+			if out == nil {
+				out = map[string]any{}
 			}
 
-			for k, v := range rule {
-				out[k] = v
-			}
+			maps.Copy(out, rule)
 
 			s = out
+		}
+
+		if names, ok := schemaReservedItems[t.Name()+"."+name]; ok {
+			if m, isMap := s.(map[string]any); isMap {
+				m["items"] = map[string]any{"type": []string{"string", "number"}, "not": map[string]any{"enum": names}}
+			}
 		}
 
 		if n, ok := schemaMinItems[t.Name()+"."+name]; ok {
@@ -235,7 +239,7 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 
 		// An optional key left empty is YAML's null, which Load reads as the
 		// key's zero value: accepted, so allowed here too.
-		if !slices.Contains(schemaRequired[t], name) {
+		if !slices.Contains(schemaRequired[t], name) || schemaNullable[t.Name()+"."+name] {
 			s = nullable(s)
 		}
 
@@ -269,14 +273,26 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 // schemaRules are Validate's checks that a schema can express, by type and
 // key, so that an editor refuses what talman would.
 var schemaRules = map[string]map[string]any{
-	"Config.endpoint":       {"pattern": `^https://[^/]+:[0-9]+(/.*)?$`},
+	"Config.endpoint":       {"type": "string", "pattern": `^https://[^/?#]+:[0-9]+([/?#].*)?$`},
 	"Config.clusterName":    {"pattern": clusterNamePattern.String(), "maxLength": 253},
 	"Config.validationMode": {"enum": validValidationModes},
 	"Node.hostname": {
 		"pattern":   `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`,
 		"maxLength": 253,
 	},
-	"Rollout.soak": {"pattern": `^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`},
+	"Node.ipAddress": {"pattern": `^[0-9A-Za-z.:%-]+$`},
+	"Rollout.soak":   {"type": "string", "pattern": `^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`},
+}
+
+// schemaReservedItems are the lists whose items Validate refuses by name.
+var schemaReservedItems = map[string][]string{
+	"Node.groups": {GroupAll, GroupControlPlane, GroupWorker, RestWave},
+}
+
+// schemaNullable are required keys that Load takes left empty, as the zero
+// value: a meta value may be empty.
+var schemaNullable = map[string]bool{
+	"MetaValue.value": true,
 }
 
 // schemaMinItems are the lists Validate refuses empty.
@@ -292,17 +308,31 @@ func nullable(s any) any {
 		return s
 	}
 
+	// An enum lists every value allowed, whatever the type says.
+	withNull := func(out map[string]any) map[string]any {
+		if e, ok := out["enum"].([]string); ok {
+			vals := make([]any, 0, len(e)+1)
+			for _, v := range e {
+				vals = append(vals, v)
+			}
+
+			out["enum"] = append(vals, nil)
+		}
+
+		return out
+	}
+
 	switch t := m["type"].(type) {
 	case string:
 		out := maps.Clone(m)
 		out["type"] = []string{t, "null"}
 
-		return out
+		return withNull(out)
 	case []string:
 		out := maps.Clone(m)
 		out["type"] = append(slices.Clone(t), "null")
 
-		return out
+		return withNull(out)
 	}
 
 	return map[string]any{"anyOf": []any{s, map[string]any{"type": "null"}}}
