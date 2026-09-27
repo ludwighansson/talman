@@ -167,6 +167,19 @@ func TestSubcommandSharedBetweenOutputAndStream(t *testing.T) {
 	}
 }
 
+// A flag that takes no value is not given the subcommand as one.
+func TestSubcommandAfterABoolFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"--insecure", "version", "--nodes", "10.0.0.11"},
+		{"-i", "version"},
+		{"--nodes", "10.0.0.11", "--insecure", "version"},
+	} {
+		if got := subcommand(args); got != "version" {
+			t.Errorf("subcommand(%v) = %q, want %q", args, got, "version")
+		}
+	}
+}
+
 func TestParseKubeletVersion(t *testing.T) {
 	tests := []struct {
 		name string

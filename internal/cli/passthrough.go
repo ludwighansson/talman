@@ -127,6 +127,9 @@ func passthroughArgs(raw []string) (nodes, rest []string, help bool, err error) 
 			return strings.TrimPrefix(a, long+"="), i, true, nil
 		case strings.HasPrefix(a, short+"="):
 			return strings.TrimPrefix(a, short+"="), i, true, nil
+		case strings.HasPrefix(a, short) && len(a) > len(short):
+			// -nworker-01, as pflag reads a short flag's value.
+			return strings.TrimPrefix(a, short), i, true, nil
 		}
 
 		return "", i, false, nil

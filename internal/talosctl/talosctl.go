@@ -68,6 +68,10 @@ func (e *ExitError) subcommand() string {
 	return subcommand(e.Args)
 }
 
+// boolFlags are the talosctl flags that take no value and turn up before a
+// subcommand, so the word after one is the subcommand, not its value.
+var boolFlags = map[string]bool{"--insecure": true, "-i": true, "--debug": true, "--dry-run": true}
+
 // subcommand is the leading non-flag words of an invocation. The full argv of
 // a gen config call is hundreds of characters of temp paths, and an apply
 // carries absolute config paths; printing either buries the message that
@@ -82,7 +86,7 @@ func subcommand(args []string) string {
 		a := args[i]
 
 		if strings.HasPrefix(a, "-") {
-			if !strings.Contains(a, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			if !strings.Contains(a, "=") && !boolFlags[a] && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++ // the flag's value
 			}
 

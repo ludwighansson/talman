@@ -206,7 +206,7 @@ nodes:
 	return dir, log
 }
 
-// TestExitCodes pins the contract CI jobs branch on: 0 nothing changed, 2
+// TestExitCodes pins the codes CI jobs branch on: 0 nothing changed, 2
 // something changed (only with --detailed-exit-code), 1 failure of any kind.
 func TestExitCodes(t *testing.T) {
 	apply := []string{"apply", "--no-render", "--redact-secrets=false", "--wait=false"}
