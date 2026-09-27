@@ -17,7 +17,6 @@ import (
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/render"
-	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
 // initTemplate is the talman.yaml `init` writes: the required keys filled in,
@@ -146,7 +145,7 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 			}
 
 			if k8sVersion == "" {
-				if k8sVersion, err = defaultKubernetesVersion(tal); err != nil {
+				if k8sVersion, err = tal.DefaultKubernetesVersion(); err != nil {
 					return fmt.Errorf("finding the Kubernetes version to target (or pass --kubernetes-version): %w", err)
 				}
 			}
@@ -302,25 +301,6 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 	cmd.Flags().StringVar(&age, "age", "", "age recipient to encrypt secrets to, written to .sops.yaml")
 
 	return cmd
-}
-
-var k8sDefault = regexp.MustCompile(`--kubernetes-version string\s.*\(default "([^"]+)"\)`)
-
-// defaultKubernetesVersion is the Kubernetes version `talosctl gen config`
-// generates for when none is named. talosctl has no command that prints it,
-// so it is read off the flag's help.
-func defaultKubernetesVersion(tal *talosctl.Runner) (string, error) {
-	help, err := tal.Output("gen", "config", "--help")
-	if err != nil {
-		return "", err
-	}
-
-	m := k8sDefault.FindSubmatch(help)
-	if m == nil {
-		return "", errors.New("talosctl gen config --help names no default Kubernetes version")
-	}
-
-	return string(m[1]), nil
 }
 
 var versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)

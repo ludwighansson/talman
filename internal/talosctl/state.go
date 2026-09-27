@@ -164,6 +164,25 @@ func (r *Runner) KubeletVersion(talosconfig, node string) (string, error) {
 // image is pinned, and is not part of the version.
 var kubeletImage = regexp.MustCompile(`(?:^|/)kubelet:(v?\d+\.\d+\.\d+[^\s@]*)`)
 
+// DefaultKubernetesVersion is the Kubernetes version `talosctl gen config`
+// generates for when none is named. talosctl has no command that prints it, so
+// it is read off the kubelet image of a control plane config generated for
+// the purpose and thrown away -- the config itself, not the help text, which
+// is worded for people.
+func (r *Runner) DefaultKubernetesVersion() (string, error) {
+	out, err := r.Output("gen", "config", "probe", "https://127.0.0.1:6443",
+		"--output-types", "controlplane", "--output", "-", "--with-docs=false", "--with-examples=false")
+	if err != nil {
+		return "", err
+	}
+
+	if v := parseKubeletVersion(out); v != "" {
+		return v, nil
+	}
+
+	return "", errors.New("the config talosctl gen config generates names no kubelet image")
+}
+
 // parseKubeletVersion finds the kubelet version in `talosctl get kubeletspec`.
 //
 // Like parseSchematicID this walks the document rather than indexing a field

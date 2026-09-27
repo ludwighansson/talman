@@ -3,6 +3,7 @@ package talosctl
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -337,5 +338,29 @@ func TestEnsureRefusesAnOldTalosctl(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q: %v", want, err)
 		}
+	}
+}
+
+// Read off a generated config, against the real talosctl: this is the one
+// place a talosctl release could move what talman reads.
+func TestDefaultKubernetesVersion(t *testing.T) {
+	bin, err := exec.LookPath("talosctl")
+	if err != nil {
+		t.Skip("talosctl not on PATH")
+	}
+
+	t.Chdir(t.TempDir()) // gen config must write nothing here
+
+	v, err := New(bin).DefaultKubernetesVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasPrefix(v, "v1.") {
+		t.Errorf("DefaultKubernetesVersion() = %q, want a v1.x version", v)
+	}
+
+	if entries, _ := os.ReadDir("."); len(entries) != 0 {
+		t.Errorf("gen config left files behind: %v", entries)
 	}
 }
