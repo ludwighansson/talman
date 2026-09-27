@@ -20,9 +20,11 @@ var validValidationModes = []string{"metal", "cloud", "container"}
 // inside a file name.
 var clusterNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
 
-// hostnameLabel is one RFC 1123 label, lower case: what Kubernetes accepts as
-// a node name, and safe as the file name the rendered config is written to.
-var hostnameLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+// hostnameLabelRE is one RFC 1123 label, lower case: what Kubernetes accepts
+// as a node name, and safe as the file name the rendered config is written to.
+const hostnameLabelRE = `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?`
+
+var hostnameLabel = regexp.MustCompile(`^` + hostnameLabelRE + `$`)
 
 // validHostname reports whether h is an RFC 1123 host name: dot-separated
 // labels, 253 characters at most.

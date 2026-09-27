@@ -116,11 +116,9 @@ func (g *schemaGen) schema(t reflect.Type) any {
 	case reflect.TypeFor[factory.Bootloader]():
 		// Any case, as Load reads it: a pattern, since an enum matches
 		// exactly and JSON Schema's regular expressions have no flag for it.
-		names := []string{"none", "dual-boot", "sd-boot", "grub"}
-
-		alts := make([]string, 0, len(names))
-		for _, n := range names {
-			alts = append(alts, anyCase(n))
+		alts := make([]string, 0, len(factory.Bootloaders))
+		for _, n := range factory.Bootloaders {
+			alts = append(alts, anyCase(string(n)))
 		}
 
 		return map[string]any{
@@ -277,7 +275,7 @@ var schemaRules = map[string]map[string]any{
 	"Config.clusterName":    {"pattern": clusterNamePattern.String(), "maxLength": 253},
 	"Config.validationMode": {"enum": validValidationModes},
 	"Node.hostname": {
-		"pattern":   `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`,
+		"pattern":   `^` + hostnameLabelRE + `(\.` + hostnameLabelRE + `)*$`,
 		"maxLength": 253,
 	},
 	"Node.ipAddress": {"pattern": `^[0-9A-Za-z.:%-]+$`},

@@ -73,8 +73,9 @@ type Customization struct {
 // is a different schematic ID from the one the factory computes.
 type Bootloader string
 
-// The bootloaders the Image Factory accepts; none is the zero value.
-var bootloaders = []Bootloader{"none", "dual-boot", "sd-boot", "grub"}
+// Bootloaders are the bootloaders the Image Factory accepts; none is the zero
+// value.
+var Bootloaders = []Bootloader{"none", "dual-boot", "sd-boot", "grub"}
 
 // UnmarshalYAML normalises and checks the name.
 func (b *Bootloader) UnmarshalYAML(value *yaml.Node) error {
@@ -86,7 +87,7 @@ func (b *Bootloader) UnmarshalYAML(value *yaml.Node) error {
 
 	name := Bootloader(strings.ToLower(s))
 
-	if !slices.Contains(bootloaders, name) {
+	if !slices.Contains(Bootloaders, name) {
 		return fmt.Errorf("line %d: bootloader %q is not one of none, dual-boot, sd-boot, grub", value.Line, s)
 	}
 
