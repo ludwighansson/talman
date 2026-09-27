@@ -207,7 +207,7 @@ More in the README: "Rotating the CAs".`,
 				// Talos CA first and writes the talosconfig for the new
 				// one when that is done, so that file is the one clue.
 				return fmt.Errorf("%w\n  the rotation did not finish, and may have got partway.%s",
-					err, partialRotation(cfg, tc, rotated))
+					err, partialRotation(cfg, tc, rotated, kubernetes))
 			}
 
 			if dryRun {
@@ -357,7 +357,12 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 
 // partialRotation says what an unfinished rotation left behind, and how to
 // finish it.
-func partialRotation(cfg *config.Config, tc, rotated string) string {
+//
+// talosctl rotates the Kubernetes CA after the Talos one, and writes the
+// rotated talosconfig in between, so when that file is there and talosctl
+// still failed, it failed on the Kubernetes CA: --finish puts the Talos half
+// in place, and the Kubernetes half has to be run again.
+func partialRotation(cfg *config.Config, tc, rotated string, kubernetes bool) string {
 	if !exists(rotated) {
 		return fmt.Sprintf("\n  talosctl wrote no talosconfig for a new Talos CA, so %s is still the one to use,\n"+
 			"  and %s still matches the Talos CA. Check the cluster with `talman health`, then run\n"+
@@ -365,11 +370,19 @@ func partialRotation(cfg *config.Config, tc, rotated string) string {
 			render.Rel(tc), cfg.SecretFile, talmanCmd("rotate-ca"))
 	}
 
-	return fmt.Sprintf("\n  talosctl wrote %s, the talosconfig for a new Talos CA, so the Talos CA has\n"+
+	msg := fmt.Sprintf("\n  talosctl wrote %s, the talosconfig for a new Talos CA, so the Talos CA has\n"+
 		"  probably been rotated and %s may no longer be accepted. Once\n"+
 		"  `talosctl --talosconfig %s health` passes, finish with:\n"+
 		"    "+talmanCmd("rotate-ca --finish"),
 		render.Rel(rotated), render.Rel(tc), render.Rel(rotated))
+
+	if kubernetes {
+		msg += "\n  The Kubernetes CA comes after the Talos CA, so it is not rotated, or only partway. After\n" +
+			"  --finish, rotate it on its own:\n" +
+			"    " + talmanCmd("rotate-ca --talos=false")
+	}
+
+	return msg
 }
 
 // completeTalosconfig gives the talosconfig talosctl rotate-ca wrote the

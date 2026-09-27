@@ -572,6 +572,7 @@ func TestRotateCAPartway(t *testing.T) {
 		"did not finish",
 		"talosconfig.rotated",
 		"talman rotate-ca --finish",
+		"talman rotate-ca --talos=false",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("the error does not mention %q:\n%s", want, stderr)

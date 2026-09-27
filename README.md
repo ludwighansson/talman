@@ -1241,6 +1241,11 @@ asks for the cluster name first, as a rotation does (`-y` skips it):
 $ talman rotate-ca --finish
 ```
 
+talosctl rotates the Kubernetes CA after the Talos CA, so a rotation that
+stopped between the two leaves the Kubernetes CA as it was, or partway; the
+error says so, and `talman rotate-ca --talos=false` after `--finish` carries it
+through.
+
 A `talosconfig.rotated` left by a rotation that did not finish is never deleted — it may be the only talosconfig the
 cluster still accepts — and rotate-ca refuses to start until you have dealt
 with it.
