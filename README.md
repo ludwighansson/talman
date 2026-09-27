@@ -82,7 +82,7 @@ registers it with the factory instead.
 go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-beta.5
 ```
 
-Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
+That needs Go 1.27 or later. Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
 [releases page](https://github.com/ludwighansson/talman/releases). Pinning a
 version is still the better habit than `@latest`: a cluster directory is
 reviewed against the talman that renders it, and an upgrade is worth making on
@@ -95,7 +95,7 @@ $ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
     ghcr.io/ludwighansson/talman:1.0.0-beta.5 validate
 ```
 
-It holds exactly three binaries — talman and the two it drives — on Alpine,
+On top of Alpine's base it adds three binaries — talman and the two it drives —
 and runs as uid 65532. Alpine rather than distroless for the shell: GitLab CI
 runs a job's script through the image's shell and GitHub Actions runs `run:`
 steps the same way, so without one the image can only be used as `docker run`
