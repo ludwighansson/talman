@@ -549,6 +549,28 @@ func TestSnapshotFollowsTheRouteThatAnswered(t *testing.T) {
 	}
 }
 
+// A rotation of one CA that fails before talosctl wrote anything is to be run
+// again as it was asked for: a plain rerun would rotate the other CA too.
+func TestRotateCAFailedRerunKeepsItsScope(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "secrets.sops.yaml"), []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_FAIL", "rotate-ca")
+
+	stderr := captureStderr(t, func() {
+		if got := run([]string{"rotate-ca", "-y", "--talos=false"}); got != 1 {
+			t.Errorf("exit %d, want 1", got)
+		}
+	})
+
+	if !strings.Contains(stderr, "talman rotate-ca --talos=false` again") {
+		t.Errorf("the rerun hint does not keep --talos=false:\n%s", stderr)
+	}
+}
+
 // TestRotateCAPartway: a rotation talosctl abandoned after the Talos CA leaves
 // the bundle untouched and the talosconfig in place, and talman's error has to
 // say where the working talosconfig is and how to finish.
@@ -1526,6 +1548,19 @@ func TestDryRunWithInsecureSendsNothing(t *testing.T) {
 
 	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "apply-config") {
 		t.Errorf("a dry run sent the node its config:\n%s", calls)
+	}
+}
+
+// A dry run of a build answers "it would change", with or without --diff.
+func TestBootstrapDryRunIsAChange(t *testing.T) {
+	for _, extra := range [][]string{nil, {"--diff"}} {
+		_, _ = bootstrapFixture(t)
+
+		args := append([]string{"apply", "--bootstrap", "--dry-run", "--detailed-exit-code", "--no-render",
+			"--redact-secrets=false"}, extra...)
+		if got := run(args); got != 2 {
+			t.Errorf("%v: exit %d, want 2", extra, got)
+		}
 	}
 }
 

@@ -588,7 +588,16 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 
 					printBootstrapPlan(tal, tc, first, stages)
 
+					// A build always changes something: etcd, at the least.
+					if detailed {
+						markChanged()
+					}
+
 					if !diff {
+						if detailed {
+							return errChanged
+						}
+
 						return nil
 					}
 
