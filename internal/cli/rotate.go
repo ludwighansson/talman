@@ -207,7 +207,7 @@ More in the README: "Rotating the CAs".`,
 				// Talos CA first and writes the talosconfig for the new
 				// one when that is done, so that file is the one clue.
 				return fmt.Errorf("%w\n  the rotation did not finish, and may have got partway.%s",
-					err, partialRotation(cfg, tc, rotated, kubernetes))
+					err, partialRotation(cfg, tc, rotated, talos, kubernetes))
 			}
 
 			if dryRun {
@@ -362,12 +362,29 @@ func replaceBundle(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 // rotated talosconfig in between, so when that file is there and talosctl
 // still failed, it failed on the Kubernetes CA: --finish puts the Talos half
 // in place, and the Kubernetes half has to be run again.
-func partialRotation(cfg *config.Config, tc, rotated string, kubernetes bool) string {
+func partialRotation(cfg *config.Config, tc, rotated string, talos, kubernetes bool) string {
 	if !exists(rotated) {
-		return fmt.Sprintf("\n  talosctl wrote no talosconfig for a new Talos CA, so %s is still the one to use,\n"+
+		// Run again as it was asked for: a plain rerun of a
+		// --talos=false rotation would rotate the Talos CA too.
+		rerun := "rotate-ca"
+		if !talos {
+			rerun += " --talos=false"
+		}
+
+		if !kubernetes {
+			rerun += " --kubernetes=false"
+		}
+
+		msg := fmt.Sprintf("\n  talosctl wrote no talosconfig for a new Talos CA, so %s is still the one to use,\n"+
 			"  and %s still matches the Talos CA. Check the cluster with `talman health`, then run\n"+
-			"  `%s` again; if the Kubernetes CA got partway, the rerun carries it through.",
-			render.Rel(tc), cfg.SecretFile, talmanCmd("rotate-ca"))
+			"  `%s` again",
+			render.Rel(tc), cfg.SecretFile, talmanCmd(rerun))
+
+		if kubernetes {
+			msg += "; if the Kubernetes CA got partway, the rerun carries it through"
+		}
+
+		return msg + "."
 	}
 
 	msg := fmt.Sprintf("\n  talosctl wrote %s, the talosconfig for a new Talos CA, so the Talos CA has\n"+
