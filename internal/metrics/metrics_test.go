@@ -84,8 +84,10 @@ func TestChangedIsOnlyReportedWhenKnown(t *testing.T) {
 	unknown.NodeDone("w1", nil)
 	unknown.Finish(true)
 
-	if strings.Contains(string(unknown.Text()), "talman_run_changed") {
-		t.Error("reported a change it could not know about")
+	// NaN, not left out: a push replaces only what it sends, and the last
+	// run's answer would otherwise stand as this one's.
+	if !strings.Contains(string(unknown.Text()), `talman_run_changed{cluster="unknown",command="apply"} NaN`) {
+		t.Errorf("a change it could not know about was not reported as NaN:\n%s", unknown.Text())
 	}
 
 	quiet := NewRun("apply", "dev", nil)
@@ -260,4 +262,15 @@ func TestNilRunRecordsNothing(_ *testing.T) {
 	r.NodeDone("n", nil)
 	r.SetChanged(true)
 	r.Finish(true)
+}
+
+// A run that stops before choosing any nodes still reports how many ended in
+// each result -- none -- so a push replaces the last run's counts.
+func TestNodeCountsWithoutNodes(t *testing.T) {
+	r := NewRun("apply", "dev", nil)
+	r.Finish(false)
+
+	if !strings.Contains(string(r.Text()), `talman_run_nodes{cluster="unknown",command="apply",result="changed"} 0`) {
+		t.Errorf("no node counts for a run without nodes:\n%s", r.Text())
+	}
 }

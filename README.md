@@ -895,7 +895,7 @@ the exit code.
 
 ```text
 talman_run_success{cluster,command}                   1 or 0
-talman_run_changed{cluster,command}                   1 or 0, when talman knows
+talman_run_changed{cluster,command}                   1 or 0; NaN when talman does not know
 talman_run_duration_seconds{cluster,command}
 talman_run_timestamp_seconds{cluster,command}         when the run ended
 talman_run_last_success_timestamp_seconds{cluster,command}
@@ -919,7 +919,10 @@ A push goes to `<url>/metrics/job/talman/cluster/<cluster>/command/<command>`,
 followed by the extra labels. Each cluster, command and label set is its own
 group, so an `apply` never replaces an `upgrade`'s metrics. Pushes are POSTs:
 a failed run sends no last-success timestamp, so the one from the last run that
-worked stays in place. The file does the same thing by carrying that timestamp
+worked stays in place. Everything else is sent every run, so it replaces the
+last run's, except the per-node series of a run that stopped before choosing
+any nodes: those it has none of, so the last ones stay, beside a
+`talman_run_nodes` of zero. The file does the same thing by carrying that timestamp
 over from the file it replaces.
 
 Some alerts this is meant for:

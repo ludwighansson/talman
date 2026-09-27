@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -374,9 +375,15 @@ func (r *Run) Text() []byte {
 	family("talman_run_success", "Whether the run succeeded (1) or failed (0).")
 	sample("talman_run_success", base, boolValue(r.success))
 
+	// Sent even when not known, as NaN, which no comparison matches: a push
+	// replaces only the metrics it holds, so leaving it out would leave the
+	// last run's answer standing as this one's.
+	family("talman_run_changed", "Whether the run changed anything, or would have in a dry run; NaN when not known.")
+
 	if changed := r.changedLocked(); changed != nil {
-		family("talman_run_changed", "Whether the run changed anything, or would have in a dry run.")
 		sample("talman_run_changed", base, boolValue(*changed))
+	} else {
+		sample("talman_run_changed", base, math.NaN())
 	}
 
 	family("talman_run_duration_seconds", "How long the run took.")
@@ -393,10 +400,8 @@ func (r *Run) Text() []byte {
 	family("talman_run_info", "The talman that made the run.")
 	sample("talman_run_info", with([2]string{"talman_version", r.Version}), 1)
 
-	if len(r.order) == 0 {
-		return b.Bytes()
-	}
-
+	// Every result, zero included, even for a run that stopped before it
+	// chose any nodes, for the same reason.
 	counts := map[string]int{}
 	for _, h := range r.order {
 		counts[r.nodes[h].result()]++
@@ -406,6 +411,10 @@ func (r *Run) Text() []byte {
 
 	for _, res := range results {
 		sample("talman_run_nodes", with([2]string{"result", res}), float64(counts[res]))
+	}
+
+	if len(r.order) == 0 {
+		return b.Bytes()
 	}
 
 	nodeLabels := func(h string) [][2]string {
