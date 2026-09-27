@@ -79,7 +79,7 @@ registers it with the factory instead.
 ## Install
 
 ```console
-go install github.com/ludwighansson/talman/cmd/talman@v1.0.0
+go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-beta.3
 ```
 
 Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
@@ -92,7 +92,7 @@ Or take the image, which carries `talosctl` and `sops` with it:
 
 ```console
 $ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
-    ghcr.io/ludwighansson/talman:1.0.0 validate
+    ghcr.io/ludwighansson/talman:1.0.0-beta.3 validate
 ```
 
 It holds exactly three binaries — talman and the two it drives — on Alpine,
@@ -105,7 +105,7 @@ rather than as the job image itself.
 # .gitlab-ci.yml
 drift:
   image:
-    name: ghcr.io/ludwighansson/talman:1.0.0
+    name: ghcr.io/ludwighansson/talman:1.0.0-beta.3
     entrypoint: [""]   # the image's entrypoint is talman; GitLab runs the script with a shell
   script:
     - talman apply --dry-run --detailed-exit-code
@@ -122,7 +122,7 @@ image as a label as well as in `talman version`:
 
 ```console
 $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version" }}' \
-    ghcr.io/ludwighansson/talman:1.0.0
+    ghcr.io/ludwighansson/talman:1.0.0-beta.3
 v1.14.1
 ```
 
@@ -139,7 +139,7 @@ $ cosign verify-blob checksums.txt \
     --signature checksums.txt.sig --certificate checksums.txt.pem \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
-$ cosign verify ghcr.io/ludwighansson/talman:1.0.0 \
+$ cosign verify ghcr.io/ludwighansson/talman:1.0.0-beta.3 \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -238,7 +238,7 @@ nodes:
 
 Optional top-level keys: `talosctl` (binary path), `outputDir`
 (`clusterconfig`), `secretFile` (`secrets.sops.yaml`), `validationMode`,
-`schematicID`, `valuesFiles`. Per-node: `talosVersion`, `schematic`,
+`schematicID`, `valuesFiles`, `rollout`. Per-node: `talosVersion`, `schematic`,
 `schematicID`, `imageFactory`, `valuesFiles`.
 
 `valuesFiles` lists YAML files merged into `values`, for values several
@@ -498,7 +498,8 @@ Ctrl-C, a CI runner's SIGTERM, or a SIGHUP from a terminal closing or an ssh
 session dropping stops a run in order rather than on the spot. The talosctl process in flight is signalled too, the decrypted secrets
 are removed, metrics are written and a stopped roll-out names the nodes it did
 not reach, as it does for any failure; talman then exits 128 plus the signal,
-as a shell would report it: 130 for Ctrl-C, 143 for SIGTERM, 129 for SIGHUP. A
+as a shell would report it: 130 for Ctrl-C, 143 for SIGTERM, 129 for SIGHUP,
+131 for SIGQUIT. A
 second signal exits at once, killing any talosctl still running and still
 removing the decrypted secrets.
 
@@ -1236,8 +1237,9 @@ asks for the cluster name first, as a rotation does (`-y` skips it):
 
 ```console
 $ talman rotate-ca --finish
-``` A `talosconfig.rotated` left by a rotation
-that did not finish is never deleted — it may be the only talosconfig the
+```
+
+A `talosconfig.rotated` left by a rotation that did not finish is never deleted — it may be the only talosconfig the
 cluster still accepts — and rotate-ca refuses to start until you have dealt
 with it.
 
@@ -1290,14 +1292,14 @@ Root because the provisioner creates bridges and tap devices. CI runs it
 nightly on a self-hosted runner labelled `kvm`, and never as a gate on a pull
 request.
 
-## Upgrading from a 1.0.0 prerelease
+## Upgrading from an earlier prerelease
 
-1.0.0 settled the schema and the command line, so a cluster directory written
-for an alpha or a beta may need these changes. None of them is read
+A cluster directory written for an earlier alpha or beta may need these
+changes. None of them is read
 differently: a renamed key is refused with an error naming its new spelling,
 and a removed flag is refused as an unknown flag.
 
-| before | 1.0.0 |
+| before | now |
 | --- | --- |
 | `apiVersion` optional | required: `apiVersion: talman.dev/v1` |
 | `talosMode:` | `validationMode:`, and usually not needed: it now follows `imageFactory.platform` |

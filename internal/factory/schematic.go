@@ -224,9 +224,8 @@ func (c Config) WithDefaults() Config {
 	return c
 }
 
-// urlData is the template context for InstallerURLTmpl. The field names are
-// part of the user-facing contract, so they are kept compatible with the
-// talhelper spelling operators are likely to be migrating from.
+// urlData is the template context for InstallerURLTmpl. The field names follow
+// talhelper's spelling, which operators migrating from it already use.
 type urlData struct {
 	RegistryURL string
 	Protocol    string

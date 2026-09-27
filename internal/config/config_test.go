@@ -615,7 +615,7 @@ nodes:
 }
 
 // The field exists so a later, incompatible schema can be told apart from
-// this one. A config written before it existed still has to work.
+// this one.
 func TestAPIVersion(t *testing.T) {
 	base := `clusterName: dev
 endpoint: https://10.0.0.1:6443

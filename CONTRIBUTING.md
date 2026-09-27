@@ -138,8 +138,7 @@ report needs that detail to be useful.
 ## Security
 
 If you find something with security impact, please report it privately through
-GitHub's security advisory tab rather than in a public issue, and I will
-respond as quickly as I am able.
+GitHub's security advisory tab rather than in a public issue.
 
 ## License
 
