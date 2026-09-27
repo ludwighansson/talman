@@ -107,8 +107,11 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 
 			// The waves first, so a mistyped --from fails before the bundle
 			// is decrypted, and only the nodes in the selected waves are
-			// rendered. Planned again after --only-new-nodes, below.
-			if _, targets, _, err = waves.plan(cfg, targets); err != nil {
+			// rendered. Planned again after --only-new-nodes, below, but the
+			// wave --until stops short of is this plan's: the second one sees
+			// only the nodes this one kept.
+			_, targets, thenFrom, err := waves.plan(cfg, targets)
+			if err != nil {
 				return err
 			}
 
@@ -238,7 +241,7 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 			}
 
 			// After --only-new-nodes, so the waves hold only the nodes it kept.
-			stages, targets, thenFrom, err := waves.plan(cfg, targets)
+			stages, targets, _, err := waves.plan(cfg, targets)
 			if err != nil {
 				return err
 			}

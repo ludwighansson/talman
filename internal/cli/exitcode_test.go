@@ -971,6 +971,30 @@ func TestRolloutHintsCarryOn(t *testing.T) {
 	}
 }
 
+// TestApplyUntilHints: apply plans its waves twice, around --only-new-nodes,
+// and the hint still names the wave --until stopped short of.
+func TestApplyUntilHints(t *testing.T) {
+	dir, _ := exitFixtureWith(t, waveNodes+`rollout:
+  waves:
+    - blue
+    - [green, pink]
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "b1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, hint := runHint(t, "apply", "--no-render", "--redact-secrets=false", "--wait=false",
+		"-g", "worker", "--until", "blue")
+	if got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	if !strings.HasPrefix(hint, "apply --from green") {
+		t.Errorf("hint %q, want one continuing with apply --from green", hint)
+	}
+}
+
 // TestWaveSelectionThatSelectsNothing is an error, not a quiet success.
 func TestWaveSelectionThatSelectsNothing(t *testing.T) {
 	exitFixtureWith(t, waveNodes+`rollout:
