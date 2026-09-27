@@ -373,7 +373,8 @@ Template scope:
 | `.Values` | the cluster-wide `values:` map; the per-node one is `.Node.Values` |
 
 `.Node.TalosVersion` is the *resolved* version and `.Node.HasGroup "db"` reads
-better than sprig's `has`. Missing map keys are an error, not `<no value>` — a
+better than sprig's `has`; as in `patches` and `-g`, the node's role and `all`
+count as groups for it, though `.Node.Groups` lists only the declared ones. Missing map keys are an error, not `<no value>` — a
 typo must not become a subtly wrong machine config.
 
 **Order matters.** Talos applies strategic merge patches in sequence, last

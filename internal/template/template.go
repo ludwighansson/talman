@@ -51,10 +51,12 @@ type Context struct {
 	Values  map[string]any
 }
 
-// HasGroup reports whether the node belongs to a group. Equivalent to sprig's
-// `has`, but reads better in a patch: {{ if .Node.HasGroup "db" }}.
+// HasGroup reports whether the node belongs to a group, reading better in a
+// patch than sprig's `has`: {{ if .Node.HasGroup "db" }}. As everywhere else
+// in talman, the node's role and "all" count as groups too, though they are
+// not in .Node.Groups.
 func (n Node) HasGroup(name string) bool {
-	return slices.Contains(n.Groups, name)
+	return name == "all" || (name == n.Role && n.Role != "") || slices.Contains(n.Groups, name)
 }
 
 // Render executes content as a template against ctx.
