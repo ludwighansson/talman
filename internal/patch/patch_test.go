@@ -78,3 +78,25 @@ func TestEmptyIsFine(t *testing.T) {
 		}
 	}
 }
+
+// A conditional that renders false leaves the comment above it, or a bare
+// separator: nothing in it for talosctl to apply.
+func TestEmpty(t *testing.T) {
+	for in, want := range map[string]bool{
+		"":                                true,
+		"  \n\n":                          true,
+		"# Hugepages for db nodes\n":      true,
+		"---\n":                           true,
+		"# a\n---\n# b\n---\n":            true,
+		"~\n":                             true,
+		"machine:\n  sysctls: {}\n":       false,
+		"# c\nmachine: {}\n":              false,
+		"---\n---\nmachine: {}\n":         false,
+		"machine: [\n":                    false,
+		"apiVersion: v1alpha1\nkind: X\n": false,
+	} {
+		if got := Empty([]byte(in)); got != want {
+			t.Errorf("Empty(%q) = %t, want %t", in, got, want)
+		}
+	}
+}

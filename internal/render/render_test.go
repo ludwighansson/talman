@@ -64,8 +64,9 @@ labels:
   special: "yes"
 `,
 		// A whole document behind a conditional: a normal idiom that must not
-		// reach talosctl as an empty patch.
-		"cluster/patches/all/maybe.yaml": `{{ if .Node.HasGroup "gpu" }}
+		// reach talosctl as an empty patch, even with a comment above it.
+		"cluster/patches/all/maybe.yaml": `# sysctls for gpu nodes
+{{ if .Node.HasGroup "gpu" }}
 apiVersion: v1alpha1
 kind: SysctlConfig
 params:

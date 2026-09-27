@@ -50,6 +50,41 @@ func CheckStrategicMerge(name string, data []byte) error {
 	}
 }
 
+// Empty reports whether data holds no document with anything in it: nothing
+// but whitespace, comments, `---` separators or nulls. A patch wrapped in a
+// conditional renders to that when the condition is false, keeping the comment
+// above it, and talosctl reads a patch with no content as a JSON6902 one.
+// Data that is not valid YAML is not empty; CheckStrategicMerge says why.
+func Empty(data []byte) bool {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+
+	for {
+		var doc yaml.Node
+
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+
+		if err != nil {
+			return false
+		}
+
+		content := &doc
+		if content.Kind == yaml.DocumentNode {
+			if len(content.Content) == 0 {
+				continue
+			}
+
+			content = content.Content[0]
+		}
+
+		if content.Kind != yaml.ScalarNode || content.Tag != "!!null" {
+			return false
+		}
+	}
+}
+
 func looksLikeJSON6902(n *yaml.Node) bool {
 	if n.Kind != yaml.SequenceNode || len(n.Content) == 0 {
 		return false

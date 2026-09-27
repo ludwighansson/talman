@@ -214,8 +214,10 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 		}
 
 		// Skip files that render to nothing: a patch wrapped entirely in a
-		// conditional is a normal idiom, and talosctl rejects an empty patch.
-		if len(strings.TrimSpace(string(rendered))) == 0 {
+		// conditional is a normal idiom, and talosctl rejects an empty patch
+		// -- including one left holding only the comment above the
+		// conditional.
+		if patch.Empty(rendered) {
 			r.logf("  %-14s %s (skipped: renders empty)", "["+ref.Group+"]", ref.Rel)
 
 			continue
