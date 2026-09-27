@@ -1509,6 +1509,26 @@ func TestDryRunDiffOfNewNodes(t *testing.T) {
 	}
 }
 
+// -i says the node is new without asking it, and a dry run still sends it
+// nothing.
+func TestDryRunWithInsecureSendsNothing(t *testing.T) {
+	_, log := bootstrapFixture(t)
+
+	stderr := captureStderr(t, func() {
+		if got := run([]string{"apply", "--dry-run", "-i", "-n", "w1", "--no-render", "--redact-secrets=false"}); got != 0 {
+			t.Errorf("exit %d, want 0", got)
+		}
+	})
+
+	if !strings.Contains(stderr, "+version: v1alpha1") {
+		t.Errorf("no diff shown:\n%s", stderr)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "apply-config") {
+		t.Errorf("a dry run sent the node its config:\n%s", calls)
+	}
+}
+
 // Without --diff, --bootstrap --dry-run is the plan alone.
 func TestBootstrapDryRunIsThePlan(t *testing.T) {
 	_, _ = bootstrapFixture(t)

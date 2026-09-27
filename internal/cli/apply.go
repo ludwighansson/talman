@@ -281,9 +281,10 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				// onboarding a node and failing the run.
 				maintenance := insecure
 
-				// Seen to be new, rather than only told to use the
-				// maintenance service with --insecure.
-				isNew := false
+				// A node with no config yet: seen to be new, or said to be
+				// with --insecure. Its dry run is worked out here, so a
+				// dry run sends it nothing.
+				isNew := forced && insecure
 
 				if !forced {
 					state := tal.Mode(tc, n.IPAddress)
