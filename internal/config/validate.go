@@ -50,12 +50,21 @@ func validHostname(h string) bool {
 
 // validAddress reports whether a is one address talosctl can reach a node at:
 // an IP address, or a DNS name.
+//
+// A name made only of digits and dots is a mistyped IP address -- 10.0.0.256,
+// 10.0.0.011 -- rather than a name, and a fully qualified name may end in a
+// dot.
 func validAddress(a string) bool {
 	if _, err := netip.ParseAddr(a); err == nil {
 		return true
 	}
 
-	return validHostname(strings.ToLower(a))
+	name := strings.ToLower(strings.TrimSuffix(a, "."))
+	if strings.Trim(name, "0123456789.") == "" {
+		return false
+	}
+
+	return validHostname(name)
 }
 
 // Validate checks the whole config and reports every problem at once.

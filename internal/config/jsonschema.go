@@ -281,9 +281,19 @@ var schemaRules = map[string]map[string]any{
 		"pattern":   `^` + hostnameLabelRE + `(\.` + hostnameLabelRE + `)*$`,
 		"maxLength": 253,
 	},
-	"Node.ipAddress": {"pattern": `^[0-9A-Za-z.:%-]+$`},
+	"Node.ipAddress": {"type": "string", "pattern": `^(` + ipv4RE + `|` + ipv6RE + `|` + dnsNameRE + `)$`},
 	"Rollout.soak":   {"type": "string", "pattern": `^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`},
 }
+
+// The shapes an ipAddress may take, loosely: Validate checks each properly.
+// A name has at least one label that is not all digits, since one that is
+// all digits and dots is a mistyped IPv4 address.
+const (
+	ipv4Octet = `(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])`
+	ipv4RE    = `(` + ipv4Octet + `\.){3}` + ipv4Octet
+	ipv6RE    = `[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*(%[0-9A-Za-z._-]+)?`
+	dnsNameRE = `([0-9A-Za-z-]+\.)*[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*(\.[0-9A-Za-z-]+)*\.?`
+)
 
 // schemaReservedItems are the lists whose items Validate refuses by name.
 var schemaReservedItems = map[string][]string{

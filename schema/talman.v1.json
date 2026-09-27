@@ -216,11 +216,8 @@
         },
         "ipAddress": {
           "description": "The IP address or DNS name talman reaches the node at: one, since talosctl splits --nodes on commas.",
-          "pattern": "^[0-9A-Za-z.:%-]+$",
-          "type": [
-            "string",
-            "number"
-          ]
+          "pattern": "^(((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*(%[0-9A-Za-z._-]+)?|([0-9A-Za-z-]+\\.)*[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*(\\.[0-9A-Za-z-]+)*\\.?)$",
+          "type": "string"
         },
         "patches": {
           "description": "This node's own patches, applied last.",
