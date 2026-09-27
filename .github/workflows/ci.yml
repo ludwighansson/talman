@@ -55,18 +55,29 @@ jobs:
           sops --version
 
       - name: The image and the tests carry the same binaries
-        # goreleaser decides what the image ships; this job decides what is
-        # tested. A release only means something if they are the same binary,
-        # and nothing else compares the two.
+        # goreleaser decides what the image ships; the workflows decide what
+        # is tested and released, and the Dockerfile what a local build gets.
+        # A release only means something if they are the same binaries, and
+        # nothing else compares them.
         run: |
+          fail=0
           for var in TALOSCTL_VERSION SOPS_VERSION; do
             want=$(grep -oE "^  - ${var}=.*" .goreleaser.yaml | cut -d= -f2)
-            have=$(eval printf '%s' "\$$var")
-            if [ "$want" != "$have" ]; then
-              echo "::error::$var is $have here and $want in .goreleaser.yaml"
-              exit 1
+            for f in .github/workflows/*.yml; do
+              have=$(grep -oE "^  ${var}: .*" "$f" | head -1 | awk '{print $2}')
+              [ -z "$have" ] && continue
+              if [ "$have" != "$want" ]; then
+                echo "::error file=$f::$var is $have here and $want in .goreleaser.yaml"
+                fail=1
+              fi
+            done
+            have=$(grep -oE "^ARG ${var}=.*" Dockerfile | cut -d= -f2)
+            if [ "$have" != "$want" ]; then
+              echo "::error file=Dockerfile::$var is $have here and $want in .goreleaser.yaml"
+              fail=1
             fi
           done
+          exit $fail
 
       - name: Check formatting
         run: |

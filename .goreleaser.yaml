@@ -117,7 +117,9 @@ docker_signs:
     args:
       - sign
       - "--yes"
-      - "${artifact}"
+      # By digest, so the signature is on exactly what was pushed rather
+      # than on whatever the tag names when cosign looks it up.
+      - "${artifact}@${digest}"
     artifacts: all
     output: true
 

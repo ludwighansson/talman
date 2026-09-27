@@ -10,9 +10,10 @@ permissions:
   contents: read
 
 # goreleaser's before hook runs the test suite, and the suite drives these two
-# binaries. Keep them in step with ci.yml: a release that installs neither
-# still passes, because the tests that need them skip -- which turns the gate
-# before a tag is published into a gate that tests nothing.
+# binaries, at the versions ci.yml checks every pin against. A release that
+# installs neither still passes, because the tests that need them skip --
+# which turns the gate before a tag is published into a gate that tests
+# nothing.
 env:
   TALOSCTL_VERSION: v1.14.1
   SOPS_VERSION: v3.13.3
@@ -54,9 +55,6 @@ jobs:
           chmod +x /usr/local/bin/sops
           sops --version
 
-      # The image is multi-arch and built from one runner. Nothing in the
-      # Dockerfile runs -- it copies static binaries out of upstream images --
-      # so buildx crosses architectures without emulation.
       # Signing and the bill of materials. Keyless signing binds the
       # signature to this workflow's identity, so there is no key to hold.
       # cosign-installer v3 installs cosign v2: cosign v3 signs blobs into a
@@ -64,6 +62,11 @@ jobs:
       # verify commands in the README do not use yet.
       - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+
+      # The image is multi-arch and built from one runner, and the Dockerfile
+      # runs apk and adduser in the target architecture, so the other one is
+      # emulated.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
