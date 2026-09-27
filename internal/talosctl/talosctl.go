@@ -255,9 +255,7 @@ func (r *Runner) Output(args ...string) ([]byte, error) {
 //
 // Output is the wrong tool for that: it keeps stderr back unless the command
 // fails, and talosctl's action tracker -- every progress and completion line
-// an upgrade or a reset produces -- writes there. Capturing with Output left a
-// node's block empty, so a parallel pass printed a header per node and nothing
-// underneath it.
+// an upgrade or a reset produces -- writes there.
 //
 // The bytes come back on failure too. What a command managed to say before it
 // died is usually the explanation.

@@ -206,9 +206,8 @@ More in the README: "Rolling changes out safely".`,
 // resetOrder puts workers before control planes.
 //
 // talman reaches a node through the talosconfig endpoints, and those are the
-// control planes. Config order lists control planes first, so a whole-cluster
-// reset used to cut its own path partway through: three control planes wiped,
-// then the first worker's reset proxied through one of them and timed out.
+// control planes: resetting them first would cut the path to every worker
+// after them.
 //
 // It is the right order for the cluster too. A graceful reset asks the node to
 // leave etcd and the Kubernetes API, which needs a control plane still

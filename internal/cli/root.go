@@ -142,10 +142,10 @@ release.`,
 		recorded(newRotateCACmd()),
 		newVersionCmd(),
 	} {
-		cmd.AddCommand(withNodeCompletion(sub))
+		cmd.AddCommand(withNodeSelection(sub))
 
 		for _, nested := range sub.Commands() {
-			withNodeCompletion(nested)
+			withNodeSelection(nested)
 		}
 	}
 
@@ -194,12 +194,9 @@ func newRenderer(cfg *config.Config, submit bool, log *os.File) (*render.Rendere
 // ensureTalosconfig returns the talosconfig every cluster-facing command needs,
 // generating it first when it is not there.
 //
-// It used to fail with "run `talman render` first", which asked the operator
-// to run a command talman can run itself: the file is derived entirely from
-// the secrets bundle and the node list, both of which are already in hand, and
-// nothing about producing it touches the cluster. A fresh checkout of a
-// cluster directory has no output directory at all -- it is gitignored -- so
-// that error met everyone who cloned one and reached for `kubeconfig`.
+// The file comes from the secrets bundle and the node list alone, both in
+// hand, so there is no reason to send the operator to `render` first -- and a
+// fresh checkout has no output directory at all, since it is gitignored.
 //
 // Only a missing file is generated. An existing one is left exactly as it is,
 // because it is also the file an operator may have pointed at a bastion or a

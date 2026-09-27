@@ -37,9 +37,9 @@ func completeNodes(_ *cobra.Command, _ []string, toComplete string) ([]string, c
 	return out, cobra.ShellCompDirectiveNoFileComp
 }
 
-// withNodeCompletion wires completeNodes onto a command's node flag, and gives
+// withNodeSelection wires completeNodes onto a command's node flag, and gives
 // every command whose -n takes a list the -g/--group selector beside it.
-func withNodeCompletion(cmd *cobra.Command) *cobra.Command {
+func withNodeSelection(cmd *cobra.Command) *cobra.Command {
 	f := cmd.Flags().Lookup("node")
 	if f == nil {
 		return cmd
