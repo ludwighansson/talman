@@ -18,9 +18,10 @@ import (
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
-// applyModes are the apply modes talosctl v1.14 accepts. "reboot" was removed
-// in 1.14 and is rejected here with a pointer at the replacement, rather than
-// being passed through to a confusing talosctl error.
+// applyModes are the apply modes talosctl v1.14 accepts, for the help text.
+// talosctl checks the value itself, so a mode a later release adds works as
+// it is. talman gives two of them a meaning of its own: auto may reboot a
+// node, and staged enacts nothing until the next reboot.
 var applyModes = []string{"auto", "no-reboot", "staged", "try"}
 
 func newApplyCmd() *cobra.Command {
@@ -80,14 +81,11 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				return err
 			}
 
+			// Removed in Talos 1.14, and talosctl's own error for it does not
+			// say what replaced it.
 			if mode == "reboot" {
 				return errors.New("--mode=reboot was removed in Talos 1.14; " +
 					"use --mode=auto (apply now, reboot only if required) or --mode=staged")
-			}
-
-			if !slices.Contains(applyModes, mode) {
-				return fmt.Errorf("--mode %q is invalid: must be one of %s",
-					mode, strings.Join(applyModes, ", "))
 			}
 
 			targets, err := selectNodes(cfg, nodes)
@@ -177,32 +175,8 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 			// joining it.
 			states := probeControlPlanes(cfg, tal, tc)
 
-			switch {
-			case bootstrap:
-				configured, err := checkBootstrappable(states)
-				if err != nil {
-					return err
-				}
-
-				if !dryRun {
-					if err := confirmConfigured(cfg, configured, yes); err != nil {
-						return err
-					}
-				}
-			case allNew(states) && !dryRun:
-				return fmt.Errorf("every control plane is new, in maintenance mode: this cluster has not been "+
-					"built yet\n  %s", talmanCmd("apply --bootstrap"))
-			case allNew(states):
-				// A dry run sends a new node nothing, so it can still say
-				// what each would be given.
-				fmt.Fprintf(os.Stderr, "every control plane is new, in maintenance mode: this cluster has not "+
-					"been built yet, and a real run is\n  %s\n", talmanCmd("apply --bootstrap"))
-			case noEtcd(states):
-				// Never bootstrapped, or etcd broken: talman cannot tell, and
-				// refusing would stand in the way of the apply that fixes a
-				// broken one.
-				fmt.Fprintf(os.Stderr, "warning: no control plane runs etcd; if this cluster was never "+
-					"bootstrapped:\n  %s\n", talmanCmd("apply --bootstrap"))
+			if err := checkCluster(cfg, states, bootstrap, dryRun, yes); err != nil {
+				return err
 			}
 
 			// An explicit --insecure (or --insecure=false) is an instruction,
@@ -409,22 +383,20 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				// apply behind it is not.
 				block := header
 
+				// A dry run of this node: worked out here for a new one,
+				// asked of any other.
+				askDryRun := func(args []string) ([]byte, error) {
+					if isNew {
+						return newNodeDiff(file)
+					}
+
+					return tal.Combined(args...)
+				}
+
 				// Metrics ask too: "changed" is what a CI alert most often
 				// wants to know, and without asking it is not known.
 				if askFirst(dryRun, wantsAnswer, diff) {
-					probe := append(slices.Clone(args), "--dry-run")
-
-					var (
-						out []byte
-						err error
-					)
-
-					if isNew {
-						out, err = newNodeDiff(file)
-					} else {
-						out, err = tal.Combined(probe...)
-					}
-
+					out, err := askDryRun(append(slices.Clone(args), "--dry-run"))
 					if err == nil {
 						rec.NodeChanged(n.Hostname, dryRunChanged(out))
 
@@ -462,17 +434,12 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				// what talosctl said under it arrive together: eight nodes in
 				// flight would otherwise interleave, and one node's apply
 				// returns in a breath anyway.
-				var (
-					out []byte
-					err error
-				)
-
-				if isNew && dryRun {
-					out, err = newNodeDiff(file)
-				} else {
-					out, err = tal.Combined(args...)
+				run := tal.Combined
+				if dryRun {
+					run = func(args ...string) ([]byte, error) { return askDryRun(args) }
 				}
 
+				out, err := run(args...)
 				changes := dryRun && dryRunChanged(out)
 
 				if dryRun && err == nil {
@@ -601,14 +568,14 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 				// then everything else, into a cluster that exists.
 				first := cfg.ControlPlanes()[0]
 
-				if dryRun {
-					rest := make([]*config.Node, 0, len(targets))
-					for _, n := range targets {
-						if n != first {
-							rest = append(rest, n)
-						}
+				rest := make([]*config.Node, 0, len(targets))
+				for _, n := range targets {
+					if n != first {
+						rest = append(rest, n)
 					}
+				}
 
+				if dryRun {
 					stages, _, _, err := waves.plan(cfg, rest)
 					if err != nil {
 						return err
@@ -637,13 +604,6 @@ More in the README: "Onboarding new nodes", "Rolling changes out safely" and
 					}
 
 					bootstrapped.Store(true)
-
-					rest := make([]*config.Node, 0, len(targets)-1)
-					for _, n := range targets {
-						if n != first {
-							rest = append(rest, n)
-						}
-					}
 
 					// A resume carries on in the cluster this run made: it
 					// is not a second bootstrap, and its nodes are still
@@ -871,8 +831,8 @@ func newNodeDiff(file string) ([]byte, error) {
 // One call answers both questions. A dry run is already that question, so it
 // asks nothing extra; an apply asks when something wants the answer, and the
 // answer then serves whichever of them asked.
-func askFirst(dryRun, detailed, diff bool) bool {
-	return !dryRun && (detailed || diff)
+func askFirst(dryRun, wantsAnswer, diff bool) bool {
+	return !dryRun && (wantsAnswer || diff)
 }
 
 // dryRunChanged reads talosctl's dry run for whether the node would change.

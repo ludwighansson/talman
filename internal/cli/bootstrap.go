@@ -41,6 +41,39 @@ func bootstrapFlagsAllowed(cmd *cobra.Command, mode string, onlyNew, wait bool) 
 	return nil
 }
 
+// checkCluster checks there is a cluster for the apply to configure, or, for
+// --bootstrap, that there is none yet to split. A cluster not yet bootstrapped
+// is one whose nodes cannot finish joining it.
+func checkCluster(cfg *config.Config, states []cpState, bootstrap, dryRun, yes bool) error {
+	switch {
+	case bootstrap:
+		configured, err := checkBootstrappable(states)
+		if err != nil {
+			return err
+		}
+
+		if !dryRun {
+			return confirmConfigured(cfg, configured, yes)
+		}
+	case allNew(states) && !dryRun:
+		return fmt.Errorf("every control plane is new, in maintenance mode: this cluster has not been "+
+			"built yet\n  %s", talmanCmd("apply --bootstrap"))
+	case allNew(states):
+		// A dry run sends a new node nothing, so it can still say what each
+		// would be given.
+		fmt.Fprintf(os.Stderr, "every control plane is new, in maintenance mode: this cluster has not "+
+			"been built yet, and a real run is\n  %s\n", talmanCmd("apply --bootstrap"))
+	case noEtcd(states):
+		// Never bootstrapped, or etcd broken: talman cannot tell, and
+		// refusing would stand in the way of the apply that fixes a broken
+		// one.
+		fmt.Fprintf(os.Stderr, "warning: no control plane runs etcd; if this cluster was never "+
+			"bootstrapped:\n  %s\n", talmanCmd("apply --bootstrap"))
+	}
+
+	return nil
+}
+
 // cpState is what a control plane answered: which API, and, if it answers
 // with cluster PKI, whether it runs etcd.
 type cpState struct {
