@@ -103,7 +103,7 @@ func TestNotInCluster(t *testing.T) {
 
 		got := strings.Join(notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}, 4), ", ")
 
-		if got != "c02 is maintenance mode" {
+		if got != "c02 is in maintenance mode" {
 			t.Errorf("notInCluster() = %q, want only the node in maintenance mode", got)
 		}
 	})
