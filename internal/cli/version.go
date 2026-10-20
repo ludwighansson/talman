@@ -43,7 +43,7 @@ play will reject them.`,
 						Version string `json:"version,omitempty"`
 						Error   string `json:"error,omitempty"`
 					} `json:"talosctl"`
-				}{Talman: Version}
+				}{Talman: talmanVersion()}
 
 				report.Talosctl.Binary = bin
 				report.Talosctl.Version = version
@@ -55,7 +55,7 @@ play will reject them.`,
 				return writeJSON(out, report)
 			}
 
-			fmt.Fprintf(out, "talman   %s\n", Version)
+			fmt.Fprintf(out, "talman   %s\n", talmanVersion())
 
 			if err != nil {
 				fmt.Fprintf(out, "talosctl %s (not usable: %v)\n", bin, err)

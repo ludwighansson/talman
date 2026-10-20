@@ -103,7 +103,7 @@ func startRun(command string) (*metrics.Run, error) {
 		labels[key] = value
 	}
 
-	return metrics.NewRun(command, Version, labels), nil
+	return metrics.NewRun(command, talmanVersion(), labels), nil
 }
 
 func report(run *metrics.Run) {
