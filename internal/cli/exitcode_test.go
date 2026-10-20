@@ -1391,6 +1391,22 @@ func TestMetricsFlagsOnlyWhereRecorded(t *testing.T) {
 	}
 }
 
+// A metrics URL that could never be pushed to is refused before the run, as a
+// bad label is: found out afterwards, the run's metrics are already lost.
+func TestMetricsURLCheckedFirst(t *testing.T) {
+	_, log := exitFixture(t)
+
+	t.Setenv("TALMAN_METRICS_URL", "metrics.example.com")
+
+	if got := run([]string{"reboot"}); got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "reboot") {
+		t.Errorf("the run went ahead:\n%s", calls)
+	}
+}
+
 // TestRotateCAReadsBackFirst: the bundle is read back out of the cluster
 // before anything rotates, so a cluster talman cannot read it from is refused
 // with nothing changed, rather than left trusting CAs no bundle holds.
