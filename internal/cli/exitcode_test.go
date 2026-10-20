@@ -108,7 +108,7 @@ case " $* " in
 *" get services etcd "*)
 	in_maintenance && exit 1
 	running=${STUB_ETCD:-true}
-	[ -f "$STUB_LOG.bootstrapped" ] && running=true
+	[ -f "$STUB_LOG.bootstrapped" ] && [ -z "$STUB_ETCD_NEVER" ] && running=true
 	printf 'spec:\n    running: %s\n    healthy: %s\n' "$running" "$running" ;;
 *" reboot "*) echo "rebooted" ;;
 *" rotate-ca "*"--dry-run=false"*)
@@ -198,6 +198,7 @@ nodes:
 	t.Setenv("STUB_RACE", "")
 	t.Setenv("STUB_ROTATE_PARTWAY", "")
 	t.Setenv("STUB_ETCD", "")
+	t.Setenv("STUB_ETCD_NEVER", "")
 	t.Setenv("STUB_MAINTENANCE", "none")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
@@ -1653,6 +1654,46 @@ func TestApplyBootstrapWaitsForASilentNode(t *testing.T) {
 
 	if !strings.Contains(stderr, "it may be down") || !strings.Contains(stderr, "re-run once it recovers") {
 		t.Errorf("want the failed wait to say it may be down, and what to do:\n%s", stderr)
+	}
+}
+
+// The hints a stopped bootstrap prints run as printed: -c is said once, the
+// question is asked again, and the carry-on after etcd keeps the run's
+// flags and points at something that shows etcd.
+func TestApplyBootstrapHints(t *testing.T) {
+	dir, _ := bootstrapFixture(t)
+
+	cfgFlag := []string{"-c", filepath.Join(dir, "talman.yaml")}
+	args := append(cfgFlag, "apply", "--bootstrap", "--no-render", "--redact-secrets=false", "--yes",
+		"--stabilize=0s", "--timeout=1ms")
+
+	// The first control plane's apply fails: the whole run again.
+	t.Setenv("STUB_FAIL", "apply-config")
+
+	_, hint := runHint(t, args...)
+	if strings.Count(hint, "talman.yaml") != 1 || strings.Contains(hint, "--yes") ||
+		!strings.HasPrefix(hint, "apply --bootstrap") {
+		t.Errorf("hint %q: want apply --bootstrap, -c once, and no --yes", hint)
+	}
+
+	// Bootstrapped, but etcd never comes up within the wait.
+	t.Setenv("STUB_FAIL", "")
+	t.Setenv("STUB_ETCD_NEVER", "1")
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run(args) })
+	if got != 1 {
+		t.Fatalf("exit %d, want 1\n%s", got, stderr)
+	}
+
+	if !strings.Contains(stderr, "ctl -n c1 service etcd") || strings.Contains(stderr, "talman status shows it") {
+		t.Errorf("want the carry-on to point at the etcd service, not status:\n%s", stderr)
+	}
+
+	if !strings.Contains(stderr, "talman apply --onboard-new-nodes --config=") ||
+		!strings.Contains(stderr, "--timeout=1ms") || strings.Contains(stderr, "--onboard-new-nodes --bootstrap") {
+		t.Errorf("want the carry-on to keep the run's flags, but not --bootstrap:\n%s", stderr)
 	}
 }
 

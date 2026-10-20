@@ -276,8 +276,9 @@ func bootstrapFirst(cmd *cobra.Command, tal *talosctl.Runner, tc string, first *
 	say := func(s string) { fmt.Fprint(os.Stderr, s) }
 
 	// The whole run again, not a list of nodes: until etcd runs there is no
-	// cluster, and the run that builds one is this one.
-	again := "  continue with: " + talmanCmd("apply --bootstrap"+resumeFlags(cmd, "bootstrap"))
+	// cluster, and the run that builds one is this one. Its flags carry -c
+	// already, and its question is asked again rather than answered for it.
+	again := "  continue with: talman apply --bootstrap" + resumeFlags(cmd, "bootstrap", "yes")
 
 	rec.NodeStart(first.Hostname, string(first.Role))
 
@@ -305,8 +306,9 @@ func bootstrapFirst(cmd *cobra.Command, tal *talosctl.Runner, tc string, first *
 
 	if err := waitForEtcd(tal, tc, first, timeout); err != nil {
 		return fmt.Errorf("%w\n  etcd was bootstrapped on %s: do not bootstrap again. Once it runs "+
-			"(talman status shows it), carry on with:\n    %s", err, first.Hostname,
-			talmanCmd("apply --onboard-new-nodes"))
+			"(%s shows it), carry on with:\n    talman apply --onboard-new-nodes%s", err, first.Hostname,
+			talmanCmd("ctl -n "+first.Hostname+" service etcd"),
+			resumeFlags(cmd, "bootstrap", "recover-from", "yes"))
 	}
 
 	return nil
