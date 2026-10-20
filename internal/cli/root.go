@@ -67,8 +67,9 @@ var opts globals
 // Execute runs the root command and returns a process exit code.
 //
 // 0 is success, 1 a failure of any kind -- a usage error included -- 2 a
-// --detailed-exit-code run that changed something, and 130 a run stopped by
-// SIGINT or SIGTERM, which is reported whatever else the command returned.
+// --detailed-exit-code run that changed something, and 128 plus the signal for
+// a run a signal stopped (130 for SIGINT, 143 for SIGTERM), which is reported
+// whatever else the command returned.
 func Execute() int {
 	defer interrupt.Watch()()
 
@@ -129,7 +130,9 @@ to the reserved groups "all" and its role, plus any groups it declares, and the
 patches for those groups are applied in that order.
 
 talman never links against the Talos API: everything that touches a cluster
-goes through the talosctl binary.`,
+goes through the talosctl binary.
+
+The README is the manual: https://github.com/ludwighansson/talman#readme`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       talmanVersion(),
