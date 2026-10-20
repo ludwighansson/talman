@@ -42,8 +42,8 @@ const exitNoKey = 128
 // what to do about it.
 func Ensure() error {
 	if _, err := exec.LookPath(Bin); err != nil {
-		return fmt.Errorf("%w: talman needs it to read and write encrypted secrets "+
-			"(install sops, or keep the bundle unencrypted with --plaintext)", ErrNotInstalled)
+		return fmt.Errorf("%w: talman needs it to read and write encrypted secrets; "+
+			"install it from https://github.com/getsops/sops", ErrNotInstalled)
 	}
 
 	return nil

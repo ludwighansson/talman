@@ -1506,6 +1506,33 @@ func TestLegacyBundleIsNotReplacedByANewOne(t *testing.T) {
 	}
 }
 
+// Without sops, an encrypted bundle cannot be read or written. Only secrets
+// generate has another way -- a bundle written unencrypted -- so only it
+// offers --plaintext.
+func TestWithoutSops(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	saved := sopsx.Bin
+	sopsx.Bin = "talman-test-sops-that-is-not-there"
+
+	t.Cleanup(func() { sopsx.Bin = saved })
+
+	stderr := captureStderr(t, func() { run([]string{"secrets", "generate"}) })
+	if !strings.Contains(stderr, "sops not found on PATH") || !strings.Contains(stderr, "--plaintext") {
+		t.Errorf("secrets generate without sops said:\n%s", stderr)
+	}
+
+	bundle := "cluster: {}\nsops:\n    version: 3.13.3\n"
+	if err := os.WriteFile(filepath.Join(dir, "secrets.sops.yaml"), []byte(bundle), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stderr = captureStderr(t, func() { run([]string{"render", "--dry-run"}) })
+	if !strings.Contains(stderr, "is SOPS-encrypted but sops not found on PATH") || strings.Contains(stderr, "--plaintext") {
+		t.Errorf("render of an encrypted bundle without sops said:\n%s", stderr)
+	}
+}
+
 // -n picks nodes; the order they go in is the config's, as the help says.
 func TestNodeSelectionIsConfigOrder(t *testing.T) {
 	_, log := exitFixtureWith(t, waveNodes)

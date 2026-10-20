@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,6 +89,12 @@ More in the README: "Secrets".`,
 
 			if !plaintext {
 				if out, err = sopsx.EncryptTo(bundle, dest); err != nil {
+					// Here, and only here, there is another way: a bundle
+					// for a cluster that is thrown away needs no key.
+					if errors.Is(err, sopsx.ErrNotInstalled) {
+						return fmt.Errorf("%w, or write the bundle unencrypted with --plaintext", err)
+					}
+
 					return err
 				}
 			}
