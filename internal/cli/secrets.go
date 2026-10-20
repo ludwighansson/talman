@@ -37,7 +37,9 @@ the destination path.
 It refuses to overwrite an existing bundle: the certificate authorities and
 cluster identity in it are what a running cluster trusts, so replacing them
 orphans every node. Use --from-controlplane-config to adopt the secrets of a
-cluster that already exists.`,
+cluster that already exists.
+
+More in the README: "Secrets".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()

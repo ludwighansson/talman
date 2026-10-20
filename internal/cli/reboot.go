@@ -112,7 +112,7 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	cmd.Flags().StringVarP(&mode, "mode", "m", "default",
 		"reboot mode: default, powercycle (bypass kexec) or force (skip graceful shutdown)")
 	cmd.Flags().BoolVar(&wait, "wait", true, "wait for each node to come back before moving on")

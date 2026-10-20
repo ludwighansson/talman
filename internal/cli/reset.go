@@ -186,7 +186,7 @@ More in the README: "Rolling changes out safely".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().BoolVar(&graceful, "graceful", true, "leave etcd cleanly before resetting")
 	cmd.Flags().BoolVar(&direct, "direct", true,

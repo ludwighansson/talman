@@ -219,8 +219,8 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
-	cmd.Flags().BoolVar(&submit, "submit", false, "register schematics with the Image Factory first")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
+	cmd.Flags().BoolVar(&submit, "submit", false, "register each schematic with the Image Factory and use the ID it returns, rather than computing it offline")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"upgrade even when the node already runs the configured version and schematic")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
@@ -264,7 +264,9 @@ to upgrade -- which is what running the command would do. Pass --force to run
 the upgrade regardless, or --force --dry-run for talosctl's own plan.
 
 --detailed-exit-code reports which of the two happened: 2 when the upgrade ran,
-0 when every node was already on the target, 1 on error.`,
+0 when every node was already on the target, 1 on error.
+
+More in the README: "Rolling changes out safely".`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			rec := currentRun

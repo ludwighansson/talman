@@ -29,7 +29,9 @@ as a template to prove it compiles and produces strategic merge patches.
 It reports every problem it finds rather than stopping at the first, and needs
 neither the secrets bundle nor a reachable cluster. An encrypted patch is
 template-checked when sops can decrypt it, and named as unchecked when it
-cannot, so validate runs without decryption keys too.`,
+cannot, so validate runs without decryption keys too.
+
+More in the README: "Configuration", "Patches".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()

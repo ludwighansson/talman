@@ -30,7 +30,10 @@ chain, writing complete machine configurations to the output directory.
 
 The secrets bundle is decrypted into a private temporary directory for the
 duration of the run and removed afterwards; the decrypted bundle is not written
-to the output directory or the repository.`,
+to the output directory or the repository.
+
+More in the README: "When a patch is rejected", "Reaching talosctl flags talman
+does not model".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
@@ -100,9 +103,9 @@ to the output directory or the repository.`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil,
-		"render only these nodes (hostname or IP; repeatable)")
+		"limit to these nodes, by hostname or IP (repeatable)")
 	cmd.Flags().BoolVar(&submit, "submit", false,
-		"POST schematics to the Image Factory and use the returned IDs instead of computing them locally")
+		"register each schematic with the Image Factory and use the ID it returns, rather than computing it offline")
 	cmd.Flags().BoolVar(&noValidate, "no-validate", false,
 		"skip talosctl validate on each rendered config")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,

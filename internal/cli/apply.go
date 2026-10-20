@@ -703,7 +703,7 @@ out safely" and "Exit codes for CI".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	addWaveFlags(cmd, &waves)
 	cmd.Flags().StringVarP(&mode, "mode", "m", "auto",
 		"apply mode: "+strings.Join(applyModes, ", "))
