@@ -127,8 +127,8 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 
 					if upToDate(current, want, ctx.Node.SchematicID) {
 						rec.NodeChanged(n.Hostname, false)
-						say(fmt.Sprintf("== %s (%s) already runs %s with schematic %s; skipping\n",
-							n.Hostname, n.IPAddress, current.TalosVersion, short(current.SchematicID)))
+						say(fmt.Sprintf("== %s (%s) already runs %s; skipping\n",
+							n.Hostname, n.IPAddress, describeState(current)))
 
 						countMu.Lock()
 						skipped++

@@ -493,9 +493,18 @@ func TestUpgradeDoesOnlyWhatItMust(t *testing.T) {
 
 	_, log := exitFixtureWith(t, workers)
 
-	if got := run([]string{"upgrade", "--snapshot", "--detailed-exit-code"}); got != 0 {
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"upgrade", "--snapshot", "--detailed-exit-code"}) })
+	if got != 0 {
 		calls, _ := os.ReadFile(log)
 		t.Fatalf("an up-to-date cluster gave exit %d\n%s", got, calls)
+	}
+
+	// The stub's nodes report no schematic, as one installed from something
+	// other than a factory image does: nothing to name.
+	if !strings.Contains(stderr, "== w1 (10.0.0.2) already runs v1.14.1; skipping") {
+		t.Errorf("want the skip to say what the node runs, and no empty schematic:\n%s", stderr)
 	}
 
 	calls, _ := os.ReadFile(log)
