@@ -36,6 +36,9 @@ More in the README: "Everything else talosctl does".`,
 		// not know even when it comes before the first argument that is
 		// talosctl's.
 		DisableFlagParsing: true,
+		// Which also keeps cobra from completing -n and -g, so it is done
+		// here.
+		ValidArgsFunction: completePassthrough,
 		RunE: func(cmd *cobra.Command, raw []string) error {
 			nodes, args, help, err := passthroughArgs(raw)
 			if err != nil {
