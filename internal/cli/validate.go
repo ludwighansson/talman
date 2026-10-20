@@ -100,8 +100,10 @@ cannot, so validate runs without decryption keys too.`,
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "%s is valid: %d nodes, %d patch files\n",
-				filepath.Base(cfg.Path), len(cfg.Nodes), len(cfg.AllPatchPaths()))
+			nodes, files := len(cfg.Nodes), len(cfg.AllPatchPaths())
+
+			fmt.Fprintf(cmd.OutOrStdout(), "%s is valid: %d %s, %d %s\n", filepath.Base(cfg.Path),
+				nodes, plural(nodes, "node", "nodes"), files, plural(files, "patch file", "patch files"))
 
 			return nil
 		},
@@ -209,5 +211,9 @@ func checkPatch(ref config.PatchRef, raw []byte, ctx template.Context) error {
 		return fmt.Errorf("patches.%s: %w", ref.Group, err)
 	}
 
-	return patch.CheckStrategicMerge(ref.Rel, rendered)
+	if err := patch.CheckStrategicMerge(ref.Rel, rendered); err != nil {
+		return fmt.Errorf("patches.%s: %w", ref.Group, err)
+	}
+
+	return nil
 }

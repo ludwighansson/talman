@@ -177,7 +177,7 @@ nodes:
 	for _, want := range []string{
 		"error: 2 problems:\n  all 3 nodes: patches.all: ./all.yaml",
 		"\n      a key that may be missing is read with index",
-		"\n  node w1: ./db.yaml",
+		"\n  node w1: patches.db: ./db.yaml: document 1 is not valid YAML",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("validate does not say %q:\n%s", want, stderr)
