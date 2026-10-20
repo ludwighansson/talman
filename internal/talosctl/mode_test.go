@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeTalosctl writes a talosctl stand-in that records its argv and exits with
@@ -324,5 +325,17 @@ OUT
 
 	if want := "version: v1alpha1\nmachine:\n    ca:\n        crt: bmV3\n"; string(got) != want {
 		t.Errorf("MachineConfig() = %q, want %q", got, want)
+	}
+}
+
+// A node that is back by the deadline is given the rest of its stabilize
+// window: failing it at the deadline failed a node that was up and steady,
+// for having answered late in the wait.
+func TestWaitReadyFinishesTheWindowPastTheDeadline(t *testing.T) {
+	r, _ := fakeTalosctl(t, true, false)
+
+	if err := r.WaitReady("/tmp/tc", "10.0.0.1", 100*time.Millisecond, time.Nanosecond,
+		func(string, ...any) {}); err != nil {
+		t.Errorf("WaitReady() = %v, want the node that answered to be held to its window", err)
 	}
 }

@@ -290,6 +290,17 @@ func runTalosctl(tal *talosctl.Runner, grouped bool, header string, say func(str
 	return nil
 }
 
+// positive refuses a wait that cannot mean what it says: none at all fails
+// every node before it can answer, and a negative one is a typo that would
+// otherwise read as no wait.
+func positive(flag string, d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--%s %s: it must be longer than zero", flag, d)
+	}
+
+	return nil
+}
+
 // pastTense is what a resume hint says the nodes left were not: a dry run
 // left them unchecked, which is not the same as not upgraded.
 func pastTense(dryRun bool, done string) string {

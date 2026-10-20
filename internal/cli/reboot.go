@@ -41,7 +41,7 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				return fmt.Errorf("--mode %q is invalid: must be one of %s", mode, strings.Join(rebootModes, ", "))
 			}
 
-			return nil
+			return positive("timeout", timeout)
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun

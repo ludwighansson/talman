@@ -542,7 +542,16 @@ func (r *Runner) WaitReady(talosconfig, node string, stabilize, timeout time.Dur
 			}
 		}
 
-		if time.Now().After(deadline) {
+		// A node that is back is given its whole window to prove it stays,
+		// even past the deadline: cut short, a node that answered in the
+		// last half minute of a ten-minute wait failed for answering late,
+		// up and steady as it was.
+		limit := deadline
+		if !steadySince.IsZero() && steadySince.Add(stabilize).After(limit) {
+			limit = steadySince.Add(stabilize)
+		}
+
+		if time.Now().After(limit) {
 			return fmt.Errorf("node %s did not stay reachable for %s within %s "+
 				"(--timeout waits longer; a node installing Talos for the first time pulls an "+
 				"installer image before it can reboot)", node, stabilize, timeout)

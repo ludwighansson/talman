@@ -56,6 +56,10 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				}
 			}
 
+			if err := positive("timeout", timeout); err != nil {
+				return err
+			}
+
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
