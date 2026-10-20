@@ -126,9 +126,11 @@ func (ro rollOut) run(do one) error {
 	// them, or --wave left them out. The run's end is then a boundary between
 	// waves like any other, and is soaked and gated as one -- a canary is only
 	// worth stopping at if something looked at it before the run that goes
-	// on from it.
+	// on from it. The operator's choice, not a later wave merely holding
+	// nothing for this run: --only-new-nodes leaves out the waves with no new
+	// node in them, and nothing carries on from there.
 	last := stages[len(stages)-1]
-	more := ro.thenFrom != "" || last.Number < last.Of
+	more := ro.thenFrom != "" || (ro.cmd.Flags().Changed("wave") && last.Number < last.Of)
 
 	var (
 		done      int
@@ -457,6 +459,39 @@ func (w waveFlags) plan(cfg *config.Config, targets []*config.Node) ([]config.St
 	}
 
 	return kept, left, thenFrom, nil
+}
+
+// keepNodes is stages holding only the nodes in keep, and without the stages
+// that leaves empty.
+//
+// Each stage keeps its number, rather than the waves being planned again from
+// what is left: a wave is still the second of four with some of its nodes
+// left out, and a heading reading 1/1 before "stopped before wave green" says
+// two things at once.
+func keepNodes(stages []config.Staged, keep []*config.Node) []config.Staged {
+	in := make(map[*config.Node]bool, len(keep))
+	for _, n := range keep {
+		in[n] = true
+	}
+
+	var out []config.Staged
+
+	for _, st := range stages {
+		var nodes []*config.Node
+
+		for _, n := range st.Nodes {
+			if in[n] {
+				nodes = append(nodes, n)
+			}
+		}
+
+		if len(nodes) > 0 {
+			st.Nodes = nodes
+			out = append(out, st)
+		}
+	}
+
+	return out
 }
 
 // completeWaves offers the groups the rollout's waves name.
