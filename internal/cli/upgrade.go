@@ -273,6 +273,20 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 			// kubelet image tag are both written either way.
 			version = strings.TrimPrefix(version, "v")
 
+			// A cluster left on a version the config does not name is one
+			// the next apply takes back: every machine config it renders
+			// carries kubernetesVersion, and sending them moves Kubernetes
+			// back down to it.
+			undone := func() {
+				if dryRun || k8sUpToDate(version, cfg.KubernetesVersion) {
+					return
+				}
+
+				fmt.Fprintf(os.Stderr, "warning: talman.yaml still says kubernetesVersion: %s, and the configs "+
+					"the next apply sends would take the cluster back to it: set it to v%s\n",
+					withV(cfg.KubernetesVersion), version)
+			}
+
 			if !force {
 				current, err := clusterRunsK8s(tal, tc, cfg.Nodes, version)
 				if err != nil {
@@ -283,6 +297,7 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 					fmt.Fprintf(os.Stderr, "nothing to upgrade: every node already runs Kubernetes v%s "+
 						"(use --force to upgrade anyway)\n", version)
 					rec.SetChanged(false)
+					undone()
 
 					return nil
 				}
@@ -312,6 +327,7 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 			}
 
 			rec.SetChanged(true)
+			undone()
 
 			if detailed {
 				return errChanged
