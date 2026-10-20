@@ -176,11 +176,13 @@ release:
     go install github.com/ludwighansson/talman/cmd/talman@{{ .Tag }}
     ```
 
-    talman drives the `talosctl` binary; install that too.
+    talman drives the `talosctl` binary, and `sops` for an encrypted bundle;
+    install those too.
 
-    Or take the image, which carries talosctl and sops with it:
+    Or take the image, which carries both. From the root of the repository,
+    with the cluster in `development/`:
 
     ```console
-    docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
+    docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" -w /cluster/development \
       ghcr.io/ludwighansson/talman:{{ .Version }} validate
     ```
