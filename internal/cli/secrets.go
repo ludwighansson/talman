@@ -61,6 +61,14 @@ More in the README: "Secrets".`,
 				}
 			}
 
+			// A bundle under its old name is as much the cluster's as one
+			// at the default, and a new one beside it would be read instead.
+			// --force replaces a bundle; it does not reach this one.
+			if legacy := cfg.LegacySecret(); legacy != "" && !toStdout {
+				return fmt.Errorf("%s; a new bundle beside it would hold new CAs the cluster does not trust "+
+					"(for a new cluster, move it aside first)", cfg.LegacySecretHint(legacy))
+			}
+
 			bundle, err := tal.GenSecrets(talosctl.GenSecretsOptions{
 				TalosVersion:           cfg.TalosVersion,
 				FromControlPlaneConfig: fromConfig,

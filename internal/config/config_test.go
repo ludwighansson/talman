@@ -1195,3 +1195,37 @@ func TestOutputDirMustBeItsOwn(t *testing.T) {
 		}
 	}
 }
+
+// A bundle left under talhelper's name, or an early talman's, is found when
+// nothing is at the default -- and only then: a bundle at the default, or a
+// secretFile naming one, is the config's answer.
+func TestLegacySecret(t *testing.T) {
+	const nodes = `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.1
+    role: controlplane
+`
+
+	for _, tt := range []struct {
+		name  string
+		extra string
+		files []string
+		want  string
+	}{
+		{"only the old name", "", []string{LegacySecretFile}, LegacySecretFile},
+		{"both names", "", []string{LegacySecretFile, DefaultSecretFile}, ""},
+		{"neither", "", nil, ""},
+		{"secretFile names another", "secretFile: other.sops.yaml\n", []string{LegacySecretFile}, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Load(write(t, validBase+tt.extra+nodes, tt.files...))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := cfg.LegacySecret(); got != tt.want {
+				t.Errorf("LegacySecret() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
