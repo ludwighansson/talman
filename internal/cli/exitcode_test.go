@@ -1103,6 +1103,37 @@ func TestRolloutHintsCarryOn(t *testing.T) {
 	}
 }
 
+// TestUntilHintComesLast: the command that carries on is the last thing a
+// run stopped by --until prints, after the command's own summary.
+func TestUntilHintComesLast(t *testing.T) {
+	dir, _ := exitFixtureWith(t, waveNodes+`rollout:
+  waves: [controlplane, blue, green]
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "b1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		// Every node already on its version: "nothing to upgrade" first.
+		{"upgrade", "--until", "blue"},
+		// "configs staged" first.
+		{"apply", "--no-render", "--redact-secrets=false", "--mode=staged", "--until", "blue"},
+	} {
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(args) })
+		if got != 0 {
+			t.Fatalf("%v: exit %d\n%s", args, got, stderr)
+		}
+
+		lines := strings.Split(strings.TrimSpace(stderr), "\n")
+		if last := lines[len(lines)-1]; !strings.HasPrefix(last, "  continue with: talman "+args[0]+" --from green") {
+			t.Errorf("%v: last line %q, want the command that carries on:\n%s", args, last, stderr)
+		}
+	}
+}
+
 // TestApplyUntilHints: apply plans its waves twice, around --only-new-nodes,
 // and the hint still names the wave --until stopped short of.
 func TestApplyUntilHints(t *testing.T) {

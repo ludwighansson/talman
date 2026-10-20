@@ -693,6 +693,8 @@ out safely" and "Exit codes for CI".`,
 					configArg(), nodeArgs(targets, len(cfg.Nodes)))
 			}
 
+			ro.carryOn()
+
 			if detailed && changed {
 				return errChanged
 			}

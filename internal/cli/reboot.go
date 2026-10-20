@@ -93,17 +93,20 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				return true, nil
 			}
 
-			if err := (rollOut{
+			ro := rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
 				verb: "reboot", done: "rebooted",
 				targets: targets, parallel: parallel,
 				health: health, timeout: timeout, waits: wait,
 				stages: stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
-			}).run(rebootOne); err != nil {
+			}
+
+			if err := ro.run(rebootOne); err != nil {
 				return err
 			}
 
 			rec.SetChanged(len(targets) > 0)
+			ro.carryOn()
 
 			return nil
 		},

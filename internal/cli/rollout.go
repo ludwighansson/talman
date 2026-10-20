@@ -250,11 +250,16 @@ func (ro rollOut) run(do one) error {
 		}
 	}
 
+	return nil
+}
+
+// carryOn says where a run --until stopped carries on from. Commands say it
+// last, after their own summary, so the command to type next is the last
+// thing printed.
+func (ro rollOut) carryOn() {
 	if ro.thenFrom != "" {
 		fmt.Fprintf(os.Stderr, "\nstopped before wave %s, as --until asked\n%s\n", ro.thenFrom, ro.fromHint())
 	}
-
-	return nil
 }
 
 // resumeFlags is the command's flags for a hint that carries on with --from:
