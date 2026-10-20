@@ -105,7 +105,7 @@
           ]
         },
         "protocol": {
-          "description": "The protocol schematics are submitted over. Default: https.",
+          "description": "The scheme schematics are submitted over with --submit, and boot media URLs are spelled with. Default: https.",
           "type": [
             "string",
             "number",
