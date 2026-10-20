@@ -88,7 +88,7 @@ func run(args []string) int {
 		// because of the same signal, and said whatever it had to.
 		var exit exitCodeError
 		if err != nil && !errors.Is(err, errChanged) && !errors.As(err, &exit) {
-			fmt.Fprintln(os.Stderr, "error: "+err.Error())
+			fmt.Fprintln(os.Stderr, errorText(err))
 		}
 
 		fmt.Fprintln(os.Stderr, "interrupted")
@@ -110,12 +110,47 @@ func run(args []string) int {
 
 		// SilenceErrors is set, so this is the only place any error is
 		// printed, cobra's own usage errors included.
-		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		fmt.Fprintln(os.Stderr, errorText(err))
 
 		return 1
 	}
 
 	return 0
+}
+
+// errorText is how an error is printed: on its own line, or, when it is
+// several problems reported together, as a list of them under their count.
+//
+// Joined errors read one per line, so after "error: " they came out as one
+// error and a run of unmarked lines, and one that ran to several lines of its
+// own -- a rejection talosctl quotes, a hint -- could not be told from the
+// next. Each problem now starts its own item, and its later lines sit under it.
+func errorText(err error) string {
+	many, ok := err.(interface{ Unwrap() []error })
+	if !ok || len(many.Unwrap()) < 2 {
+		return "error: " + err.Error()
+	}
+
+	errs := many.Unwrap()
+
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "error: %d problems:", len(errs))
+
+	for _, e := range errs {
+		for i, line := range strings.Split(e.Error(), "\n") {
+			switch {
+			case line == "":
+				b.WriteString("\n")
+			case i == 0:
+				b.WriteString("\n  " + line)
+			default:
+				b.WriteString("\n    " + line)
+			}
+		}
+	}
+
+	return b.String()
 }
 
 func newRootCmd() *cobra.Command {

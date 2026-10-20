@@ -40,7 +40,7 @@ cannot, so validate runs without decryption keys too.`,
 			// Config-level checks passed. Now prove the templates render:
 			// a broken template is just as fatal as a missing file, and
 			// finding out at apply time is far worse.
-			var problems []error
+			var problems nodeProblems
 
 			// One renderer for the pass: it caches schematic IDs, so a
 			// per-node renderer re-reads, re-templates and re-hashes a
@@ -57,7 +57,13 @@ cannot, so validate runs without decryption keys too.`,
 
 				ctx, err := r.Context(n)
 				if err != nil {
-					problems = append(problems, err)
+					// Context names the node itself; the problem is what it
+					// wraps.
+					if inner := errors.Unwrap(err); inner != nil {
+						err = inner
+					}
+
+					problems.add(n.Hostname, err)
 
 					continue
 				}
@@ -65,7 +71,7 @@ cannot, so validate runs without decryption keys too.`,
 				for _, ref := range cfg.PatchChain(n) {
 					raw, err := patches.read(ref)
 					if err != nil {
-						problems = append(problems, fmt.Errorf("node %s: %w", n.Hostname, err))
+						problems.add(n.Hostname, err)
 
 						continue
 					}
@@ -75,7 +81,7 @@ cannot, so validate runs without decryption keys too.`,
 					}
 
 					if err := checkPatch(ref, raw, ctx); err != nil {
-						problems = append(problems, fmt.Errorf("node %s: %w", n.Hostname, err))
+						problems.add(n.Hostname, err)
 					}
 				}
 			}
@@ -89,12 +95,9 @@ cannot, so validate runs without decryption keys too.`,
 					"so its template was not checked (%s)\n", rel, why)
 			}
 
-			if len(problems) > 0 {
-				for _, p := range problems {
-					fmt.Fprintln(os.Stderr, "  "+p.Error())
-				}
-
-				return fmt.Errorf("%d problem(s) in %s", len(problems), filepath.Base(cfg.Path))
+			// Listed as every other set of problems is, by errorText.
+			if err := problems.join(len(cfg.Nodes)); err != nil {
+				return err
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "%s is valid: %d nodes, %d patch files\n",
@@ -105,6 +108,55 @@ cannot, so validate runs without decryption keys too.`,
 	}
 
 	return cmd
+}
+
+// nodeProblems collects what validate finds, node by node, and reports a
+// problem once for all the nodes that share it: a broken patch in `all` is one
+// problem, not one per node, and on a fifty-node cluster fifty identical lines
+// would bury whatever else is wrong.
+type nodeProblems struct {
+	order  []string
+	hosts  map[string][]string
+	errors map[string]error
+}
+
+func (p *nodeProblems) add(host string, err error) {
+	if p.hosts == nil {
+		p.hosts = map[string][]string{}
+		p.errors = map[string]error{}
+	}
+
+	text := err.Error()
+
+	if _, seen := p.hosts[text]; !seen {
+		p.order = append(p.order, text)
+		p.errors[text] = err
+	}
+
+	p.hosts[text] = append(p.hosts[text], host)
+}
+
+// join is the problems as one error, each naming the nodes it was found on:
+// in the order they were first found, which is config order.
+func (p *nodeProblems) join(nodes int) error {
+	errs := make([]error, 0, len(p.order))
+
+	for _, text := range p.order {
+		hosts := p.hosts[text]
+
+		which := "node " + hosts[0]
+
+		switch {
+		case len(hosts) == nodes && nodes > 1:
+			which = fmt.Sprintf("all %d nodes", nodes)
+		case len(hosts) > 1:
+			which = "nodes " + strings.Join(hosts, ", ")
+		}
+
+		errs = append(errs, fmt.Errorf("%s: %w", which, p.errors[text]))
+	}
+
+	return errors.Join(errs...)
 }
 
 // patchReader reads each patch once however many nodes use it: a patch in
