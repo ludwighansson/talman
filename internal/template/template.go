@@ -126,6 +126,8 @@ func cleanErr(err error, name string) error {
 	msg = strings.TrimPrefix(msg, "template: "+name+":")
 	msg = executingRE.ReplaceAllString(msg, "")
 	msg = strings.ReplaceAll(msg, "in type template.Context", "in the patch template context")
+	msg = strings.ReplaceAll(msg, "in type template.Node", "in .Node")
+	msg = strings.ReplaceAll(msg, "in type template.Cluster", "in .Cluster")
 
 	return fmt.Errorf("%s", msg)
 }
