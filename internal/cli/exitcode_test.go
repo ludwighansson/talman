@@ -939,6 +939,61 @@ func TestRolloutWaves(t *testing.T) {
 	}
 }
 
+// TestRunEndingBeforeTheLastWaveIsGated: a run that stops at a wave with
+// more to come -- --until, or a --wave short of the last -- gates after it,
+// since the run that carries on starts with no gate of its own. A run that
+// reaches the last wave has nothing left to protect.
+func TestRunEndingBeforeTheLastWaveIsGated(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes+`rollout:
+  soak: 10ms
+  waves:
+    - controlplane
+    - blue
+    - [green, pink]
+`)
+
+	for _, tt := range []struct {
+		args  []string
+		gates int
+	}{
+		// After controlplane, and after blue: the canary.
+		{[]string{"reboot", "--health", "--until", "blue"}, 2},
+		{[]string{"reboot", "--health", "--wave", "blue"}, 1},
+		// Between g1 and p1, and before the rest; nothing after the rest,
+		// the last wave.
+		{[]string{"reboot", "--health", "--from", "green"}, 2},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			_ = os.WriteFile(log, nil, 0o644)
+
+			var got int
+
+			stderr := captureStderr(t, func() { got = run(tt.args) })
+			if got != 0 {
+				t.Fatalf("exit %d\n%s", got, stderr)
+			}
+
+			calls, _ := os.ReadFile(log)
+			if n := strings.Count(string(calls), " health "); n != tt.gates {
+				t.Errorf("health gate ran %d time(s), want %d:\n%s", n, tt.gates, stderr)
+			}
+		})
+	}
+
+	// A canary that fails its gate says how to carry on once the cluster is
+	// healthy, not that no nodes were left.
+	t.Setenv("STUB_FAIL", "health")
+
+	got, hint := runHint(t, "reboot", "--health", "-g", "worker", "--until", "blue")
+	if got != 1 {
+		t.Errorf("exit %d, want 1: the gate after the canary failed", got)
+	}
+
+	if !strings.HasPrefix(hint, "reboot --from green") {
+		t.Errorf("hint %q, want one carrying on with --from green", hint)
+	}
+}
+
 // Without rollout in the config, the wave flags have nothing to select from.
 func TestWaveFlagsNeedARollout(t *testing.T) {
 	exitFixture(t)

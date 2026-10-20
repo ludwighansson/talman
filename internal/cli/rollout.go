@@ -78,6 +78,16 @@ func (ro rollOut) hint(left []*config.Node) string {
 	return resumeHint(ro.verb, ro.done, left, ro.hintFlags(left)...)
 }
 
+// fromHint is the command that carries on from the wave --until stopped short
+// of, or nothing when it stopped short of none.
+func (ro rollOut) fromHint() string {
+	if ro.thenFrom == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("  continue with: talman %s --from %s%s", ro.verb, ro.thenFrom, resumeFlags(ro.cmd, "until"))
+}
+
 // one does a single node's work. grouped says its output is captured with a
 // batch's rather than streamed, and acted whether it changed anything, which
 // is what decides if the health gate has something to check after the batch.
@@ -112,11 +122,35 @@ func (ro rollOut) run(do one) error {
 		ro.targets = append(ro.targets, st.Nodes...)
 	}
 
+	// Waves after the last one this run reaches: --until stopped short of
+	// them, or --wave left them out. The run's end is then a boundary between
+	// waves like any other, and is soaked and gated as one -- a canary is only
+	// worth stopping at if something looked at it before the run that goes
+	// on from it.
+	last := stages[len(stages)-1]
+	more := ro.thenFrom != "" || last.Number < last.Of
+
 	var (
 		done      int
 		mu        sync.Mutex
 		succeeded = map[string]bool{}
 	)
+
+	// stopped adds to err what a run that stops here leaves undone: the
+	// nodes after this point, or, once it has reached them all, the waves
+	// --until stopped short of.
+	stopped := func(err error) error {
+		hint := ro.fromHint()
+		if done < len(ro.targets) {
+			hint = ro.hint(ro.targets[done:])
+		}
+
+		if hint == "" {
+			return err
+		}
+
+		return fmt.Errorf("%w\n%s", err, hint)
+	}
 
 	gate := func(after []*config.Node) error {
 		if ro.standDown != nil && ro.standDown() {
@@ -126,9 +160,7 @@ func (ro rollOut) run(do one) error {
 		fmt.Fprintf(os.Stderr, "%schecking cluster health before continuing\n", detail)
 
 		if err := clusterHealth(ro.cfg, ro.tal, ro.tc, ro.timeout); err != nil {
-			return fmt.Errorf("cluster is unhealthy after %s %s: %w\n%s",
-				gerund(ro.verb), names(after), err,
-				ro.hint(ro.targets[done:]))
+			return stopped(fmt.Errorf("cluster is unhealthy after %s %s: %w", gerund(ro.verb), names(after), err))
 		}
 
 		return nil
@@ -175,9 +207,10 @@ func (ro rollOut) run(do one) error {
 			done += len(batch)
 			actedInWave = actedInWave || acted
 
-			// Nothing is gated after the last node: by then there is
-			// nothing left for the gate to protect.
-			if ro.inert || done == len(ro.targets) {
+			// Nothing is gated after the last node -- by then there is
+			// nothing left for the gate to protect -- unless waves come after
+			// it, which the run that carries on will reach.
+			if ro.inert || (done == len(ro.targets) && !more) {
 				continue
 			}
 
@@ -205,8 +238,7 @@ func (ro rollOut) run(do one) error {
 				fmt.Fprintf(os.Stderr, "%swave %s done; soaking %s before the next\n", detail, st.Name(), ro.soak)
 
 				if err := interrupt.Sleep(ro.soak); err != nil {
-					return fmt.Errorf("stopped soaking after wave %s: %w\n%s", st.Name(), err,
-						ro.hint(ro.targets[done:]))
+					return stopped(fmt.Errorf("stopped soaking after wave %s: %w", st.Name(), err))
 				}
 			}
 
@@ -219,8 +251,7 @@ func (ro rollOut) run(do one) error {
 	}
 
 	if ro.thenFrom != "" {
-		fmt.Fprintf(os.Stderr, "\nstopped before wave %s, as --until asked\n  continue with: talman %s --from %s%s\n",
-			ro.thenFrom, ro.verb, ro.thenFrom, resumeFlags(ro.cmd, "until"))
+		fmt.Fprintf(os.Stderr, "\nstopped before wave %s, as --until asked\n%s\n", ro.thenFrom, ro.fromHint())
 	}
 
 	return nil
