@@ -1054,7 +1054,7 @@ version and schematic already match what the config resolves to:
 
 ```console
 $ talman upgrade
-== development-control-01 (10.0.0.11) already runs v1.14.0 with schematic 079113ce0508; skipping
+== development-control-01 (10.0.0.11) already runs v1.14.0 (schematic 079113ce0508); skipping
 == development-worker-01 (10.0.0.21): v1.13.5 (schematic 079113ce0508) -> v1.14.0
    image factory.talos.dev/openstack-installer/079113ce0508…:v1.14.0
 ```
