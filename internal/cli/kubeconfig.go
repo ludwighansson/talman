@@ -99,7 +99,7 @@ overwritten, because it is a generated artefact of this cluster directory.`,
 		},
 	}
 
-	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to fetch from (default: the first one)")
+	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to fetch from (default: the first that answers)")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing context when merging")
 	cmd.Flags().BoolVar(&merge, "merge", true,
 		"merge into a destination you name, rather than replacing it")

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/ludwighansson/talman/internal/config"
@@ -9,16 +8,26 @@ import (
 )
 
 // controlPlaneTarget resolves the control plane node a cluster-wide command
-// should talk to.
+// should talk to: the one named, or else the first in the config that
+// answers.
+//
+// The first that answers rather than the first listed: a command that acts on
+// the cluster as a whole, driven through the one control plane that happens
+// to be down, fails on that machine while the rest of the cluster serves.
 func controlPlaneTarget(name string) (*config.Config, *talosctl.Runner, string, *config.Node, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
 
-	target, err := controlPlane(cfg, name)
-	if err != nil {
-		return nil, nil, "", nil, err
+	var target *config.Node
+
+	// Named, it is checked before anything is generated: a mistyped name
+	// should not cost decrypting the bundle.
+	if name != "" {
+		if target, err = controlPlane(cfg, name); err != nil {
+			return nil, nil, "", nil, err
+		}
 	}
 
 	tc, err := ensureTalosconfig(cfg)
@@ -26,7 +35,15 @@ func controlPlaneTarget(name string) (*config.Config, *talosctl.Runner, string, 
 		return nil, nil, "", nil, err
 	}
 
-	return cfg, runner(cfg), tc, target, nil
+	tal := runner(cfg)
+
+	if target == nil {
+		if target, err = healthNode(cfg, tal, tc); err != nil {
+			return nil, nil, "", nil, err
+		}
+	}
+
+	return cfg, tal, tc, target, nil
 }
 
 // clusterState is what talman could establish about whether a cluster exists.
@@ -68,18 +85,8 @@ func askCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string) cl
 	return state
 }
 
-// controlPlane resolves a named control plane node, or the first one in the
-// config when nothing is named.
+// controlPlane resolves a named control plane node.
 func controlPlane(cfg *config.Config, name string) (*config.Node, error) {
-	if name == "" {
-		cps := cfg.ControlPlanes()
-		if len(cps) == 0 {
-			return nil, errors.New("no control plane nodes in the config")
-		}
-
-		return cps[0], nil
-	}
-
 	n, ok := cfg.Node(name)
 	if !ok {
 		return nil, fmt.Errorf("no node %q in the config", name)

@@ -141,3 +141,29 @@ func TestAskCluster(t *testing.T) {
 		})
 	}
 }
+
+// A command that acts on the whole cluster goes through the first control
+// plane that answers: the first one listed being down is no reason to fail
+// while the rest of the cluster serves.
+func TestClusterCommandsSkipADownControlPlane(t *testing.T) {
+	_, log := exitFixtureWith(t, `  - hostname: c2
+    ipAddress: 10.0.0.2
+    role: controlplane
+`)
+
+	t.Setenv("STUB_FAIL", "10.0.0.1")
+
+	for _, args := range [][]string{{"kubeconfig", "-"}, {"upgrade-k8s", "--force"}} {
+		_ = os.WriteFile(log, nil, 0o644)
+
+		if got := run(args); got != 0 {
+			calls, _ := os.ReadFile(log)
+			t.Errorf("%v with c1 down: exit %d\n%s", args, got, calls)
+		}
+	}
+
+	// Named, it is the one used, down or not.
+	if got := run([]string{"kubeconfig", "-", "-n", "c1"}); got != 1 {
+		t.Errorf("kubeconfig -n c1 with c1 down: exit %d, want 1", got)
+	}
+}
