@@ -11,14 +11,7 @@ import (
 )
 
 func newImageCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "image",
-		Short: "Work with Talos images",
-	}
-
-	cmd.AddCommand(newImageURLCmd())
-
-	return cmd
+	return commandGroup("image", "Work with Talos images", newImageURLCmd())
 }
 
 func newImageURLCmd() *cobra.Command {

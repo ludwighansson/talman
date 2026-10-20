@@ -15,14 +15,7 @@ import (
 )
 
 func newSecretsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "secrets",
-		Short: "Manage the cluster secrets bundle",
-	}
-
-	cmd.AddCommand(newSecretsGenerateCmd())
-
-	return cmd
+	return commandGroup("secrets", "Manage the cluster secrets bundle", newSecretsGenerateCmd())
 }
 
 func newSecretsGenerateCmd() *cobra.Command {
