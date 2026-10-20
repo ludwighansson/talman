@@ -263,6 +263,29 @@ nodes:
 			wantErr: "is a directory",
 		},
 		{
+			name: "schematic file missing",
+			body: validBase + `
+schematic: ./schematic.yaml
+nodes:
+  - hostname: w1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: `schematic: "./schematic.yaml" does not exist`,
+		},
+		{
+			name: "node schematic path is a directory",
+			body: validBase + `
+nodes:
+  - hostname: w1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    schematic: ./p
+`,
+			files:   []string{"p/x.yaml"},
+			wantErr: `node w1: schematic: "./p" is a directory`,
+		},
+		{
 			name: "invalid role",
 			body: validBase + `
 nodes:
