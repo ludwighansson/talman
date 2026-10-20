@@ -8,9 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/ludwighansson/talman/internal/factory"
 )
 
 // Load reads, strictly decodes and validates a talman config file.
@@ -79,7 +82,7 @@ func LoadNoValidate(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s is empty", path)
 		}
 
-		return nil, fmt.Errorf("parsing %s: %w%s", path, err, renameHint(data))
+		return nil, fmt.Errorf("parsing %s: %w%s%s", path, err, renameHint(data), typoHint(data))
 	}
 
 	// A second document would be ignored, and whatever it says with it: two
@@ -233,6 +236,110 @@ func renameHint(data []byte) string {
 	}
 
 	return "\n  " + strings.Join(hints, "\n  ")
+}
+
+// typoHint suggests the key meant for each one talman.yaml has that no type
+// does, when one is near enough: the same in another case, or a letter or
+// two away.
+//
+// Worked out from the file and the yaml tags, like renameHint, rather than
+// from the decoder's error -- whose wording is the YAML library's -- and the
+// keys renameHint covers are left to it.
+func typoHint(data []byte) string {
+	var doc yaml.Node
+	if yaml.Unmarshal(data, &doc) != nil || len(doc.Content) == 0 {
+		return ""
+	}
+
+	var hints []string
+
+	var walk func(n *yaml.Node, t reflect.Type)
+
+	walk = func(n *yaml.Node, t reflect.Type) {
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+
+		switch {
+		case t == reflect.TypeFor[SchematicRef]():
+			walk(n, reflect.TypeFor[factory.Schematic]())
+		case t.Kind() == reflect.Slice && n.Kind == yaml.SequenceNode:
+			for _, item := range n.Content {
+				walk(item, t.Elem())
+			}
+		case t.Kind() == reflect.Struct && n.Kind == yaml.MappingNode:
+			known := map[string]reflect.Type{}
+
+			for f := range t.Fields() {
+				if name, _, _ := strings.Cut(f.Tag.Get("yaml"), ","); name != "" && name != "-" {
+					known[name] = f.Type
+				}
+			}
+
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				key := n.Content[i].Value
+
+				if ft, ok := known[key]; ok {
+					walk(n.Content[i+1], ft)
+				} else if near := nearest(key, known); near != "" && key != "talosMode" && key != "secureboot" {
+					hints = append(hints, fmt.Sprintf("line %d: %s: did you mean %s?", n.Content[i].Line, key, near))
+				}
+			}
+		}
+	}
+
+	walk(doc.Content[0], reflect.TypeFor[Config]())
+
+	if len(hints) == 0 {
+		return ""
+	}
+
+	return "\n  " + strings.Join(hints, "\n  ")
+}
+
+// nearest is the known key key is likeliest a typo of, or "".
+func nearest(key string, known map[string]reflect.Type) string {
+	best, bestDist := "", 3
+
+	for name := range known {
+		d := editDistance(strings.ToLower(key), strings.ToLower(name))
+		if d < bestDist || (d == bestDist && name < best) {
+			best, bestDist = name, d
+		}
+	}
+
+	// A short key is two letters from too many others to guess at.
+	if len(key) < 5 && bestDist > 1 {
+		return ""
+	}
+
+	return best
+}
+
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+
+		prev = cur
+	}
+
+	return prev[len(b)]
 }
 
 // moreDocuments reports whether the decoder holds another document with
