@@ -193,6 +193,11 @@ $ talman init prod --controlplane cp-01=10.0.0.11 --worker w-01=10.0.0.21 \
     --endpoint https://10.0.0.10:6443 --age age1…
 wrote prod/talman.yaml
 wrote prod/.sops.yaml
+next:
+  talman -c prod/talman.yaml secrets generate      the cluster's CAs and keys, encrypted
+  talman -c prod/talman.yaml render                then read what it wrote
+  talman -c prod/talman.yaml image url --kind iso  boot media, for machines not running Talos yet
+  talman -c prod/talman.yaml apply --bootstrap     build the cluster, once they are up in maintenance mode
 ```
 
 The Talos and Kubernetes versions default to what the `talosctl` on `PATH`
@@ -201,6 +206,14 @@ cluster name to the directory's (`--cluster-name`), and the endpoint to the
 first control plane's address — name a VIP or a load balancer with
 `--endpoint` for more than one. `init` writes no secrets, and never overwrites
 a file.
+
+Those steps are the way to a first cluster. What `init` cannot know is how
+your machines differ from Talos' defaults — on bare metal, Talos installs to
+`/dev/sda` unless a patch says otherwise — so read what `render` wrote, and put
+what has to change in a patch: see [The node schema is deliberately
+tiny](#the-node-schema-is-deliberately-tiny). Once `apply --bootstrap` is done,
+`talman kubeconfig` fetches the admin kubeconfig and `talman health` checks the
+cluster.
 
 ## Configuration
 
