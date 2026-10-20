@@ -5,14 +5,7 @@ import (
 )
 
 func newSchematicCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "schematic",
-		Short: "Work with Image Factory schematics",
-	}
-
-	cmd.AddCommand(newSchematicIDCmd())
-
-	return cmd
+	return commandGroup("schematic", "Work with Image Factory schematics", newSchematicIDCmd())
 }
 
 func newSchematicIDCmd() *cobra.Command {

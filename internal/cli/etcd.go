@@ -17,14 +17,7 @@ import (
 )
 
 func newEtcdCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "etcd",
-		Short: "Work with the cluster's etcd",
-	}
-
-	cmd.AddCommand(recorded(newEtcdSnapshotCmd()))
-
-	return cmd
+	return commandGroup("etcd", "Work with the cluster's etcd", recorded(newEtcdSnapshotCmd()))
 }
 
 func newEtcdSnapshotCmd() *cobra.Command {

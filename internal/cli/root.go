@@ -171,6 +171,17 @@ The README is the manual: https://github.com/ludwighansson/talman#readme`,
 		}
 	}
 
+	// cobra adds its completion command when the root runs; added now, so it
+	// can refuse a shell it has no script for as the other groups refuse a
+	// mistyped subcommand, rather than print help and exit 0.
+	cmd.InitDefaultCompletionCmd()
+
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "completion" {
+			refuseUnknownSubcommands(sub)
+		}
+	}
+
 	return cmd
 }
 
