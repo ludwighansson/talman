@@ -247,3 +247,29 @@ func TestInitSaysWhatIsNext(t *testing.T) {
 		t.Errorf("init asked for a .sops.yaml with one already above it:\n%s", stdout)
 	}
 }
+
+// Without talosctl, init cannot ask it for the versions to target, and says
+// which flags stand in for it -- both, since either default is its answer --
+// and writes the config when given them.
+func TestInitWithoutTalosctl(t *testing.T) {
+	t.Setenv("TALMAN_CONFIG", "")
+	t.Setenv("PATH", t.TempDir())
+
+	base := t.TempDir()
+
+	var got int
+
+	stderr := captureStderr(t, func() {
+		got = run([]string{"init", filepath.Join(base, "a"), "--controlplane", "cp-01=10.0.0.11",
+			"--talos-version", "v1.14.1"})
+	})
+
+	if got != 1 || !strings.Contains(stderr, "pass --talos-version and --kubernetes-version") {
+		t.Errorf("exit %d\n%s\nwant it to name both version flags", got, stderr)
+	}
+
+	if got := run([]string{"init", filepath.Join(base, "b"), "--controlplane", "cp-01=10.0.0.11",
+		"--talos-version", "v1.14.1", "--kubernetes-version", "v1.37.0"}); got != 0 {
+		t.Errorf("init with both versions given exited %d without talosctl", got)
+	}
+}

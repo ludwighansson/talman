@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -166,6 +167,15 @@ More in the README: "Layout", "Configuration".`,
 			}
 
 			tal := runnerFor(config.DefaultTalosctl)
+
+			// Both defaults are talosctl's answers. Without it, init still
+			// writes a config when told the versions, and says so.
+			if talosVersion == "" || k8sVersion == "" {
+				if _, err := exec.LookPath(config.DefaultTalosctl); err != nil {
+					return errors.New("talosctl is not on PATH, and init asks it which Talos and Kubernetes " +
+						"versions to target: install it, or pass --talos-version and --kubernetes-version")
+				}
+			}
 
 			if talosVersion == "" {
 				if talosVersion, err = tal.ClientVersion(); err != nil {
