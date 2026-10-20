@@ -48,7 +48,9 @@ func ParseLabel(s string) (string, string, error) {
 		return "", "", fmt.Errorf("metrics label %q is not key=value", s)
 	}
 
-	key = strings.TrimSpace(key)
+	// Both sides, so `env = prod` and a space after a comma in
+	// TALMAN_METRICS_LABELS mean what they look like.
+	key, value = strings.TrimSpace(key), strings.TrimSpace(value)
 
 	if !labelName.MatchString(key) || strings.HasPrefix(key, "__") {
 		return "", "", fmt.Errorf("metrics label %q: %q is not a valid Prometheus label name", s, key)

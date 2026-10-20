@@ -23,13 +23,9 @@ const Job = "talman"
 // empty -- is written in URL-safe base64 with the label name marked @base64,
 // as the protocol allows.
 func (r *Run) PushURL(base string) (string, error) {
-	u, err := url.Parse(base)
+	u, err := parseURL(base)
 	if err != nil {
-		return "", fmt.Errorf("metrics URL %q: %w", base, err)
-	}
-
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("metrics URL %q must be http or https", base)
+		return "", err
 	}
 
 	// Built escaped and unescaped side by side: a base64 value may hold '='
@@ -60,6 +56,32 @@ func (r *Run) PushURL(base string) (string, error) {
 	u.RawPath = raw.String()
 
 	return u.String(), nil
+}
+
+// CheckURL reports whether base is an endpoint a run could be pushed to, so a
+// mistyped one is refused before the run, as a mistyped label is, rather than
+// warned about once the run is over and its metrics are lost.
+func CheckURL(base string) error {
+	_, err := parseURL(base)
+
+	return err
+}
+
+func parseURL(base string) (*url.URL, error) {
+	u, err := url.Parse(base)
+	if err != nil {
+		return nil, fmt.Errorf("metrics URL %q: %w", base, err)
+	}
+
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("metrics URL %q must be http or https", base)
+	}
+
+	if u.Host == "" {
+		return nil, fmt.Errorf("metrics URL %q names no host", base)
+	}
+
+	return u, nil
 }
 
 // Push sends the run to a metrics push endpoint.
