@@ -88,10 +88,11 @@ version is still the better habit than `@latest`: a cluster directory is
 reviewed against the talman that renders it, and an upgrade is worth making on
 purpose.
 
-Or take the image, which carries `talosctl` and `sops` with it:
+Or take the image, which carries `talosctl` and `sops` with it. Run it from the
+root of the repository, and name the cluster directory with `-w`:
 
 ```console
-$ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
+$ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" -w /cluster/development \
     ghcr.io/ludwighansson/talman:1.0.0-beta.7 validate
 ```
 
@@ -108,14 +109,20 @@ drift:
     name: ghcr.io/ludwighansson/talman:1.0.0-beta.7
     entrypoint: [""]   # the image's entrypoint is talman; GitLab runs the script with a shell
   script:
-    - talman apply --dry-run --detailed-exit-code
+    # SOPS_AGE_KEY comes from a masked CI/CD variable.
+    - talman -c development/talman.yaml apply --dry-run --detailed-exit-code
 ```
+
+The whole repository goes in, not just the cluster directory: a cluster's
+patches reach into `../base`, and `.sops.yaml` is found by walking up from the
+bundle, so a container that sees only the cluster directory finds neither.
 
 `--tmpfs /tmp` is not optional when running read-only — rendering decrypts the
 secrets bundle into a temp directory, and a tmpfs is what keeps the plaintext
-off a disk. The cluster directory is mounted at `/cluster`, which is also the
-working directory, and must be writable by uid 65532 for `render` to write its
-output.
+off a disk. The key goes in the way it reaches sops anywhere: `-e SOPS_AGE_KEY`,
+or a key file mounted read-only and named by `SOPS_AGE_KEY_FILE`. The container
+runs as uid 65532, which needs write access to the output directory for
+`render` to write it; `--user "$(id -u):$(id -g)"` runs it as you instead.
 
 The talosctl version inside is the one your cluster meets, so it is on the
 image as a label as well as in `talman version`:
