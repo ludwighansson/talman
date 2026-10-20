@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -42,7 +43,7 @@ func (w *Wave) UnmarshalYAML(value *yaml.Node) error {
 	case yaml.SequenceNode:
 		return value.Decode(&w.Groups)
 	default:
-		return fmt.Errorf("line %d: a wave is a group name, or a list of them", value.Line)
+		return errors.New("a wave is a group name, or a list of them")
 	}
 }
 

@@ -6,6 +6,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 
 	"go.yaml.in/yaml/v4"
@@ -53,8 +54,7 @@ func (r *Role) UnmarshalYAML(value *yaml.Node) error {
 
 		return nil
 	default:
-		return fmt.Errorf("line %d: invalid role %q: must be %q or %q",
-			value.Line, s, RoleControlPlane, RoleWorker)
+		return fmt.Errorf("invalid role %q: must be %q or %q", s, RoleControlPlane, RoleWorker)
 	}
 }
 
@@ -162,7 +162,7 @@ func (s *SchematicRef) UnmarshalYAML(value *yaml.Node) error {
 		}
 
 		if p == "" {
-			return fmt.Errorf("line %d: schematic path is empty", value.Line)
+			return errors.New("schematic path is empty")
 		}
 
 		s.Path = p
@@ -171,24 +171,28 @@ func (s *SchematicRef) UnmarshalYAML(value *yaml.Node) error {
 	case yaml.MappingNode:
 		var inline factory.Schematic
 
-		// KnownFields is not available through a yaml.Node decode, so round-trip
-		// through bytes to get the strict behaviour factory.Unmarshal provides.
-		raw, err := yaml.Marshal(value)
-		if err != nil {
-			return err
+		// Decoded from the node itself, as strictly as factory.Unmarshal
+		// decodes a schematic file, so each error keeps the line it is on in
+		// talman.yaml: re-encoding the node first numbered them from the
+		// schematic's own first line.
+		if err := value.Load(&inline, yaml.WithKnownFields()); err != nil {
+			var errs *yaml.LoadErrors
+			if !errors.As(err, &errs) {
+				return fmt.Errorf("invalid schematic: %w", err)
+			}
+
+			for _, e := range errs.Errors {
+				e.Message = "invalid schematic: " + e.Message
+			}
+
+			return errs
 		}
 
-		parsed, err := factory.Unmarshal(raw)
-		if err != nil {
-			return fmt.Errorf("line %d: invalid schematic: %w", value.Line, err)
-		}
-
-		inline = *parsed
 		s.Inline = &inline
 
 		return nil
 	default:
-		return fmt.Errorf("line %d: schematic must be a file path or an inline mapping", value.Line)
+		return errors.New("schematic must be a file path or an inline mapping")
 	}
 }
 

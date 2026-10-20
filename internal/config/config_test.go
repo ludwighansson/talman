@@ -934,6 +934,49 @@ nodes:
 
 // The rename hints come from reading the file, so they hold whatever wording
 // the YAML library's own error takes.
+// A value talman's own decoders refuse is placed by the YAML library, once,
+// on the line in talman.yaml where it sits -- an inline schematic's included,
+// which is decoded from the config rather than from a copy of itself.
+func TestDecodeErrorsNameTheirLine(t *testing.T) {
+	cp := `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`
+	// validBase is five lines, so what follows it starts on line 6.
+	for want, body := range map[string]string{
+		`line 9: invalid role "master"`: validBase + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: master
+`,
+		"line 8: invalid schematic: field systemExtension not found": validBase + `schematic:
+  customization:
+    systemExtension:
+      officialExtensions: [siderolabs/drbd]
+` + cp,
+		`line 8: invalid schematic: bootloader "lilo"`: validBase + `schematic:
+  customization:
+    bootloader: lilo
+` + cp,
+		"line 8: a wave is a group name": validBase + `rollout:
+  waves:
+    - {a: b}
+` + cp,
+	} {
+		_, err := Load(write(t, body))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() = %v, want it to say %q", err, want)
+
+			continue
+		}
+
+		if n := strings.Count(err.Error(), "line "); n != 1 {
+			t.Errorf("the line is given %d times: %v", n, err)
+		}
+	}
+}
+
 func TestRenameHints(t *testing.T) {
 	for want, body := range map[string]string{
 		"renamed validationMode": validBase + "talosMode: metal\n" + `nodes:
