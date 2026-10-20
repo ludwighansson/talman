@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/redact"
@@ -325,5 +326,57 @@ func TestWaitFailedHintOffersOnlyWhatRuns(t *testing.T) {
 
 	if hint := waitFailedHint([]*config.Node{cp("c1"), w}); !strings.Contains(hint, "--wait=false") {
 		t.Errorf("did not offer --wait=false where it is allowed: %q", hint)
+	}
+}
+
+// A node that answers, asked first, that the config changes nothing is not
+// waited for: it is going nowhere, and holding the roll-out for the stabilize
+// window on each such node made re-applying an unchanged cluster take half a
+// minute a node. A node the config does change is still waited for.
+func TestApplyWaitsOnlyForNodesThatChange(t *testing.T) {
+	_, log := exitFixture(t)
+
+	t.Setenv("STUB_DIFF", "No changes.")
+
+	done := make(chan int, 1)
+
+	go func() {
+		done <- run([]string{"apply", "--no-render", "--redact-secrets=false", "--stabilize", "1h", "--timeout", "1h"})
+	}()
+
+	select {
+	case got := <-done:
+		if got != 0 {
+			t.Fatalf("exit %d", got)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("apply waited for a node the config changed nothing on")
+	}
+
+	if calls, _ := os.ReadFile(log); !strings.Contains(string(calls), " --dry-run") {
+		t.Errorf("an apply that waits did not ask first:\n%s", calls)
+	}
+
+	_ = os.WriteFile(log, nil, 0o644)
+
+	t.Setenv("STUB_DIFF", "+  hostname: new")
+
+	if got := run([]string{"apply", "--no-render", "--redact-secrets=false", "--stabilize", "0s"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	calls, _ := os.ReadFile(log)
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+
+	applied := -1
+
+	for i, l := range lines {
+		if strings.Contains(l, " apply-config ") && !strings.Contains(l, "--dry-run") {
+			applied = i
+		}
+	}
+
+	if applied < 0 || !strings.Contains(strings.Join(lines[applied+1:], "\n"), " version") {
+		t.Errorf("apply did not wait for a node it changed:\n%s", calls)
 	}
 }
