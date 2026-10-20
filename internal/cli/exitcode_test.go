@@ -1753,7 +1753,7 @@ func TestApplyBootstrapWaitsForASilentNode(t *testing.T) {
 // question is asked again, and the carry-on after etcd keeps the run's
 // flags and points at something that shows etcd.
 func TestApplyBootstrapHints(t *testing.T) {
-	dir, _ := bootstrapFixture(t)
+	dir, log := bootstrapFixture(t)
 
 	cfgFlag := []string{"-c", filepath.Join(dir, "talman.yaml")}
 	args := append(cfgFlag, "apply", "--bootstrap", "--no-render", "--redact-secrets=false", "--yes",
@@ -1786,6 +1786,27 @@ func TestApplyBootstrapHints(t *testing.T) {
 	if !strings.Contains(stderr, "talman apply --onboard-new-nodes --config=") ||
 		!strings.Contains(stderr, "--timeout=1ms") || strings.Contains(stderr, "--onboard-new-nodes --bootstrap") {
 		t.Errorf("want the carry-on to keep the run's flags, but not --bootstrap:\n%s", stderr)
+	}
+
+	// A run given --onboard-new-nodes too -- it is implied -- carries on
+	// with it once, whether etcd never came up or a later node failed.
+	args = append(args, "--onboard-new-nodes")
+
+	stderr = captureStderr(t, func() { run(args) })
+	if _, carryOn, _ := strings.Cut(stderr, "carry on with:"); strings.Count(carryOn, "--onboard-new-nodes") != 1 {
+		t.Errorf("want --onboard-new-nodes once in the carry-on:\n%s", stderr)
+	}
+
+	// A cluster to build again: nothing bootstrapped, nothing adopted.
+	_ = os.Remove(log + ".bootstrapped")
+	_ = os.Remove(log + ".adopted")
+
+	t.Setenv("STUB_ETCD_NEVER", "")
+	t.Setenv("STUB_FAIL", filepath.Join(dir, "clusterconfig", "w1.yaml"))
+
+	if _, hint := runHint(t, args...); !strings.HasPrefix(hint, "apply -n w1") ||
+		strings.Count(hint, "--onboard-new-nodes") != 1 || strings.Contains(hint, "--bootstrap") {
+		t.Errorf("hint %q: want w1 onboarded, --onboard-new-nodes once, no --bootstrap", hint)
 	}
 }
 
