@@ -1063,8 +1063,57 @@ func TestDecodeErrorsNameTheirLine(t *testing.T) {
 			continue
 		}
 
-		if n := strings.Count(err.Error(), "line "); n != 1 {
+		// The decoder's own message, without the hints that follow it.
+		decoded, _, _ := strings.Cut(err.Error(), "\n")
+		if n := strings.Count(decoded, "line "); n != 1 {
 			t.Errorf("the line is given %d times: %v", n, err)
+		}
+	}
+}
+
+// An unknown key a letter or two from a known one, or the same in another
+// case, gets the key it is likeliest a typo of; one near nothing gets no
+// guess, and the renamed keys are left to their own hint.
+func TestTypoHints(t *testing.T) {
+	body := `apiVersion: talman.dev/v1
+clustername: test
+endpoint: https://10.0.0.1:6443
+talosVersion: v1.14.0
+kubernetesVersion: v1.37.0
+talosMode: metal
+imageFactory:
+  plattform: metal
+schematic:
+  customization:
+    systemExtension:
+      officialExtensions: [siderolabs/drbd]
+nodes:
+  - hostname: c1
+    ipAddres: 10.0.0.10
+    rol: controlplane
+    xyz: 1
+`
+
+	_, err := Load(write(t, body))
+	if err == nil {
+		t.Fatal("expected unknown keys to be refused")
+	}
+
+	for _, want := range []string{
+		"line 2: clustername: did you mean clusterName?",
+		"line 8: plattform: did you mean platform?",
+		"line 11: systemExtension: did you mean systemExtensions?",
+		"line 15: ipAddres: did you mean ipAddress?",
+		"line 16: rol: did you mean role?",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() does not say %q:\n%v", want, err)
+		}
+	}
+
+	for _, unwanted := range []string{"xyz: did you mean", "talosMode: did you mean"} {
+		if strings.Contains(err.Error(), unwanted) {
+			t.Errorf("Load() guessed where it should not (%q):\n%v", unwanted, err)
 		}
 	}
 }
