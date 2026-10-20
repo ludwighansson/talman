@@ -32,7 +32,9 @@ landing in another cluster's file. Name a path to choose the destination, and
 "-" to write to stdout.
 
 A path you name is merged into, as talosctl would; talman's own copy is
-overwritten, because it is a generated artefact of this cluster directory.`,
+overwritten, because it is a generated artefact of this cluster directory.
+
+More in the README: "The kubeconfig".`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, tal, tc, target, err := controlPlaneTarget(node)

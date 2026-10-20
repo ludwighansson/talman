@@ -23,16 +23,18 @@ func newSchematicIDCmd() *cobra.Command {
 The ID is the sha256 of the schematic's canonical representation, so talman
 computes it offline by default and never needs to reach the factory. Pass
 --submit to register the schematic with the factory and print the ID it
-returns instead.`,
+returns instead.
+
+More in the README: "The Image Factory".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return printPerNode(cmd, nodes, submit, output, "schematicID", func(ctx renderContext) (string, error) { return ctx.SchematicID, nil })
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	addOutputFlag(cmd, &output)
-	cmd.Flags().BoolVar(&submit, "submit", false, "register the schematic with the Image Factory")
+	cmd.Flags().BoolVar(&submit, "submit", false, "register each schematic with the Image Factory and use the ID it returns, rather than computing it offline")
 
 	return cmd
 }

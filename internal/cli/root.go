@@ -174,7 +174,7 @@ The README is the manual: https://github.com/ludwighansson/talman#readme`,
 	}
 
 	cmd.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "",
-		"path to the talman config (default $"+config.EnvConfig+", else "+config.DefaultFileName+")")
+		"path to the talman config, or the directory holding it (default $"+config.EnvConfig+", else "+config.DefaultFileName+")")
 	cmd.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false,
 		"echo each talosctl invocation")
 

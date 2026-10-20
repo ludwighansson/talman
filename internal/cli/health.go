@@ -28,7 +28,9 @@ pods and every node's readiness.
 
 The check runs from one control plane node -- the first in the config that
 answers, unless --node names another -- and reports on the whole cluster, not
-on that node.`,
+on that node.
+
+More in the README: "Rolling changes out safely".`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if timeout < 0 {

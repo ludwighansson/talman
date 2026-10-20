@@ -22,7 +22,9 @@ the key each one came from.
 
 Talos applies strategic merge patches in sequence and the last writer wins, so
 this listing is the authoritative answer to "why does this node have that
-value".`,
+value".
+
+More in the README: "Patches".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
@@ -103,7 +105,7 @@ value".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	addOutputFlag(cmd, &output)
 
 	return cmd

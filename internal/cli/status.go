@@ -27,7 +27,8 @@ func newStatusCmd() *cobra.Command {
 		Long: `Status lists every node and asks each what it runs -- whether it answers, its
 Talos and Kubernetes versions and schematic -- beside what the config wants.
 An arrow marks drift; "-" is something talman could not read, never the
-configured value. It always succeeds; "talman health" is the one that fails.
+configured value. Nothing a node answers fails it; "talman health" is the one
+that fails.
 
 --offline asks nothing, and needs no cluster, secrets or talosconfig.
 -o json prints the same report for scripts.
@@ -133,7 +134,7 @@ More in the README: "Seeing what is out there".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	cmd.Flags().BoolVar(&offline, "offline", false,
 		"ask nothing: report what the config says, with a dash for what only a node could tell")
 	cmd.Flags().BoolVar(&wide, "wide", false, "add the schematic column")

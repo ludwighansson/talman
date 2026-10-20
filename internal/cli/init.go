@@ -88,7 +88,9 @@ one named:
 
 --age also writes a .sops.yaml encrypting to that recipient. Versions default
 to the local talosctl's. It writes no secrets and never overwrites a file;
-"talman secrets generate" is next.`,
+"talman secrets generate" is next.
+
+More in the README: "Layout", "Configuration".`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."

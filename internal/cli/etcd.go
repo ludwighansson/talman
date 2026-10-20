@@ -39,7 +39,9 @@ A directory gets the same name inside it. It is written 0600 wherever it
 goes, and never over an existing file.
 
 "talman upgrade --snapshot" and "talman upgrade-k8s --snapshot" take one before
-they change anything.`,
+they change anything.
+
+More in the README: "Backing up etcd", "Restoring etcd".`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
