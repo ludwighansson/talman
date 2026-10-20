@@ -155,8 +155,7 @@
         }
       },
       "required": [
-        "key",
-        "value"
+        "key"
       ],
       "type": "object"
     },
@@ -183,6 +182,7 @@
         "groups": {
           "description": "Groups whose patches this node receives, applied in this order after its role's.",
           "items": {
+            "minLength": 1,
             "not": {
               "enum": [
                 "all",
@@ -193,7 +193,8 @@
             },
             "type": [
               "string",
-              "number"
+              "number",
+              "null"
             ]
           },
           "type": [

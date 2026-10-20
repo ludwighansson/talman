@@ -51,7 +51,7 @@ var schemaRequired = map[reflect.Type][]string{
 	reflect.TypeFor[Config]():            {"apiVersion", "clusterName", "endpoint", "talosVersion", "kubernetesVersion", "nodes"},
 	reflect.TypeFor[Rollout]():           {"waves"},
 	reflect.TypeFor[Node]():              {"hostname", "ipAddress", "role"},
-	reflect.TypeFor[factory.MetaValue](): {"key", "value"},
+	reflect.TypeFor[factory.MetaValue](): {"key"},
 }
 
 // schemaDefNames names the types that get a $defs entry of their own.
@@ -222,7 +222,11 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 
 		if names, ok := schemaReservedItems[t.Name()+"."+name]; ok {
 			if m, isMap := s.(map[string]any); isMap {
-				m["items"] = map[string]any{"type": []string{"string", "number"}, "not": map[string]any{"enum": names}}
+				m["items"] = map[string]any{
+					"type":      []string{"string", "number"},
+					"minLength": 1,
+					"not":       map[string]any{"enum": names},
+				}
 			}
 		}
 
@@ -243,7 +247,7 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 
 		// An optional key left empty is YAML's null, which Load reads as the
 		// key's zero value: accepted, so allowed here too.
-		if !slices.Contains(schemaRequired[t], name) || schemaNullable[t.Name()+"."+name] {
+		if !slices.Contains(schemaRequired[t], name) {
 			s = nullable(s)
 		}
 
@@ -313,7 +317,8 @@ const (
 	dnsNameRE = `([0-9A-Za-z-]+\.)*[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*(\.[0-9A-Za-z-]+)*\.?`
 )
 
-// schemaReservedItems are the lists whose items Validate refuses by name.
+// schemaReservedItems are the lists whose items Validate refuses by name, and
+// empty.
 var schemaReservedItems = map[string][]string{
 	"Node.groups": {GroupAll, GroupControlPlane, GroupWorker, RestWave},
 }
@@ -323,6 +328,7 @@ var schemaReservedItems = map[string][]string{
 var schemaNullItems = map[string]bool{
 	"Config.patches": true,
 	"Node.patches":   true,
+	"Node.groups":    true,
 }
 
 // nullItems lets the items of a list schema -- or of the lists a map schema
@@ -353,12 +359,6 @@ func nullItems(s any) any {
 	}
 
 	return out
-}
-
-// schemaNullable are required keys that Load takes left empty, as the zero
-// value: a meta value may be empty.
-var schemaNullable = map[string]bool{
-	"MetaValue.value": true,
 }
 
 // schemaMinItems are the lists Validate refuses empty.
