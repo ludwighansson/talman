@@ -1027,7 +1027,8 @@ next one would go down while the last is still away.
 if the cluster is unhealthy. It is off by default: it asks the whole cluster,
 so on one that is unhealthy before the run starts it fails after the first
 node, and that includes the apply meant to fix it. It runs between nodes and
-not after the last, since by then there is nothing left for it to protect.
+not after the last, since by then there is nothing left for it to protect —
+unless the run stopped short of waves still to come (see below).
 
 Neither runs for `--dry-run` or `--mode=staged`, where nothing was enacted.
 The wait says what it is waiting for while it waits — a node installing Talos
@@ -1206,7 +1207,9 @@ A run never stops at a wave by itself: where to stop is the operator's call,
 made run by run. `--until <group>` stops after the wave holding it and prints
 the command that carries on, `--from <group>` starts at it, and `--wave
 <group>` runs only that one; `rest` names the last wave, so no node may call a
-group that.
+group that. A run that stops short of later waves soaks and gates after the
+wave it stops at, as it would between any two: the run that carries on starts
+without a gate of its own, so this is where the canary is watched.
 
 ```console
 $ talman upgrade --health --until blue     # the canary, and everything before it
