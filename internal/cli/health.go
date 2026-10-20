@@ -96,12 +96,28 @@ func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*
 
 	addrs := make([]string, 0, len(cps))
 
+	// One that answered and turned the talosconfig away says more than
+	// "cannot be reached": the cluster is there, and holds another CA.
+	var (
+		refusedBy *config.Node
+		why       string
+	)
+
 	for _, n := range cps {
 		if tal.Reachable(talosconfig, n.IPAddress) {
 			return n, nil
 		}
 
 		addrs = append(addrs, n.IPAddress)
+
+		if r := tal.Refused(n.IPAddress); r != "" && refusedBy == nil {
+			refusedBy, why = n, r
+		}
+	}
+
+	if refusedBy != nil {
+		return nil, fmt.Errorf("no control plane node would answer this talosconfig (tried %s): %s",
+			strings.Join(addrs, ", "), silentNode(refusedBy, why))
 	}
 
 	return nil, fmt.Errorf("no control plane node answered the Talos API (tried %s): "+

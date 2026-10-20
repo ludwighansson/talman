@@ -125,6 +125,14 @@ More in the README: "Seeing what is out there".`,
 			// is gone. Only asked when something is quiet, and only said when
 			// the control planes answered that there is no etcd -- not when
 			// they said nothing at all.
+			// Nor can a column say that a quiet node answered, and turned the
+			// talosconfig away: it is up, and holds another CA.
+			if !offline {
+				if note := refusedNote(tal, reports); note != "" {
+					fmt.Fprintln(cmd.OutOrStdout(), note)
+				}
+			}
+
 			if !offline && quiet(reports) && askCluster(cfg, tal, tc) == clusterAbsent {
 				fmt.Fprintln(cmd.OutOrStdout(), "cluster: not bootstrapped — a node with a config but no "+
 					"cluster to join stays quiet; run `"+talmanCmd("apply --bootstrap")+"`")
@@ -362,6 +370,40 @@ func summarise(reports []nodeReport, offline, wide bool) string {
 	}
 
 	return out
+}
+
+// refusedNote names the quiet nodes that answered and turned the talosconfig
+// away, or is "" when none did.
+func refusedNote(tal *talosctl.Runner, reports []nodeReport) string {
+	var (
+		names []string
+		first *config.Node
+		why   string
+	)
+
+	for _, r := range reports {
+		if r.Mode != talosctl.ModeUnreachable {
+			continue
+		}
+
+		if reason := tal.Refused(r.Node.IPAddress); reason != "" {
+			names = append(names, r.Node.Hostname)
+
+			if first == nil {
+				first, why = r.Node, reason
+			}
+		}
+	}
+
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return "refused: " + silentNode(first, why)
+	default:
+		return fmt.Sprintf("refused: %s answer, but turn this talosconfig away (%s): they trust a different CA "+
+			"from the one this talosconfig, and the bundle it came from, were made with", strings.Join(names, ", "), why)
+	}
 }
 
 // quiet reports whether anything in the table failed to answer, which is the
