@@ -40,16 +40,11 @@ on that node.`,
 				return err
 			}
 
-			// With no node named, prefer one that is answering: a check
-			// driven from a control plane that is down reports the cluster as
-			// broken when what is broken is the entry point. A named one is
-			// asked too, so the check goes the way it answered.
-			if node == "" {
-				target, err = healthNode(cfg, tal, tc)
-				if err != nil {
-					return err
-				}
-			} else if !tal.Reachable(tc, target.IPAddress) {
+			// With no node named, it is one that answered: a check driven
+			// from a control plane that is down reports the cluster as broken
+			// when what is broken is the entry point. A named one is asked
+			// too, so the check goes the way it answered.
+			if node != "" && !tal.Reachable(tc, target.IPAddress) {
 				return fmt.Errorf("%s (%s) does not answer the Talos API, directly or through the "+
 					"talosconfig's endpoints", target.Hostname, target.IPAddress)
 			}
@@ -72,8 +67,9 @@ on that node.`,
 	return cmd
 }
 
-// healthNode picks the control plane a health check runs from: the first one
-// in the config that answers the Talos API.
+// healthNode picks the control plane a health check runs from -- or anything
+// else that acts on the cluster as a whole -- the first one in the config that
+// answers the Talos API.
 //
 // Answering matters because the alternative is reporting a whole cluster as
 // broken when the single node talman chose to ask happens to be the one that
@@ -93,7 +89,7 @@ on that node.`,
 func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*config.Node, error) {
 	cps := cfg.ControlPlanes()
 	if len(cps) == 0 {
-		return nil, errors.New("no control plane nodes in the config: nothing can answer for cluster health")
+		return nil, errors.New("no control plane nodes in the config: nothing can answer for the cluster")
 	}
 
 	addrs := make([]string, 0, len(cps))
@@ -107,7 +103,7 @@ func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*
 	}
 
 	return nil, fmt.Errorf("no control plane node answered the Talos API (tried %s): "+
-		"the cluster cannot be checked from here", strings.Join(addrs, ", "))
+		"the cluster cannot be reached from here", strings.Join(addrs, ", "))
 }
 
 // healthArgs builds a `talosctl health` invocation that reports on the whole

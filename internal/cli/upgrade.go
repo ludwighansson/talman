@@ -351,7 +351,8 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 		},
 	}
 
-	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to drive the upgrade from")
+	cmd.Flags().StringVarP(&node, "node", "n", "",
+		"control plane node to drive the upgrade from (default: the first that answers)")
 	cmd.Flags().StringVar(&to, "to", "", "target Kubernetes version (default: kubernetesVersion from the config)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"say whether an upgrade is needed, without running one (with --force: talosctl's own plan)")
