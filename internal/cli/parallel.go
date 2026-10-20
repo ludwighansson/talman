@@ -20,6 +20,14 @@ import (
 // laptop rendering it happens to be a big one.
 const defaultParallel = 8
 
+// probing is how many nodes a question is asked of at once in a pass that
+// --parallel paces otherwise. A probe changes nothing, so it goes at a read's
+// pace: at apply's one node at a time, a sweep that waits out two dial
+// timeouts for each machine that is down took a minute a dead node.
+func probing(parallel int) int {
+	return max(parallel, defaultParallel)
+}
+
 // maxParallel bounds --parallel.
 //
 // Not a limit anyone should meet: it is there so a typo asks a question rather

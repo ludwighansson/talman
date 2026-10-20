@@ -44,6 +44,14 @@ case " $* " in
 *" bootstrap"*) touch "$STUB_LOG.bootstrapped" ;;
 esac
 
+# STUB_REFUSE: nodes that hold another CA than the talosconfig's, so every
+# call to them fails the TLS handshake on the certificates.
+for r in $STUB_REFUSE; do
+	[ "$r" = "$nodes" ] || continue
+	echo 'rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: tls: failed to verify certificate: x509: certificate signed by unknown authority"' >&2
+	exit 1
+done
+
 # STUB_DEAD_ENDPOINTS: the talosconfig's endpoints are down, so only a call
 # pinned to a node with --endpoints gets through.
 # STUB_DEAD_DIRECT: nodes are only reachable through the talosconfig's
@@ -108,7 +116,7 @@ case " $* " in
 *" get services etcd "*)
 	in_maintenance && exit 1
 	running=${STUB_ETCD:-true}
-	[ -f "$STUB_LOG.bootstrapped" ] && running=true
+	[ -f "$STUB_LOG.bootstrapped" ] && [ -z "$STUB_ETCD_NEVER" ] && running=true
 	printf 'spec:\n    running: %s\n    healthy: %s\n' "$running" "$running" ;;
 *" reboot "*) echo "rebooted" ;;
 *" rotate-ca "*"--dry-run=false"*)
@@ -198,7 +206,9 @@ nodes:
 	t.Setenv("STUB_RACE", "")
 	t.Setenv("STUB_ROTATE_PARTWAY", "")
 	t.Setenv("STUB_ETCD", "")
+	t.Setenv("STUB_ETCD_NEVER", "")
 	t.Setenv("STUB_MAINTENANCE", "none")
+	t.Setenv("STUB_REFUSE", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -493,9 +503,18 @@ func TestUpgradeDoesOnlyWhatItMust(t *testing.T) {
 
 	_, log := exitFixtureWith(t, workers)
 
-	if got := run([]string{"upgrade", "--snapshot", "--detailed-exit-code"}); got != 0 {
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"upgrade", "--snapshot", "--detailed-exit-code"}) })
+	if got != 0 {
 		calls, _ := os.ReadFile(log)
 		t.Fatalf("an up-to-date cluster gave exit %d\n%s", got, calls)
+	}
+
+	// The stub's nodes report no schematic, as one installed from something
+	// other than a factory image does: nothing to name.
+	if !strings.Contains(stderr, "== w1 (10.0.0.2) already runs v1.14.1; skipping") {
+		t.Errorf("want the skip to say what the node runs, and no empty schematic:\n%s", stderr)
 	}
 
 	calls, _ := os.ReadFile(log)
@@ -649,12 +668,22 @@ func TestRotateCALeavesTheRotatedTalosconfigAlone(t *testing.T) {
 	}
 
 	for _, args := range [][]string{{"rotate-ca", "--dry-run"}, {"rotate-ca", "-y", "--talos=false"}} {
-		if got := run(args); got != 1 {
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(args) })
+
+		if got != 1 {
 			t.Errorf("%v with a rotated talosconfig left over: exit %d, want 1", args, got)
 		}
 
 		if b, _ := os.ReadFile(rotated); string(b) != "context: the only one that works\n" {
 			t.Fatalf("%v removed or changed the rotated talosconfig", args)
+		}
+
+		// The way on is the end of the rotation that left it, never a
+		// second one: the bundle still holds the old CAs.
+		if !strings.Contains(stderr, "talman rotate-ca --finish") || strings.Contains(stderr, "again") {
+			t.Errorf("%v said\n%s\nwant it to point at rotate-ca --finish", args, stderr)
 		}
 	}
 
@@ -718,6 +747,33 @@ func TestNoWaitKeepsControlPlanesApart(t *testing.T) {
 
 	if got := run([]string{"reboot", "--wait=false", "-n", "c1"}); got != 0 {
 		t.Errorf("one control plane without waiting: exit %d, want 0", got)
+	}
+}
+
+// TestWaitsMustMeanSomething: a timeout of nothing fails every node before it
+// can answer, and a negative duration is a typo; both are refused before
+// anything is asked. `health --timeout 0` is talosctl's own default.
+func TestWaitsMustMeanSomething(t *testing.T) {
+	_, log := exitFixture(t)
+
+	for _, args := range [][]string{
+		{"apply", "--no-render", "--timeout", "0s"},
+		{"apply", "--no-render", "--stabilize", "-5s"},
+		{"reboot", "--timeout", "0s"},
+		{"upgrade", "--timeout", "-1m"},
+		{"health", "--timeout", "-1s"},
+	} {
+		if got := run(args); got != 1 {
+			t.Errorf("%v: exit %d, want 1", args, got)
+		}
+	}
+
+	if calls, _ := os.ReadFile(log); len(calls) > 0 {
+		t.Errorf("talosctl was asked something before the flags were checked:\n%s", calls)
+	}
+
+	if got := run([]string{"health", "--timeout", "0s"}); got != 0 {
+		t.Errorf("health --timeout 0: exit %d, want 0", got)
 	}
 }
 
@@ -879,15 +935,18 @@ func TestRolloutWaves(t *testing.T) {
 		args []string
 		want string
 		hint string
+		// wave is a heading the run prints: waves are numbered among all
+		// those the selection spans, the ones a wave flag leaves out too.
+		wave string
 	}{
 		// c1, then blue, then green and pink in config order, then the rest.
-		{[]string{"reboot"}, "10.0.0.1 10.0.0.2 10.0.0.3 10.0.0.4 10.0.0.5", ""},
-		{[]string{"reboot", "--until", "blue"}, "10.0.0.1 10.0.0.2", "--from green"},
-		{[]string{"reboot", "--from", "pink"}, "10.0.0.3 10.0.0.4 10.0.0.5", ""},
-		{[]string{"reboot", "--wave", "green"}, "10.0.0.3 10.0.0.4", ""},
-		{[]string{"reboot", "--wave", "rest"}, "10.0.0.5", ""},
-		{[]string{"reboot", "-g", "pink", "-g", "blue"}, "10.0.0.2 10.0.0.4", ""},
-		{[]string{"reboot", "-g", "worker", "--until", "blue"}, "10.0.0.2", "--from green"},
+		{[]string{"reboot"}, "10.0.0.1 10.0.0.2 10.0.0.3 10.0.0.4 10.0.0.5", "", "== wave 2/4: blue"},
+		{[]string{"reboot", "--until", "blue"}, "10.0.0.1 10.0.0.2", "--from green", "== wave 2/4: blue"},
+		{[]string{"reboot", "--from", "pink"}, "10.0.0.3 10.0.0.4 10.0.0.5", "", "== wave 3/4: green,pink"},
+		{[]string{"reboot", "--wave", "green"}, "10.0.0.3 10.0.0.4", "", "== wave 3/4: green,pink"},
+		{[]string{"reboot", "--wave", "rest"}, "10.0.0.5", "", "== wave 4/4: rest"},
+		{[]string{"reboot", "-g", "pink", "-g", "blue"}, "10.0.0.2 10.0.0.4", "", "== wave 2/2: green,pink"},
+		{[]string{"reboot", "-g", "worker", "--until", "blue"}, "10.0.0.2", "--from green", "== wave 1/3: blue"},
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			_ = os.WriteFile(log, nil, 0o644)
@@ -907,6 +966,10 @@ func TestRolloutWaves(t *testing.T) {
 			if tt.hint != "" && !strings.Contains(stderr, tt.hint) {
 				t.Errorf("no %q in the hint:\n%s", tt.hint, stderr)
 			}
+
+			if !strings.Contains(stderr, tt.wave) {
+				t.Errorf("no %q heading:\n%s", tt.wave, stderr)
+			}
 		})
 	}
 
@@ -919,6 +982,122 @@ func TestRolloutWaves(t *testing.T) {
 		if got := run(args); got != 1 {
 			t.Errorf("%v: exit %d, want 1", args, got)
 		}
+	}
+}
+
+// TestRunEndingBeforeTheLastWaveIsGated: a run that stops at a wave with
+// more to come -- --until, or a --wave short of the last -- gates after it,
+// since the run that carries on starts with no gate of its own. A run that
+// reaches the last wave has nothing left to protect.
+func TestRunEndingBeforeTheLastWaveIsGated(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes+`rollout:
+  soak: 10ms
+  waves:
+    - controlplane
+    - blue
+    - [green, pink]
+`)
+
+	for _, tt := range []struct {
+		args  []string
+		gates int
+	}{
+		// After controlplane, and after blue: the canary.
+		{[]string{"reboot", "--health", "--until", "blue"}, 2},
+		{[]string{"reboot", "--health", "--wave", "blue"}, 1},
+		// Between g1 and p1, and before the rest; nothing after the rest,
+		// the last wave.
+		{[]string{"reboot", "--health", "--from", "green"}, 2},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			_ = os.WriteFile(log, nil, 0o644)
+
+			var got int
+
+			stderr := captureStderr(t, func() { got = run(tt.args) })
+			if got != 0 {
+				t.Fatalf("exit %d\n%s", got, stderr)
+			}
+
+			calls, _ := os.ReadFile(log)
+			if n := strings.Count(string(calls), " health "); n != tt.gates {
+				t.Errorf("health gate ran %d time(s), want %d:\n%s", n, tt.gates, stderr)
+			}
+		})
+	}
+
+	// A canary that fails its gate says how to carry on once the cluster is
+	// healthy, not that no nodes were left.
+	t.Setenv("STUB_FAIL", "health")
+
+	got, hint := runHint(t, "reboot", "--health", "-g", "worker", "--until", "blue")
+	if got != 1 {
+		t.Errorf("exit %d, want 1: the gate after the canary failed", got)
+	}
+
+	if !strings.HasPrefix(hint, "reboot --from green") {
+		t.Errorf("hint %q, want one carrying on with --from green", hint)
+	}
+}
+
+// --only-new-nodes narrows the waves to the nodes it onboards without
+// renumbering them, so a canary stopped at with --wave or --until is still
+// the second wave of four, and still gated before anything carries on from
+// it. Without a wave flag, the waves it leaves empty are not a reason to gate
+// at the end: nothing carries on from there.
+func TestOnlyNewNodesKeepsTheWaves(t *testing.T) {
+	dir, log := exitFixtureWith(t, waveNodes+`rollout:
+  waves:
+    - controlplane
+    - blue
+    - [green, pink]
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "b1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_DIFF", "+  hostname: new")
+
+	for _, tt := range []struct {
+		args    []string
+		gates   int
+		stopped bool
+	}{
+		{[]string{"--wave", "blue"}, 1, false},
+		{[]string{"--until", "blue"}, 1, true},
+		{nil, 0, false},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			// b1 is new until this run onboards it.
+			_ = os.WriteFile(log, nil, 0o644)
+			_ = os.Remove(log + ".adopted")
+
+			t.Setenv("STUB_MAINTENANCE", "10.0.0.2")
+
+			args := append([]string{"apply", "--no-render", "--redact-secrets=false", "--stabilize", "0s",
+				"--only-new-nodes", "--health"}, tt.args...)
+
+			var got int
+
+			stderr := captureStderr(t, func() { got = run(args) })
+			if got != 0 {
+				t.Fatalf("exit %d\n%s", got, stderr)
+			}
+
+			if !strings.Contains(stderr, "== wave 2/4: blue") {
+				t.Errorf("blue was not announced as wave 2/4:\n%s", stderr)
+			}
+
+			if stopped := strings.Contains(stderr, "stopped before wave green"); stopped != tt.stopped {
+				t.Errorf("stopped before green: %v, want %v\n%s", stopped, tt.stopped, stderr)
+			}
+
+			calls, _ := os.ReadFile(log)
+			if n := strings.Count(string(calls), " health "); n != tt.gates {
+				t.Errorf("health gate ran %d time(s), want %d:\n%s", n, tt.gates, stderr)
+			}
+		})
 	}
 }
 
@@ -991,6 +1170,37 @@ func TestRolloutHintsCarryOn(t *testing.T) {
 
 	if order := rebooted(t, log); order != "10.0.0.3 10.0.0.4 10.0.0.5" {
 		t.Errorf("the hint rebooted %q, want the waves after blue", order)
+	}
+}
+
+// TestUntilHintComesLast: the command that carries on is the last thing a
+// run stopped by --until prints, after the command's own summary.
+func TestUntilHintComesLast(t *testing.T) {
+	dir, _ := exitFixtureWith(t, waveNodes+`rollout:
+  waves: [controlplane, blue, green]
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "b1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		// Every node already on its version: "nothing to upgrade" first.
+		{"upgrade", "--until", "blue"},
+		// "configs staged" first.
+		{"apply", "--no-render", "--redact-secrets=false", "--mode=staged", "--until", "blue"},
+	} {
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(args) })
+		if got != 0 {
+			t.Fatalf("%v: exit %d\n%s", args, got, stderr)
+		}
+
+		lines := strings.Split(strings.TrimSpace(stderr), "\n")
+		if last := lines[len(lines)-1]; !strings.HasPrefix(last, "  continue with: talman "+args[0]+" --from green") {
+			t.Errorf("%v: last line %q, want the command that carries on:\n%s", args, last, stderr)
+		}
 	}
 }
 
@@ -1143,6 +1353,39 @@ func TestSnapshotNeverReplacesOneThatAppeared(t *testing.T) {
 	}
 }
 
+// A directory gets the snapshot under the name talman picks, and a path whose
+// directory is missing is refused before the cluster is asked for anything.
+func TestSnapshotDestinations(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	backups := filepath.Join(dir, "backups")
+	if err := os.Mkdir(backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run([]string{"etcd", "snapshot", backups}); got != 0 {
+		t.Fatalf("into a directory: exit %d", got)
+	}
+
+	if snaps, _ := filepath.Glob(filepath.Join(backups, "etcd-stub-*.db")); len(snaps) != 1 {
+		t.Errorf("snapshots in the directory named: %v", snaps)
+	}
+
+	_ = os.WriteFile(log, nil, 0o644)
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"etcd", "snapshot", filepath.Join(dir, "nope", "x.db")}) })
+
+	if got != 1 || !strings.Contains(stderr, "does not exist") || strings.Contains(stderr, "== snapshotting") {
+		t.Errorf("into a missing directory: exit %d\n%s", got, stderr)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "etcd snapshot") {
+		t.Errorf("the snapshot was taken before the destination was checked:\n%s", calls)
+	}
+}
+
 // An empty -n or -g -- `-n "$NODE"` with NODE unset -- is a mistake, not a
 // request for every node: reset -n "" --yes wiped a whole cluster.
 func TestEmptySelectorIsRefused(t *testing.T) {
@@ -1205,6 +1448,13 @@ func TestCtlSingleNodeCommandHint(t *testing.T) {
 	if !strings.Contains(stderr, "name one with -n, e.g. `talman ctl -n <node> read /etc/hostname`") {
 		t.Errorf("no hint:\n%s", stderr)
 	}
+
+	// The hint pastes back as it was typed.
+	stderr = captureStderr(t, func() { run([]string{"ctl", "read", "/var/log/it's here"}) })
+
+	if !strings.Contains(stderr, `talman ctl -n <node> read '/var/log/it'\''s here'`) {
+		t.Errorf("the hint does not quote talosctl's arguments:\n%s", stderr)
+	}
 }
 
 // secrets generate --force replaces the bundle a running cluster trusts, so
@@ -1232,6 +1482,106 @@ func TestSecretsForceKeepsTheOldBundle(t *testing.T) {
 
 	if b, _ := os.ReadFile(bundle); string(b) == "bundle: old\n" {
 		t.Error("the bundle was not replaced")
+	}
+}
+
+// A bundle under talhelper's name, or an early talman's, is the cluster's:
+// talman says to use it rather than to generate a new one, and will not
+// generate one beside it, with --force or without.
+func TestLegacyBundleIsNotReplacedByANewOne(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "talsecret.sops.yaml"), []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"secrets", "generate", "--plaintext"},
+		{"secrets", "generate", "--plaintext", "--force"},
+		{"render", "--dry-run"},
+	} {
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(args) })
+
+		if got != 1 || !strings.Contains(stderr, "talsecret.sops.yaml is here") ||
+			strings.Contains(stderr, "run `talman secrets generate`") {
+			t.Errorf("%v: exit %d\n%s\nwant it refused, pointing at talsecret.sops.yaml", args, got, stderr)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "secrets.sops.yaml")); err == nil {
+		t.Error("a new bundle was written beside the old one")
+	}
+}
+
+// Without sops, an encrypted bundle cannot be read or written. Only secrets
+// generate has another way -- a bundle written unencrypted -- so only it
+// offers --plaintext.
+func TestWithoutSops(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	saved := sopsx.Bin
+	sopsx.Bin = "talman-test-sops-that-is-not-there"
+
+	t.Cleanup(func() { sopsx.Bin = saved })
+
+	stderr := captureStderr(t, func() { run([]string{"secrets", "generate"}) })
+	if !strings.Contains(stderr, "sops not found on PATH") || !strings.Contains(stderr, "--plaintext") {
+		t.Errorf("secrets generate without sops said:\n%s", stderr)
+	}
+
+	bundle := "cluster: {}\nsops:\n    version: 3.13.3\n"
+	if err := os.WriteFile(filepath.Join(dir, "secrets.sops.yaml"), []byte(bundle), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stderr = captureStderr(t, func() { run([]string{"render", "--dry-run"}) })
+	if !strings.Contains(stderr, "is SOPS-encrypted but sops not found on PATH") || strings.Contains(stderr, "--plaintext") {
+		t.Errorf("render of an encrypted bundle without sops said:\n%s", stderr)
+	}
+}
+
+// A node that holds another CA than the talosconfig answers, and turns it
+// away. Every command that would say it answers nothing says that instead:
+// the machine is up, and the fix is the talosconfig, or the bundle.
+func TestRefusedTalosconfigIsNamed(t *testing.T) {
+	dir, _ := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const refused = "turns this talosconfig away (x509: certificate signed by unknown authority)"
+
+	t.Setenv("STUB_REFUSE", "10.0.0.2")
+
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "-n", "w1"}, "w1 (10.0.0.2) answers, but " + refused},
+		{[]string{"apply", "--no-render", "--redact-secrets=false", "--only-new-nodes", "-n", "w1"}, "w1 (10.0.0.2) answers, but " + refused},
+		{[]string{"status"}, "refused: w1 (10.0.0.2) answers, but " + refused},
+	} {
+		var out string
+
+		stderr := captureStderr(t, func() { out = captureStdout(t, func() { run(tt.args) }) })
+
+		if !strings.Contains(stderr+out, tt.want) {
+			t.Errorf("%v said\n%s%s\nwant %q", tt.args, stderr, out, tt.want)
+		}
+	}
+
+	t.Setenv("STUB_REFUSE", "10.0.0.1 10.0.0.2")
+
+	stderr := captureStderr(t, func() { run([]string{"health"}) })
+	if !strings.Contains(stderr, "no control plane node would answer this talosconfig") ||
+		!strings.Contains(stderr, "c1 (10.0.0.1) answers, but "+refused) {
+		t.Errorf("health said\n%s", stderr)
 	}
 }
 
@@ -1348,6 +1698,22 @@ func TestMetricsFlagsOnlyWhereRecorded(t *testing.T) {
 	}
 }
 
+// A metrics URL that could never be pushed to is refused before the run, as a
+// bad label is: found out afterwards, the run's metrics are already lost.
+func TestMetricsURLCheckedFirst(t *testing.T) {
+	_, log := exitFixture(t)
+
+	t.Setenv("TALMAN_METRICS_URL", "metrics.example.com")
+
+	if got := run([]string{"reboot"}); got != 1 {
+		t.Errorf("exit %d, want 1", got)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "reboot") {
+		t.Errorf("the run went ahead:\n%s", calls)
+	}
+}
+
 // TestRotateCAReadsBackFirst: the bundle is read back out of the cluster
 // before anything rotates, so a cluster talman cannot read it from is refused
 // with nothing changed, rather than left trusting CAs no bundle holds.
@@ -1460,6 +1826,96 @@ func TestApplyBootstrap(t *testing.T) {
 
 	if strings.Count(c, " bootstrap") != 1 {
 		t.Errorf("etcd was bootstrapped %d times, want once", strings.Count(c, " bootstrap"))
+	}
+}
+
+// A node that answers nothing once etcd is bootstrapped may have its config
+// and be waiting for the cluster, or may be down: it is waited for, and
+// talman claims neither.
+func TestApplyBootstrapWaitsForASilentNode(t *testing.T) {
+	_, log := bootstrapFixture(t)
+
+	t.Setenv("STUB_FAIL", "10.0.0.2")
+
+	var got int
+
+	stderr := captureStderr(t, func() {
+		got = run([]string{"apply", "--bootstrap", "--no-render", "--redact-secrets=false",
+			"--stabilize=0s", "--timeout=1ms"})
+	})
+
+	if got != 1 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d, want 1: w1 never answered\n%s", got, calls)
+	}
+
+	if strings.Contains(stderr, "has its config;") || !strings.Contains(stderr, "w1 (10.0.0.2) is not answering") {
+		t.Errorf("want w1 said to be not answering, and nothing claimed about its config:\n%s", stderr)
+	}
+
+	if !strings.Contains(stderr, "it may be down") || !strings.Contains(stderr, "re-run once it recovers") {
+		t.Errorf("want the failed wait to say it may be down, and what to do:\n%s", stderr)
+	}
+}
+
+// The hints a stopped bootstrap prints run as printed: -c is said once, the
+// question is asked again, and the carry-on after etcd keeps the run's
+// flags and points at something that shows etcd.
+func TestApplyBootstrapHints(t *testing.T) {
+	dir, log := bootstrapFixture(t)
+
+	cfgFlag := []string{"-c", filepath.Join(dir, "talman.yaml")}
+	args := append(cfgFlag, "apply", "--bootstrap", "--no-render", "--redact-secrets=false", "--yes",
+		"--stabilize=0s", "--timeout=1ms")
+
+	// The first control plane's apply fails: the whole run again.
+	t.Setenv("STUB_FAIL", "apply-config")
+
+	_, hint := runHint(t, args...)
+	if strings.Count(hint, "talman.yaml") != 1 || strings.Contains(hint, "--yes") ||
+		!strings.HasPrefix(hint, "apply --bootstrap") {
+		t.Errorf("hint %q: want apply --bootstrap, -c once, and no --yes", hint)
+	}
+
+	// Bootstrapped, but etcd never comes up within the wait.
+	t.Setenv("STUB_FAIL", "")
+	t.Setenv("STUB_ETCD_NEVER", "1")
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run(args) })
+	if got != 1 {
+		t.Fatalf("exit %d, want 1\n%s", got, stderr)
+	}
+
+	if !strings.Contains(stderr, "ctl -n c1 service etcd") || strings.Contains(stderr, "talman status shows it") {
+		t.Errorf("want the carry-on to point at the etcd service, not status:\n%s", stderr)
+	}
+
+	if !strings.Contains(stderr, "talman apply --onboard-new-nodes --config=") ||
+		!strings.Contains(stderr, "--timeout=1ms") || strings.Contains(stderr, "--onboard-new-nodes --bootstrap") {
+		t.Errorf("want the carry-on to keep the run's flags, but not --bootstrap:\n%s", stderr)
+	}
+
+	// A run given --onboard-new-nodes too -- it is implied -- carries on
+	// with it once, whether etcd never came up or a later node failed.
+	args = append(args, "--onboard-new-nodes")
+
+	stderr = captureStderr(t, func() { run(args) })
+	if _, carryOn, _ := strings.Cut(stderr, "carry on with:"); strings.Count(carryOn, "--onboard-new-nodes") != 1 {
+		t.Errorf("want --onboard-new-nodes once in the carry-on:\n%s", stderr)
+	}
+
+	// A cluster to build again: nothing bootstrapped, nothing adopted.
+	_ = os.Remove(log + ".bootstrapped")
+	_ = os.Remove(log + ".adopted")
+
+	t.Setenv("STUB_ETCD_NEVER", "")
+	t.Setenv("STUB_FAIL", filepath.Join(dir, "clusterconfig", "w1.yaml"))
+
+	if _, hint := runHint(t, args...); !strings.HasPrefix(hint, "apply -n w1") ||
+		strings.Count(hint, "--onboard-new-nodes") != 1 || strings.Contains(hint, "--bootstrap") {
+		t.Errorf("hint %q: want w1 onboarded, --onboard-new-nodes once, no --bootstrap", hint)
 	}
 }
 

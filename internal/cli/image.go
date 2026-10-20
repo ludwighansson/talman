@@ -11,14 +11,7 @@ import (
 )
 
 func newImageCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "image",
-		Short: "Work with Talos images",
-	}
-
-	cmd.AddCommand(newImageURLCmd())
-
-	return cmd
+	return commandGroup("image", "Work with Talos images", newImageURLCmd())
 }
 
 func newImageURLCmd() *cobra.Command {
@@ -57,7 +50,7 @@ More in the README: "The Image Factory".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	addOutputFlag(cmd, &output)
 	cmd.Flags().StringVar(&kind, "kind", "installer", "what to print: installer, iso, disk or pxe")
 	cmd.Flags().StringVar(&arch, "arch", "amd64", "machine architecture for a boot medium: amd64 or arm64")
@@ -78,7 +71,7 @@ More in the README: "The Image Factory".`,
 
 		return nil
 	}
-	cmd.Flags().BoolVar(&submit, "submit", false, "register the schematic with the Image Factory first")
+	cmd.Flags().BoolVar(&submit, "submit", false, "register each schematic with the Image Factory and use the ID it returns, rather than computing it offline")
 
 	return cmd
 }

@@ -27,7 +27,8 @@ func newStatusCmd() *cobra.Command {
 		Long: `Status lists every node and asks each what it runs -- whether it answers, its
 Talos and Kubernetes versions and schematic -- beside what the config wants.
 An arrow marks drift; "-" is something talman could not read, never the
-configured value. It always succeeds; "talman health" is the one that fails.
+configured value. Nothing a node answers fails it; "talman health" is the one
+that fails.
 
 --offline asks nothing, and needs no cluster, secrets or talosconfig.
 -o json prints the same report for scripts.
@@ -117,13 +118,21 @@ More in the README: "Seeing what is out there".`,
 				return err
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), summarise(reports, offline))
+			fmt.Fprintln(cmd.OutOrStdout(), summarise(reports, offline, wide))
 
 			// A node with a config but no cluster to join never starts
 			// serving the Talos API, which looks exactly like a machine that
 			// is gone. Only asked when something is quiet, and only said when
 			// the control planes answered that there is no etcd -- not when
 			// they said nothing at all.
+			// Nor can a column say that a quiet node answered, and turned the
+			// talosconfig away: it is up, and holds another CA.
+			if !offline {
+				if note := refusedNote(tal, reports); note != "" {
+					fmt.Fprintln(cmd.OutOrStdout(), note)
+				}
+			}
+
 			if !offline && quiet(reports) && askCluster(cfg, tal, tc) == clusterAbsent {
 				fmt.Fprintln(cmd.OutOrStdout(), "cluster: not bootstrapped — a node with a config but no "+
 					"cluster to join stays quiet; run `"+talmanCmd("apply --bootstrap")+"`")
@@ -133,7 +142,7 @@ More in the README: "Seeing what is out there".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	cmd.Flags().BoolVar(&offline, "offline", false,
 		"ask nothing: report what the config says, with a dash for what only a node could tell")
 	cmd.Flags().BoolVar(&wide, "wide", false, "add the schematic column")
@@ -300,23 +309,29 @@ func withV(version string) string {
 }
 
 // summarise closes the table with the counts an operator would otherwise make
-// by eye.
-func summarise(reports []nodeReport, offline bool) string {
+// by eye. wide is whether the table shows the schematic column.
+func summarise(reports []nodeReport, offline, wide bool) string {
 	// Nothing about what was or was not asked: the dashes in the table say
 	// that already, and saying it twice reads as an apology.
 	if offline {
 		return fmt.Sprintf("%d node(s)", len(reports))
 	}
 
-	var running, maintenance, unreachable, stale int
+	var running, maintenance, unreachable, stale, otherSchematic int
 
 	for _, r := range reports {
 		switch r.Mode {
 		case talosctl.ModeRunning:
 			running++
 
-			if !upToDate(r.State, r.wantTalos, r.wantSchematic) || !k8sUpToDate(r.K8s, r.wantKubernetes) {
+			switch {
+			case r.State.TalosVersion != r.wantTalos || !k8sUpToDate(r.K8s, r.wantKubernetes):
 				stale++
+			case !upToDate(r.State, r.wantTalos, r.wantSchematic):
+				// On the configured versions, from another image: what
+				// upgrade would change, in a column the default table
+				// leaves out.
+				otherSchematic++
 			}
 		case talosctl.ModeMaintenance:
 			maintenance++
@@ -343,10 +358,52 @@ func summarise(reports []nodeReport, offline bool) string {
 	out := fmt.Sprintf("%d node(s): %s", len(reports), strings.Join(parts, ", "))
 
 	if stale > 0 {
-		return fmt.Sprintf("%s; %d not on the configured version", out, stale)
+		out += fmt.Sprintf("; %d not on the configured version", stale)
+	}
+
+	if otherSchematic > 0 {
+		out += fmt.Sprintf("; %d not on the configured schematic", otherSchematic)
+
+		if !wide {
+			out += " (--wide shows it)"
+		}
 	}
 
 	return out
+}
+
+// refusedNote names the quiet nodes that answered and turned the talosconfig
+// away, or is "" when none did.
+func refusedNote(tal *talosctl.Runner, reports []nodeReport) string {
+	var (
+		names []string
+		first *config.Node
+		why   string
+	)
+
+	for _, r := range reports {
+		if r.Mode != talosctl.ModeUnreachable {
+			continue
+		}
+
+		if reason := tal.Refused(r.Node.IPAddress); reason != "" {
+			names = append(names, r.Node.Hostname)
+
+			if first == nil {
+				first, why = r.Node, reason
+			}
+		}
+	}
+
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return "refused: " + silentNode(first, why)
+	default:
+		return fmt.Sprintf("refused: %s answer, but turn this talosconfig away (%s): they trust a different CA "+
+			"from the one this talosconfig, and the bundle it came from, were made with", strings.Join(names, ", "), why)
+	}
 }
 
 // quiet reports whether anything in the table failed to answer, which is the

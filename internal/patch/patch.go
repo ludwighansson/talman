@@ -20,7 +20,8 @@ import (
 func CheckStrategicMerge(name string, data []byte) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 
-	for i := 0; ; i++ {
+	// Counted from 1, as anyone reading the file counts them.
+	for i := 1; ; i++ {
 		var doc yaml.Node
 
 		err := dec.Decode(&doc)

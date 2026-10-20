@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +36,9 @@ type Runner struct {
 	// a dial timeout per call to rediscover it.
 	routeMu sync.Mutex
 	routes  map[string]bool
+	// refusals are the nodes whose Talos API answered and turned the
+	// talosconfig away, with why, as Refused reports them.
+	refusals map[string]string
 
 	ensureOnce sync.Once
 	ensureErr  error
@@ -157,8 +162,24 @@ func (r *Runner) Ensure() error {
 
 func (r *Runner) check() error {
 	if _, err := exec.LookPath(r.Bin); err != nil {
-		return fmt.Errorf("talosctl not found on PATH as %q: talman drives Talos entirely through it "+
-			"(install it, or set `talosctl:` in talman.yaml to a path)", r.Bin)
+		if !strings.ContainsAny(r.Bin, "/"+string(filepath.Separator)) {
+			return fmt.Errorf("talosctl not found on PATH as %q: talman drives Talos entirely through it "+
+				"(install it, or set `talosctl:` in talman.yaml to a path)", r.Bin)
+		}
+
+		// A path is run as it is, never looked up on PATH, so saying it
+		// was not found there would send the operator to the wrong place.
+		reason := "cannot be run: " + err.Error()
+
+		switch _, serr := os.Stat(r.Bin); {
+		case errors.Is(serr, fs.ErrNotExist):
+			reason = "does not exist"
+		case serr == nil:
+			reason = "is not executable"
+		}
+
+		return fmt.Errorf("talosctl at %s %s: it is the path `talosctl:` in talman.yaml names, "+
+			"read from the directory holding talman.yaml when relative", r.Bin, reason)
 	}
 
 	version, err := r.ClientVersion()

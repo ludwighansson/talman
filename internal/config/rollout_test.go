@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -61,14 +62,21 @@ func TestRolloutStages(t *testing.T) {
 			names = append(names, n.Hostname)
 		}
 
-		got = append(got, s.Name()+"="+strings.Join(names, " "))
+		got = append(got, fmt.Sprintf("%d/%d %s=%s", s.Number, s.Of, s.Name(), strings.Join(names, " ")))
 	}
 
 	// g1 is in blue and green, and goes with the first wave naming either;
 	// x1 is in no wave and goes last.
-	want := "controlplane=c1 | blue=b1 g1 | green,pink=p1 | red=r1 | rest=x1"
+	want := "1/5 controlplane=c1 | 2/5 blue=b1 g1 | 3/5 green,pink=p1 | 4/5 red=r1 | 5/5 rest=x1"
 	if strings.Join(got, " | ") != want {
 		t.Errorf("stages:\n  got  %s\n  want %s", strings.Join(got, " | "), want)
+	}
+
+	// Numbered among the waves the targets are in, not the config's: a wave
+	// none of them is in is not one a run goes through.
+	stages := cfg.Stages([]*Node{&cfg.Nodes[3], &cfg.Nodes[4]})
+	if len(stages) != 2 || stages[0].Number != 1 || stages[1].Number != 2 || stages[1].Of != 2 {
+		t.Errorf("stages of p1 and x1 = %+v, want green,pink 1/2 and rest 2/2", stages)
 	}
 }
 

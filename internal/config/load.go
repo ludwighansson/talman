@@ -8,9 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/ludwighansson/talman/internal/factory"
 )
 
 // Load reads, strictly decodes and validates a talman config file.
@@ -38,10 +41,18 @@ func Load(path string) (*Config, error) {
 // LoadNoValidate reads and decodes without running semantic validation. Used
 // by commands that want to report every problem themselves.
 func LoadNoValidate(path string) (*Config, error) {
+	named := path
+
+	// A directory is a cluster directory -- init makes one -- and the config
+	// meant is the one in it.
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		path = filepath.Join(path, DefaultFileName)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("no talman config at %s (use -c to point at one)", path)
+			return nil, fmt.Errorf("no talman config at %s%s", path, missingHint(named))
 		}
 
 		return nil, err
@@ -71,7 +82,7 @@ func LoadNoValidate(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s is empty", path)
 		}
 
-		return nil, fmt.Errorf("parsing %s: %w%s", path, err, renameHint(data))
+		return nil, fmt.Errorf("parsing %s: %w%s%s", path, err, renameHint(data), typoHint(data))
 	}
 
 	// A second document would be ignored, and whatever it says with it: two
@@ -98,8 +109,15 @@ func LoadNoValidate(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
-	if c.Talosctl == "" {
+	switch {
+	case c.Talosctl == "":
 		c.Talosctl = DefaultTalosctl
+	case strings.ContainsAny(c.Talosctl, "/"+string(filepath.Separator)):
+		// A path, as exec tells one from a name: read from the config's
+		// directory like every other path in it, rather than from wherever
+		// talman happens to be run -- `-c` and $TALMAN_CONFIG exist to run
+		// it from somewhere else. A bare name is still looked up on PATH.
+		c.Talosctl = c.ResolvePath(c.Talosctl)
 	}
 
 	if c.OutputDir == "" {
@@ -118,6 +136,40 @@ func (c *Config) OutputPath() string { return c.ResolvePath(c.OutputDir) }
 
 // SecretPath is the absolute path of the secrets bundle.
 func (c *Config) SecretPath() string { return c.ResolvePath(c.SecretFile) }
+
+// LegacySecretFile is the name talhelper gives the secrets bundle, and the one
+// talman's early prereleases looked for by default.
+const LegacySecretFile = "talsecret.sops.yaml"
+
+// LegacySecret is the bundle a cluster directory still holds under that name,
+// with nothing at the default one: LegacySecretFile, or "" when it is not so.
+//
+// talman looks only where secretFile says, so such a directory -- migrated
+// from talhelper, or written by an early talman -- has no bundle as far as
+// talman can tell, and the obvious fix, generating one, makes new CAs that
+// the running cluster does not trust.
+func (c *Config) LegacySecret() string {
+	if c.SecretFile != DefaultSecretFile {
+		return ""
+	}
+
+	if _, err := os.Stat(c.SecretPath()); !errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+
+	if _, err := os.Stat(c.ResolvePath(LegacySecretFile)); err != nil {
+		return ""
+	}
+
+	return LegacySecretFile
+}
+
+// LegacySecretHint is what to do about LegacySecret: use the bundle that is
+// there, under either name.
+func (c *Config) LegacySecretHint(legacy string) string {
+	return fmt.Sprintf("%s is here, the name talhelper and talman's early prereleases gave the bundle: "+
+		"rename it to %s, or set `secretFile: %s` in talman.yaml", legacy, c.SecretFile, legacy)
+}
 
 // MachineConfigPath is where a node's rendered machine config is written.
 //
@@ -147,7 +199,8 @@ func (c *Config) KubeconfigPath() string {
 const EnvConfig = "TALMAN_CONFIG"
 
 // FindConfig locates a config file: the explicit path if given, else
-// $TALMAN_CONFIG, else talman.yaml in the working directory.
+// $TALMAN_CONFIG, else talman.yaml in the working directory. Either may name
+// a directory, which LoadNoValidate reads the talman.yaml in.
 func FindConfig(explicit string) string {
 	if explicit != "" {
 		return explicit
@@ -158,6 +211,21 @@ func FindConfig(explicit string) string {
 	}
 
 	return DefaultFileName
+}
+
+// missingHint says where to go from a config that is not there. The default
+// one missing is, on a first run, no config at all, so the way on is init; a
+// path someone named is the place to look, and a $TALMAN_CONFIG set and
+// forgotten is worth saying, since nothing on the command line shows it.
+func missingHint(named string) string {
+	switch env := os.Getenv(EnvConfig); {
+	case env != "" && named == env:
+		return " (named by $" + EnvConfig + ")"
+	case named == DefaultFileName:
+		return ": start one with `talman init`, or point -c at one"
+	default:
+		return ""
+	}
 }
 
 // renameHint names the keys 1.0 renamed that a config still spells the old
@@ -202,6 +270,110 @@ func renameHint(data []byte) string {
 	}
 
 	return "\n  " + strings.Join(hints, "\n  ")
+}
+
+// typoHint suggests the key meant for each one talman.yaml has that no type
+// does, when one is near enough: the same in another case, or a letter or
+// two away.
+//
+// Worked out from the file and the yaml tags, like renameHint, rather than
+// from the decoder's error -- whose wording is the YAML library's -- and the
+// keys renameHint covers are left to it.
+func typoHint(data []byte) string {
+	var doc yaml.Node
+	if yaml.Unmarshal(data, &doc) != nil || len(doc.Content) == 0 {
+		return ""
+	}
+
+	var hints []string
+
+	var walk func(n *yaml.Node, t reflect.Type)
+
+	walk = func(n *yaml.Node, t reflect.Type) {
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+
+		switch {
+		case t == reflect.TypeFor[SchematicRef]():
+			walk(n, reflect.TypeFor[factory.Schematic]())
+		case t.Kind() == reflect.Slice && n.Kind == yaml.SequenceNode:
+			for _, item := range n.Content {
+				walk(item, t.Elem())
+			}
+		case t.Kind() == reflect.Struct && n.Kind == yaml.MappingNode:
+			known := map[string]reflect.Type{}
+
+			for f := range t.Fields() {
+				if name, _, _ := strings.Cut(f.Tag.Get("yaml"), ","); name != "" && name != "-" {
+					known[name] = f.Type
+				}
+			}
+
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				key := n.Content[i].Value
+
+				if ft, ok := known[key]; ok {
+					walk(n.Content[i+1], ft)
+				} else if near := nearest(key, known); near != "" && key != "talosMode" && key != "secureboot" {
+					hints = append(hints, fmt.Sprintf("line %d: %s: did you mean %s?", n.Content[i].Line, key, near))
+				}
+			}
+		}
+	}
+
+	walk(doc.Content[0], reflect.TypeFor[Config]())
+
+	if len(hints) == 0 {
+		return ""
+	}
+
+	return "\n  " + strings.Join(hints, "\n  ")
+}
+
+// nearest is the known key key is likeliest a typo of, or "".
+func nearest(key string, known map[string]reflect.Type) string {
+	best, bestDist := "", 3
+
+	for name := range known {
+		d := editDistance(strings.ToLower(key), strings.ToLower(name))
+		if d < bestDist || (d == bestDist && name < best) {
+			best, bestDist = name, d
+		}
+	}
+
+	// A short key is two letters from too many others to guess at.
+	if len(key) < 5 && bestDist > 1 {
+		return ""
+	}
+
+	return best
+}
+
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+
+		prev = cur
+	}
+
+	return prev[len(b)]
 }
 
 // moreDocuments reports whether the decoder holds another document with

@@ -41,7 +41,7 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				return fmt.Errorf("--mode %q is invalid: must be one of %s", mode, strings.Join(rebootModes, ", "))
 			}
 
-			return nil
+			return positive("timeout", timeout)
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rec := currentRun
@@ -93,23 +93,26 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				return true, nil
 			}
 
-			if err := (rollOut{
+			ro := rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
 				verb: "reboot", done: "rebooted",
 				targets: targets, parallel: parallel,
 				health: health, timeout: timeout, waits: wait,
 				stages: stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
-			}).run(rebootOne); err != nil {
+			}
+
+			if err := ro.run(rebootOne); err != nil {
 				return err
 			}
 
 			rec.SetChanged(len(targets) > 0)
+			ro.carryOn()
 
 			return nil
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	cmd.Flags().StringVarP(&mode, "mode", "m", "default",
 		"reboot mode: default, powercycle (bypass kexec) or force (skip graceful shutdown)")
 	cmd.Flags().BoolVar(&wait, "wait", true, "wait for each node to come back before moving on")

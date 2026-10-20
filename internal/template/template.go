@@ -107,7 +107,7 @@ func RenderSeeing(name string, content []byte, ctx Context, seen func(string)) (
 	var buf bytes.Buffer
 
 	if err := tmpl.Execute(&buf, ctx); err != nil {
-		return nil, fmt.Errorf("%s: rendering template: %w", name, cleanErr(err, name))
+		return nil, fmt.Errorf("%s: rendering template: %w%s", name, cleanErr(err, name), missingKeyHint(err))
 	}
 
 	return buf.Bytes(), nil
@@ -126,9 +126,44 @@ func cleanErr(err error, name string) error {
 	msg = strings.TrimPrefix(msg, "template: "+name+":")
 	msg = executingRE.ReplaceAllString(msg, "")
 	msg = strings.ReplaceAll(msg, "in type template.Context", "in the patch template context")
+	msg = strings.ReplaceAll(msg, "in type template.Node", "in .Node")
+	msg = strings.ReplaceAll(msg, "in type template.Cluster", "in .Cluster")
 
 	return fmt.Errorf("%s", msg)
 }
 
 // executingRE matches text/template's `executing "<name>" at ` interjection.
 var executingRE = regexp.MustCompile(`executing "[^"]*" at `)
+
+// missingKeyRE matches text/template's report of a map key that is not there,
+// and the expression that looked it up.
+var missingKeyRE = regexp.MustCompile(`<([^>]*)>: map has no entry for key "([^"]*)"`)
+
+// missingKeyHint says how to read a key that may be absent.
+//
+// missingkey=error is what makes a typo an error rather than "<no value>",
+// and it also means `{{ .Node.Values.zone | default "az1" }}` can never work:
+// the lookup fails before default sees anything. index does not, so it is the
+// spelling to give, with the map and key the template used.
+func missingKeyHint(err error) string {
+	m := missingKeyRE.FindStringSubmatch(err.Error())
+	if m == nil {
+		return ""
+	}
+
+	expr, key := m[1], m[2]
+
+	// The map is what the expression held before the key: `.` itself
+	// inside a with or a range over it.
+	parent := ".Node.Values"
+
+	switch i := strings.LastIndex(expr, "."+key); {
+	case i == 0:
+		parent = "."
+	case i > 0:
+		parent = expr[:i]
+	}
+
+	return fmt.Sprintf("\n  a key that may be missing is read with index, which gives nothing instead of an error: "+
+		"{{ index %s %q | default \"...\" }}", parent, key)
+}

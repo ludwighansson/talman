@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -20,8 +21,27 @@ import (
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
-// Version is set at build time by goreleaser.
+// Version is set at build time by goreleaser; talmanVersion is what a binary
+// reports.
 var Version = "dev"
+
+// talmanVersion is the version this binary reports.
+//
+// goreleaser stamps Version into a release. A binary built any other way --
+// go install ...@v1.0.0 above all, the install the README leads with -- still
+// carries the module version Go recorded in it, and "dev" in a bug report or a
+// talman_run_info label says nothing about which talman ran.
+func talmanVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+
+	return Version
+}
 
 // errChanged is what a command returns when --detailed-exit-code is set and
 // the run changed something, or would have. It is a result rather than a
@@ -47,8 +67,9 @@ var opts globals
 // Execute runs the root command and returns a process exit code.
 //
 // 0 is success, 1 a failure of any kind -- a usage error included -- 2 a
-// --detailed-exit-code run that changed something, and 130 a run stopped by
-// SIGINT or SIGTERM, which is reported whatever else the command returned.
+// --detailed-exit-code run that changed something, and 128 plus the signal for
+// a run a signal stopped (130 for SIGINT, 143 for SIGTERM), which is reported
+// whatever else the command returned.
 func Execute() int {
 	defer interrupt.Watch()()
 
@@ -67,7 +88,7 @@ func run(args []string) int {
 		// because of the same signal, and said whatever it had to.
 		var exit exitCodeError
 		if err != nil && !errors.Is(err, errChanged) && !errors.As(err, &exit) {
-			fmt.Fprintln(os.Stderr, "error: "+err.Error())
+			fmt.Fprintln(os.Stderr, errorText(err))
 		}
 
 		fmt.Fprintln(os.Stderr, "interrupted")
@@ -89,12 +110,47 @@ func run(args []string) int {
 
 		// SilenceErrors is set, so this is the only place any error is
 		// printed, cobra's own usage errors included.
-		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		fmt.Fprintln(os.Stderr, errorText(err))
 
 		return 1
 	}
 
 	return 0
+}
+
+// errorText is how an error is printed: on its own line, or, when it is
+// several problems reported together, as a list of them under their count.
+//
+// Joined errors read one per line, so after "error: " they came out as one
+// error and a run of unmarked lines, and one that ran to several lines of its
+// own -- a rejection talosctl quotes, a hint -- could not be told from the
+// next. Each problem now starts its own item, and its later lines sit under it.
+func errorText(err error) string {
+	many, ok := err.(interface{ Unwrap() []error })
+	if !ok || len(many.Unwrap()) < 2 {
+		return "error: " + err.Error()
+	}
+
+	errs := many.Unwrap()
+
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "error: %d problems:", len(errs))
+
+	for _, e := range errs {
+		for i, line := range strings.Split(e.Error(), "\n") {
+			switch {
+			case line == "":
+				b.WriteString("\n")
+			case i == 0:
+				b.WriteString("\n  " + line)
+			default:
+				b.WriteString("\n    " + line)
+			}
+		}
+	}
+
+	return b.String()
 }
 
 func newRootCmd() *cobra.Command {
@@ -109,14 +165,16 @@ to the reserved groups "all" and its role, plus any groups it declares, and the
 patches for those groups are applied in that order.
 
 talman never links against the Talos API: everything that touches a cluster
-goes through the talosctl binary.`,
+goes through the talosctl binary.
+
+The README is the manual: https://github.com/ludwighansson/talman#readme`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Version:       Version,
+		Version:       talmanVersion(),
 	}
 
 	cmd.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "",
-		"path to the talman config (default $"+config.EnvConfig+", else "+config.DefaultFileName+")")
+		"path to the talman config, or the directory holding it (default $"+config.EnvConfig+", else "+config.DefaultFileName+")")
 	cmd.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false,
 		"echo each talosctl invocation")
 
@@ -145,6 +203,17 @@ goes through the talosctl binary.`,
 
 		for _, nested := range sub.Commands() {
 			withNodeSelection(nested)
+		}
+	}
+
+	// cobra adds its completion command when the root runs; added now, so it
+	// can refuse a shell it has no script for as the other groups refuse a
+	// mistyped subcommand, rather than print help and exit 0.
+	cmd.InitDefaultCompletionCmd()
+
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "completion" {
+			refuseUnknownSubcommands(sub)
 		}
 	}
 

@@ -174,7 +174,11 @@ func TestParseLabel(t *testing.T) {
 		t.Errorf("a value may hold '=': %q %v", v, err)
 	}
 
-	for _, bad := range []string{"env", "env=", "1env=x", "cluster=x", "node=x", "__name__=x", "my-label=x"} {
+	if k, v, err := ParseLabel(" env = prod "); err != nil || k != "env" || v != "prod" {
+		t.Errorf("ParseLabel( env = prod ) = %q %q %v", k, v, err)
+	}
+
+	for _, bad := range []string{"env", "env=", "env= ", "1env=x", "cluster=x", "node=x", "__name__=x", "my-label=x"} {
 		if _, _, err := ParseLabel(bad); err == nil {
 			t.Errorf("ParseLabel(%q) accepted it", bad)
 		}
@@ -199,8 +203,14 @@ func TestPushURL(t *testing.T) {
 		t.Errorf("PushURL =\n %s\nwant\n %s", got, want)
 	}
 
-	if _, err := r.PushURL("ftp://nope"); err == nil {
-		t.Error("accepted a URL that is not http")
+	for _, bad := range []string{"ftp://nope", "metrics.example.com", "https://", "https:///metrics"} {
+		if _, err := r.PushURL(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+
+		if err := CheckURL(bad); err == nil {
+			t.Errorf("CheckURL accepted %q", bad)
+		}
 	}
 }
 

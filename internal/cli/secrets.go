@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,14 +16,7 @@ import (
 )
 
 func newSecretsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "secrets",
-		Short: "Manage the cluster secrets bundle",
-	}
-
-	cmd.AddCommand(newSecretsGenerateCmd())
-
-	return cmd
+	return commandGroup("secrets", "Manage the cluster secrets bundle", newSecretsGenerateCmd())
 }
 
 func newSecretsGenerateCmd() *cobra.Command {
@@ -44,7 +38,9 @@ the destination path.
 It refuses to overwrite an existing bundle: the certificate authorities and
 cluster identity in it are what a running cluster trusts, so replacing them
 orphans every node. Use --from-controlplane-config to adopt the secrets of a
-cluster that already exists.`,
+cluster that already exists.
+
+More in the README: "Secrets".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig()
@@ -66,6 +62,14 @@ cluster that already exists.`,
 				}
 			}
 
+			// A bundle under its old name is as much the cluster's as one
+			// at the default, and a new one beside it would be read instead.
+			// --force replaces a bundle; it does not reach this one.
+			if legacy := cfg.LegacySecret(); legacy != "" && !toStdout {
+				return fmt.Errorf("%s; a new bundle beside it would hold new CAs the cluster does not trust "+
+					"(for a new cluster, move it aside first)", cfg.LegacySecretHint(legacy))
+			}
+
 			bundle, err := tal.GenSecrets(talosctl.GenSecretsOptions{
 				TalosVersion:           cfg.TalosVersion,
 				FromControlPlaneConfig: fromConfig,
@@ -85,6 +89,12 @@ cluster that already exists.`,
 
 			if !plaintext {
 				if out, err = sopsx.EncryptTo(bundle, dest); err != nil {
+					// Here, and only here, there is another way: a bundle
+					// for a cluster that is thrown away needs no key.
+					if errors.Is(err, sopsx.ErrNotInstalled) {
+						return fmt.Errorf("%w, or write the bundle unencrypted with --plaintext", err)
+					}
+
 					return err
 				}
 			}
@@ -122,7 +132,9 @@ cluster that already exists.`,
 
 	cmd.Flags().StringVar(&fromConfig, "from-controlplane-config", "",
 		"extract the bundle from an existing control plane machine config instead of generating new material")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing secrets bundle")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"overwrite an existing secrets bundle, keeping the old one in the output directory as "+
+			"secrets-pre-generate-<time>.yaml")
 	cmd.Flags().BoolVar(&plaintext, "plaintext", false, "write the bundle unencrypted")
 	cmd.Flags().BoolVar(&toStdout, "stdout", false, "write the plaintext bundle to stdout instead of a file")
 	addExtraFlags(cmd, &extraFlags)

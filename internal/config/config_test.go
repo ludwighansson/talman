@@ -171,6 +171,52 @@ nodes:
 	}
 }
 
+// talosctl: is a path like every other in the config when it is one, read
+// from the config's directory however talman was pointed at it; a bare name
+// is left for PATH.
+func TestTalosctlPathResolvesAgainstConfigDir(t *testing.T) {
+	nodes := `
+nodes:
+  - hostname: cp1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`
+
+	t.Chdir(t.TempDir())
+
+	for _, tc := range []struct{ value, want string }{
+		{"./bin/talosctl", "bin/talosctl"},
+		{"bin/talosctl", "bin/talosctl"},
+		{"../tools/talosctl", "../tools/talosctl"},
+		{"talosctl-1.14", ""},
+		{"", ""},
+	} {
+		body := validBase + nodes
+		if tc.value != "" {
+			body = validBase + "talosctl: " + tc.value + "\n" + nodes
+		}
+
+		path := write(t, body)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := filepath.Join(filepath.Dir(path), tc.want)
+		switch {
+		case tc.value == "":
+			want = DefaultTalosctl
+		case tc.want == "":
+			want = tc.value
+		}
+
+		if cfg.Talosctl != want {
+			t.Errorf("talosctl: %q resolved to %q, want %q", tc.value, cfg.Talosctl, want)
+		}
+	}
+}
+
 func TestValidationErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -215,6 +261,53 @@ nodes:
 `,
 			files:   []string{"p/x.yaml"},
 			wantErr: "is a directory",
+		},
+		{
+			name: "node patch file missing",
+			body: validBase + `
+nodes:
+  - hostname: w1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    patches: [p/nope.yaml]
+`,
+			wantErr: `nodes[w1].patches: "p/nope.yaml" does not exist`,
+		},
+		{
+			name: "a group called node is still a group",
+			body: validBase + `
+patches:
+  node: [p/nope.yaml]
+nodes:
+  - hostname: w1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    groups: [node]
+`,
+			wantErr: `patches.node: "p/nope.yaml" does not exist`,
+		},
+		{
+			name: "schematic file missing",
+			body: validBase + `
+schematic: ./schematic.yaml
+nodes:
+  - hostname: w1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`,
+			wantErr: `schematic: "./schematic.yaml" does not exist`,
+		},
+		{
+			name: "node schematic path is a directory",
+			body: validBase + `
+nodes:
+  - hostname: w1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    schematic: ./p
+`,
+			files:   []string{"p/x.yaml"},
+			wantErr: `node w1: schematic: "./p" is a directory`,
 		},
 		{
 			name: "invalid role",
@@ -765,6 +858,51 @@ func TestFindConfig(t *testing.T) {
 	}
 }
 
+// -c and $TALMAN_CONFIG may name the cluster directory itself, which is
+// what init makes and what a reader thinks of as "the cluster".
+func TestLoadADirectory(t *testing.T) {
+	path := write(t, validBase+`
+nodes:
+  - hostname: cp1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`)
+
+	cfg, err := Load(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Path != path {
+		t.Errorf("loaded %s, want %s", cfg.Path, path)
+	}
+}
+
+// A config that is not there says where to go next: init, for the default
+// one, which on a first run is no config at all; for one $TALMAN_CONFIG
+// names, that it does, since nothing on the command line shows it.
+func TestMissingConfigSaysWhatNamedIt(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv(EnvConfig, "")
+
+	_, err := Load(FindConfig(""))
+	if err == nil || !strings.Contains(err.Error(), "talman init") {
+		t.Errorf("the default config missing: %v, want it to suggest talman init", err)
+	}
+
+	t.Setenv(EnvConfig, "clusters/prod")
+
+	_, err = Load(FindConfig(""))
+	if err == nil || !strings.Contains(err.Error(), "$"+EnvConfig) || strings.Contains(err.Error(), "talman init") {
+		t.Errorf("a config $%s names missing: %v, want it to say so", EnvConfig, err)
+	}
+
+	_, err = Load(FindConfig("elsewhere.yaml"))
+	if err == nil || strings.Contains(err.Error(), "-c") || strings.Contains(err.Error(), "$"+EnvConfig) {
+		t.Errorf("a config -c names missing: %v, want it named and nothing more", err)
+	}
+}
+
 func TestValuesFiles(t *testing.T) {
 	path := write(t, validBase+`valuesFiles: [shared.yaml, site.yaml]
 values:
@@ -888,6 +1026,98 @@ nodes:
 
 // The rename hints come from reading the file, so they hold whatever wording
 // the YAML library's own error takes.
+// A value talman's own decoders refuse is placed by the YAML library, once,
+// on the line in talman.yaml where it sits -- an inline schematic's included,
+// which is decoded from the config rather than from a copy of itself.
+func TestDecodeErrorsNameTheirLine(t *testing.T) {
+	cp := `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`
+	// validBase is five lines, so what follows it starts on line 6.
+	for want, body := range map[string]string{
+		`line 9: invalid role "master"`: validBase + `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.10
+    role: master
+`,
+		"line 8: invalid schematic: field systemExtension not found": validBase + `schematic:
+  customization:
+    systemExtension:
+      officialExtensions: [siderolabs/drbd]
+` + cp,
+		`line 8: invalid schematic: bootloader "lilo"`: validBase + `schematic:
+  customization:
+    bootloader: lilo
+` + cp,
+		"line 8: a wave is a group name": validBase + `rollout:
+  waves:
+    - {a: b}
+` + cp,
+	} {
+		_, err := Load(write(t, body))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() = %v, want it to say %q", err, want)
+
+			continue
+		}
+
+		// The decoder's own message, without the hints that follow it.
+		decoded, _, _ := strings.Cut(err.Error(), "\n")
+		if n := strings.Count(decoded, "line "); n != 1 {
+			t.Errorf("the line is given %d times: %v", n, err)
+		}
+	}
+}
+
+// An unknown key a letter or two from a known one, or the same in another
+// case, gets the key it is likeliest a typo of; one near nothing gets no
+// guess, and the renamed keys are left to their own hint.
+func TestTypoHints(t *testing.T) {
+	body := `apiVersion: talman.dev/v1
+clustername: test
+endpoint: https://10.0.0.1:6443
+talosVersion: v1.14.0
+kubernetesVersion: v1.37.0
+talosMode: metal
+imageFactory:
+  plattform: metal
+schematic:
+  customization:
+    systemExtension:
+      officialExtensions: [siderolabs/drbd]
+nodes:
+  - hostname: c1
+    ipAddres: 10.0.0.10
+    rol: controlplane
+    xyz: 1
+`
+
+	_, err := Load(write(t, body))
+	if err == nil {
+		t.Fatal("expected unknown keys to be refused")
+	}
+
+	for _, want := range []string{
+		"line 2: clustername: did you mean clusterName?",
+		"line 8: plattform: did you mean platform?",
+		"line 11: systemExtension: did you mean systemExtensions?",
+		"line 15: ipAddres: did you mean ipAddress?",
+		"line 16: rol: did you mean role?",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() does not say %q:\n%v", want, err)
+		}
+	}
+
+	for _, unwanted := range []string{"xyz: did you mean", "talosMode: did you mean"} {
+		if strings.Contains(err.Error(), unwanted) {
+			t.Errorf("Load() guessed where it should not (%q):\n%v", unwanted, err)
+		}
+	}
+}
+
 func TestRenameHints(t *testing.T) {
 	for want, body := range map[string]string{
 		"renamed validationMode": validBase + "talosMode: metal\n" + `nodes:
@@ -963,5 +1193,39 @@ func TestOutputDirMustBeItsOwn(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "outputDir") {
 			t.Errorf("outputDir %q: Load() = %v, want it refused", dir, err)
 		}
+	}
+}
+
+// A bundle left under talhelper's name, or an early talman's, is found when
+// nothing is at the default -- and only then: a bundle at the default, or a
+// secretFile naming one, is the config's answer.
+func TestLegacySecret(t *testing.T) {
+	const nodes = `nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.1
+    role: controlplane
+`
+
+	for _, tt := range []struct {
+		name  string
+		extra string
+		files []string
+		want  string
+	}{
+		{"only the old name", "", []string{LegacySecretFile}, LegacySecretFile},
+		{"both names", "", []string{LegacySecretFile, DefaultSecretFile}, ""},
+		{"neither", "", nil, ""},
+		{"secretFile names another", "secretFile: other.sops.yaml\n", []string{LegacySecretFile}, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Load(write(t, validBase+tt.extra+nodes, tt.files...))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := cfg.LegacySecret(); got != tt.want {
+				t.Errorf("LegacySecret() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

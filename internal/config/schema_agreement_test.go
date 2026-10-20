@@ -50,10 +50,12 @@ nodes:
 `
 
 	// Each case is base with a change: extra top-level keys, extra keys on
-	// the node, or a replacement.
+	// the node, or a replacement -- and the files it names, which Load
+	// checks and a schema cannot.
 	cases := map[string]struct {
 		top, node   string
 		from, to    string
+		files       []string
 		wantAccepts bool
 	}{
 		"base":                       {wantAccepts: true},
@@ -122,8 +124,11 @@ nodes:
 		"empty validationMode":       {top: "validationMode:\n", wantAccepts: true},
 		"numeric hostname":           {from: "hostname: cp-01", to: "hostname: 123", wantAccepts: true},
 		"numeric cluster name":       {from: "clusterName: c", to: "clusterName: 123", wantAccepts: true},
-		"numeric schematic path":     {top: "schematic: 123\n", wantAccepts: true},
+		"numeric schematic path":     {top: "schematic: 123\n", files: []string{"123"}, wantAccepts: true},
 		"empty meta value":           {top: "schematic:\n  customization:\n    meta:\n      - key: 1\n        value:\n", wantAccepts: true},
+		"meta with no value":         {top: "schematic:\n  customization:\n    meta:\n      - key: 1\n", wantAccepts: true},
+		"an empty group item":        {node: "    groups:\n      - db\n      -\n", wantAccepts: true},
+		"an empty group name":        {node: "    groups: [\"\"]\n"},
 		"endpoint with a query":      {from: "https://10.0.0.1:6443", to: "https://10.0.0.1:6443?x=1", wantAccepts: true},
 		"a reserved group":           {node: "    groups: [all]\n"},
 		"the rest wave as a group":   {node: "    groups: [rest]\n"},
@@ -145,7 +150,7 @@ nodes:
 
 			body += tt.node + tt.top
 
-			_, loadErr := Load(write(t, body))
+			_, loadErr := Load(write(t, body, tt.files...))
 			talman := loadErr == nil
 
 			var parsed any

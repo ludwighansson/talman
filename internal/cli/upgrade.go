@@ -56,6 +56,10 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				}
 			}
 
+			if err := positive("timeout", timeout); err != nil {
+				return err
+			}
+
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -109,6 +113,12 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				if !force {
 					current, err := tal.State(tc, n.IPAddress)
 					if err != nil {
+						// --force is no way out of a dry run: it skips the
+						// very question a dry run asks.
+						if dryRun {
+							return false, fmt.Errorf("reading current state of %s: %w", n.Hostname, err)
+						}
+
 						return false, fmt.Errorf("reading current state of %s: %w "+
 							"(pass --force to upgrade without checking)", n.Hostname, err)
 					}
@@ -117,8 +127,8 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 
 					if upToDate(current, want, ctx.Node.SchematicID) {
 						rec.NodeChanged(n.Hostname, false)
-						say(fmt.Sprintf("== %s (%s) already runs %s with schematic %s; skipping\n",
-							n.Hostname, n.IPAddress, current.TalosVersion, short(current.SchematicID)))
+						say(fmt.Sprintf("== %s (%s) already runs %s; skipping\n",
+							n.Hostname, n.IPAddress, describeState(current)))
 
 						countMu.Lock()
 						skipped++
@@ -180,15 +190,17 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 			// Control planes one at a time whatever --parallel says: an
 			// upgrade reboots the machine, and two control planes rebooting
 			// together is how a three-node cluster loses quorum.
-			if err := (rollOut{
+			ro := rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
-				verb: "upgrade", done: "upgraded",
+				verb: "upgrade", done: pastTense(dryRun, "upgraded"),
 				targets: targets, parallel: parallel, inert: dryRun,
 				// talosctl waits for every upgrade: it drains the node first,
 				// and a drain always waits.
 				health: health, timeout: timeout, waits: true,
 				stages: stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
-			}).run(upgradeOne); err != nil {
+			}
+
+			if err := ro.run(upgradeOne); err != nil {
 				return err
 			}
 
@@ -196,6 +208,8 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				fmt.Fprintf(os.Stderr, "nothing to upgrade: every selected node already runs "+
 					"its configured version and schematic (use --force to upgrade anyway)\n")
 			}
+
+			ro.carryOn()
 
 			if detailed && upgraded > 0 {
 				return errChanged
@@ -205,8 +219,8 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
-	cmd.Flags().BoolVar(&submit, "submit", false, "register schematics with the Image Factory first")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
+	cmd.Flags().BoolVar(&submit, "submit", false, "register each schematic with the Image Factory and use the ID it returns, rather than computing it offline")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"upgrade even when the node already runs the configured version and schematic")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
@@ -250,7 +264,9 @@ to upgrade -- which is what running the command would do. Pass --force to run
 the upgrade regardless, or --force --dry-run for talosctl's own plan.
 
 --detailed-exit-code reports which of the two happened: 2 when the upgrade ran,
-0 when every node was already on the target, 1 on error.`,
+0 when every node was already on the target, 1 on error.
+
+More in the README: "Rolling changes out safely".`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			rec := currentRun
@@ -273,6 +289,20 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 			// kubelet image tag are both written either way.
 			version = strings.TrimPrefix(version, "v")
 
+			// A cluster left on a version the config does not name is one
+			// the next apply takes back: every machine config it renders
+			// carries kubernetesVersion, and sending them moves Kubernetes
+			// back down to it.
+			undone := func() {
+				if dryRun || k8sUpToDate(version, cfg.KubernetesVersion) {
+					return
+				}
+
+				fmt.Fprintf(os.Stderr, "warning: talman.yaml still says kubernetesVersion: %s, and the configs "+
+					"the next apply sends would take the cluster back to it: set it to v%s\n",
+					withV(cfg.KubernetesVersion), version)
+			}
+
 			if !force {
 				current, err := clusterRunsK8s(tal, tc, cfg.Nodes, version)
 				if err != nil {
@@ -283,6 +313,7 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 					fmt.Fprintf(os.Stderr, "nothing to upgrade: every node already runs Kubernetes v%s "+
 						"(use --force to upgrade anyway)\n", version)
 					rec.SetChanged(false)
+					undone()
 
 					return nil
 				}
@@ -312,6 +343,7 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 			}
 
 			rec.SetChanged(true)
+			undone()
 
 			if detailed {
 				return errChanged
@@ -321,7 +353,8 @@ the upgrade regardless, or --force --dry-run for talosctl's own plan.
 		},
 	}
 
-	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to drive the upgrade from")
+	cmd.Flags().StringVarP(&node, "node", "n", "",
+		"control plane node to drive the upgrade from (default: the first that answers)")
 	cmd.Flags().StringVar(&to, "to", "", "target Kubernetes version (default: kubernetesVersion from the config)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"say whether an upgrade is needed, without running one (with --force: talosctl's own plan)")

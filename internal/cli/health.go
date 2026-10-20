@@ -28,28 +28,33 @@ pods and every node's readiness.
 
 The check runs from one control plane node -- the first in the config that
 answers, unless --node names another -- and reports on the whole cluster, not
-on that node.`,
+on that node.
+
+More in the README: "Rolling changes out safely".`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if timeout < 0 {
+				return fmt.Errorf("--timeout %s is negative: 0 is talosctl's own default", timeout)
+			}
+
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
 			if err != nil {
 				return err
 			}
 
-			// With no node named, prefer one that is answering: a check
-			// driven from a control plane that is down reports the cluster as
-			// broken when what is broken is the entry point.
-			if node == "" {
-				target, err = healthNode(cfg, tal, tc)
-				if err != nil {
-					return err
-				}
+			// With no node named, it is one that answered: a check driven
+			// from a control plane that is down reports the cluster as broken
+			// when what is broken is the entry point. A named one is asked
+			// too, so the check goes the way it answered.
+			if node != "" && !tal.Reachable(tc, target.IPAddress) {
+				return fmt.Errorf("%s (%s) does not answer the Talos API, directly or through the "+
+					"talosconfig's endpoints", target.Hostname, target.IPAddress)
 			}
 
 			// Unbounded unless asked: `talman health` was run on purpose, and
 			// talosctl's own patience is the right default for a command
 			// whose whole job is to wait for a cluster.
-			args := append(healthArgs(cfg, tc, target, serverSide, timeout), extraFlags...)
+			args := append(healthArgs(cfg, tal, tc, target, serverSide, timeout), extraFlags...)
 
 			return tal.Stream(args...)
 		},
@@ -64,8 +69,9 @@ on that node.`,
 	return cmd
 }
 
-// healthNode picks the control plane a health check runs from: the first one
-// in the config that answers the Talos API.
+// healthNode picks the control plane a health check runs from -- or anything
+// else that acts on the cluster as a whole -- the first one in the config that
+// answers the Talos API.
 //
 // Answering matters because the alternative is reporting a whole cluster as
 // broken when the single node talman chose to ask happens to be the one that
@@ -85,10 +91,17 @@ on that node.`,
 func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*config.Node, error) {
 	cps := cfg.ControlPlanes()
 	if len(cps) == 0 {
-		return nil, errors.New("no control plane nodes in the config: nothing can answer for cluster health")
+		return nil, errors.New("no control plane nodes in the config: nothing can answer for the cluster")
 	}
 
 	addrs := make([]string, 0, len(cps))
+
+	// One that answered and turned the talosconfig away says more than
+	// "cannot be reached": the cluster is there, and holds another CA.
+	var (
+		refusedBy *config.Node
+		why       string
+	)
 
 	for _, n := range cps {
 		if tal.Reachable(talosconfig, n.IPAddress) {
@@ -96,10 +109,19 @@ func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*
 		}
 
 		addrs = append(addrs, n.IPAddress)
+
+		if r := tal.Refused(n.IPAddress); r != "" && refusedBy == nil {
+			refusedBy, why = n, r
+		}
+	}
+
+	if refusedBy != nil {
+		return nil, fmt.Errorf("no control plane node would answer this talosconfig (tried %s): %s",
+			strings.Join(addrs, ", "), silentNode(refusedBy, why))
 	}
 
 	return nil, fmt.Errorf("no control plane node answered the Talos API (tried %s): "+
-		"the cluster cannot be checked from here", strings.Join(addrs, ", "))
+		"the cluster cannot be reached from here", strings.Join(addrs, ", "))
 }
 
 // healthArgs builds a `talosctl health` invocation that reports on the whole
@@ -113,20 +135,19 @@ func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*
 //
 // The node lists come from the config rather than from the cluster, so a node
 // that is supposed to exist and does not is a failure rather than an absence.
-func healthArgs(cfg *config.Config, talosconfig string, from *config.Node, serverSide bool,
+func healthArgs(cfg *config.Config, tal *talosctl.Runner, talosconfig string, from *config.Node, serverSide bool,
 	waitFor time.Duration,
 ) []string {
-	args := []string{
-		"--talosconfig", talosconfig,
-		// Pinned to the node the check runs from, for the same reason the
-		// probes are: the talosconfig's endpoints include control planes that
-		// may not be serving, and dialling one of those to ask about the
-		// cluster fails on the connection rather than on the cluster.
-		"--endpoints", from.IPAddress,
+	// Reached the way the node answered when it was picked: pinned to it,
+	// for the same reason the probes try that first -- the talosconfig's
+	// endpoints include control planes that may not be serving, and dialling
+	// one of those to ask about the cluster fails on the connection rather
+	// than on the cluster -- or through the endpoints, when the node's own
+	// API is not reachable from here and only they reach it.
+	args := append(tal.NodeArgs(talosconfig, from.IPAddress),
 		"health",
-		"--nodes", from.IPAddress,
 		fmt.Sprintf("--server=%t", serverSide),
-	}
+	)
 
 	// talosctl waits 20 minutes by default, which is a long time to find out
 	// that a gate is not going to pass. A caller that has its own patience --

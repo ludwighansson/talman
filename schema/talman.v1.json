@@ -105,7 +105,7 @@
           ]
         },
         "protocol": {
-          "description": "The protocol schematics are submitted over. Default: https.",
+          "description": "The scheme schematics are submitted over with --submit, and boot media URLs are spelled with. Default: https.",
           "type": [
             "string",
             "number",
@@ -155,8 +155,7 @@
         }
       },
       "required": [
-        "key",
-        "value"
+        "key"
       ],
       "type": "object"
     },
@@ -183,6 +182,7 @@
         "groups": {
           "description": "Groups whose patches this node receives, applied in this order after its role's.",
           "items": {
+            "minLength": 1,
             "not": {
               "enum": [
                 "all",
@@ -193,7 +193,8 @@
             },
             "type": [
               "string",
-              "number"
+              "number",
+              "null"
             ]
           },
           "type": [
@@ -584,7 +585,7 @@
     "schematic": {
       "anyOf": [
         {
-          "description": "The Image Factory schematic: inline, or a path to a (templated) file.",
+          "description": "The Image Factory schematic: inline, or a path to a (templated) file. Submit a new one once before nodes pull it: talman schematic id --submit.",
           "oneOf": [
             {
               "description": "A path to a schematic file.",
@@ -626,7 +627,7 @@
       "type": "string"
     },
     "talosctl": {
-      "description": "The talosctl binary talman drives. Default: talosctl on PATH.",
+      "description": "The talosctl binary talman drives: a name on PATH, or a path, read from this file's directory when relative. Default: talosctl.",
       "type": [
         "string",
         "number",

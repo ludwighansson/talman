@@ -78,6 +78,14 @@ out safely" and "Exit codes for CI".`,
 				rec.SetLabel("dry_run", "true")
 			}
 
+			if err := positive("timeout", timeout); err != nil {
+				return err
+			}
+
+			if stabilize < 0 {
+				return fmt.Errorf("--stabilize %s is negative: 0 counts a node as back the moment it answers", stabilize)
+			}
+
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -113,10 +121,9 @@ out safely" and "Exit codes for CI".`,
 
 			// The waves first, so a mistyped --from fails before the bundle
 			// is decrypted, and only the nodes in the selected waves are
-			// rendered. Planned again after --only-new-nodes, below, but the
-			// wave --until stops short of is this plan's: the second one sees
-			// only the nodes this one kept.
-			_, targets, thenFrom, err := waves.plan(cfg, targets)
+			// rendered. --only-new-nodes, below, narrows this plan's waves
+			// to the nodes it keeps rather than planning them again.
+			stages, targets, thenFrom, err := waves.plan(cfg, targets)
 			if err != nil {
 				return err
 			}
@@ -215,7 +222,7 @@ out safely" and "Exit codes for CI".`,
 			)
 
 			if onlyNew {
-				targets, err = newNodes(tal, tc, targets, parallel)
+				targets, err = newNodes(tal, tc, targets, probing(parallel))
 				if err != nil {
 					return err
 				}
@@ -226,12 +233,10 @@ out safely" and "Exit codes for CI".`,
 
 					return nil
 				}
-			}
 
-			// After --only-new-nodes, so the waves hold only the nodes it kept.
-			stages, targets, _, err := waves.plan(cfg, targets)
-			if err != nil {
-				return err
+				// So the waves hold only the nodes it kept, numbered as
+				// they were planned.
+				stages = keepNodes(stages, targets)
 			}
 
 			for _, n := range targets {
@@ -271,15 +276,32 @@ out safely" and "Exit codes for CI".`,
 
 			// Asked first too when the answer decides whether to soak or
 			// gate: a dry run per node is cheap next to a ten-minute soak
-			// after a wave that changed nothing.
-			wantsAnswer := detailed || rec != nil || health || cfg.Rollout.SoakDuration() > 0
+			// after a wave that changed nothing. And whenever each node is
+			// waited for, since one the config changes nothing on goes
+			// nowhere, and holding the roll-out for --stabilize on it is half
+			// a minute a node spent waiting for nothing.
+			wantsAnswer := detailed || rec != nil || health || cfg.Rollout.SoakDuration() > 0 ||
+				(wait && mode != "staged")
 
-			applyOne := func(n *config.Node, position int, say func(string)) error {
+			applyOne := func(n *config.Node, position int, grouped bool, say func(string)) error {
 				file := cfg.MachineConfigPath(n)
 
+				// A node that fails before it has a heading still gets one
+				// when its batch prints in blocks: the others arrive under
+				// theirs, and this one would turn up only in the error at
+				// the end.
+				early := func(err error) error {
+					if grouped {
+						say(fmt.Sprintf("== [%d/%d] %s (%s)\n", position, len(targets), n.Hostname, n.IPAddress) +
+							indent([]byte("error: "+err.Error())))
+					}
+
+					return err
+				}
+
 				if _, err := os.Stat(file); err != nil {
-					return fmt.Errorf("no rendered config for %s at %s: run `%s` first",
-						n.Hostname, file, talmanCmd("render"))
+					return early(fmt.Errorf("no rendered config for %s at %s: run `%s` first",
+						n.Hostname, file, talmanCmd("render")))
 				}
 
 				// A cluster is rarely all one thing: after a reset, or when a
@@ -307,9 +329,9 @@ out safely" and "Exit codes for CI".`,
 						// a passing TLS failure on a real node all look like
 						// this, and each would be handed the cluster's keys.
 						if !onboard && !onlyNew && !dryRun {
-							return fmt.Errorf("%s (%s) is a new node: it answers only the maintenance service, "+
+							return early(fmt.Errorf("%s (%s) is a new node: it answers only the maintenance service, "+
 								"which authenticates nothing, so it gets its config, CA keys included, only when "+
-								"asked\n  %s", n.Hostname, n.IPAddress, talmanCmd("apply --onboard-new-nodes -n "+n.Hostname))
+								"asked\n  %s", n.Hostname, n.IPAddress, talmanCmd("apply --onboard-new-nodes -n "+n.Hostname)))
 						}
 
 						maintenance = true
@@ -329,19 +351,22 @@ out safely" and "Exit codes for CI".`,
 						// A node that was given its config before the cluster
 						// existed sits quiet until there is one to join. Once
 						// this run has bootstrapped it, that node is on its
-						// way, and is waited for rather than given up on.
+						// way, and is waited for rather than given up on --
+						// though from here it looks the same as one that is
+						// down, so neither is assumed.
 						if !bootstrapped.Load() {
-							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
-								n.Hostname, n.IPAddress)
+							return early(errors.New(silentNode(n, tal.Refused(n.IPAddress))))
 						}
 
-						say(fmt.Sprintf("== %s (%s) has its config; waiting for it to join the cluster\n",
-							n.Hostname, n.IPAddress))
+						say(fmt.Sprintf("== [%d/%d] %s (%s) is not answering; a node that has its config waits "+
+							"quietly for a cluster to join, so waiting for it to join this one\n",
+							position, len(targets), n.Hostname, n.IPAddress))
 
 						logf := detailLog(say)
 
 						if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
-							return err
+							return fmt.Errorf("%w\n  it may be down rather than waiting for the cluster: %s",
+								err, waitFailedHint(targets))
 						}
 
 						modesMu.Lock()
@@ -409,7 +434,10 @@ out safely" and "Exit codes for CI".`,
 					if err == nil {
 						rec.NodeChanged(n.Hostname, dryRunChanged(out))
 
-						if !dryRunChanged(out) {
+						// Only a node that answered for itself can be left
+						// unwaited: a new one is all change, whatever its
+						// config says.
+						if !isNew && !dryRunChanged(out) {
 							unchangedMu.Lock()
 							unchanged[n.IPAddress] = true
 							unchangedMu.Unlock()
@@ -482,7 +510,16 @@ out safely" and "Exit codes for CI".`,
 					return nil
 				}
 
-				if wait {
+				unchangedMu.Lock()
+				same := unchanged[n.IPAddress]
+				unchangedMu.Unlock()
+
+				switch {
+				case wait && same:
+					// It said, asked first, that the config changes nothing:
+					// Talos took it without touching anything, so there is no
+					// reboot to wait out.
+				case wait:
 					logf := detailLog(say)
 
 					if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
@@ -494,7 +531,7 @@ out safely" and "Exit codes for CI".`,
 					modesMu.Lock()
 					modes[n.IPAddress] = talosctl.ModeRunning
 					modesMu.Unlock()
-				} else {
+				default:
 					// Without the wait talman did not see what the node did
 					// next, and the answer it has is now stale -- a node
 					// recorded as being in maintenance mode keeps the health
@@ -533,7 +570,7 @@ out safely" and "Exit codes for CI".`,
 			// node that answers nothing does not stand it down: a node that
 			// is down is what the gate is there to stop on.
 			standDown := func() bool {
-				outside := notInCluster(cfg, tal, tc, modes, parallel)
+				outside := notInCluster(cfg, tal, tc, modes, probing(parallel))
 				if len(outside) == 0 {
 					gated++
 
@@ -553,8 +590,8 @@ out safely" and "Exit codes for CI".`,
 				return true
 			}
 
-			perNode := func(n *config.Node, _ bool, say func(string)) (bool, error) {
-				err := applyOne(n, positions[n.IPAddress], say)
+			perNode := func(n *config.Node, grouped bool, say func(string)) (bool, error) {
+				err := applyOne(n, positions[n.IPAddress], grouped, say)
 
 				unchangedMu.Lock()
 				defer unchangedMu.Unlock()
@@ -569,7 +606,7 @@ out safely" and "Exit codes for CI".`,
 			// was asked first and answered that nothing changes.
 			ro := rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
-				verb: "apply", done: "applied",
+				verb: "apply", done: pastTense(dryRun, "applied"),
 				targets: targets, parallel: parallel, inert: inert,
 				health: health, timeout: timeout,
 				// auto is the one mode that may reboot a node.
@@ -636,7 +673,9 @@ out safely" and "Exit codes for CI".`,
 						return err
 					}
 
-					ro.hintDrop = []string{"bootstrap", "recover-from"}
+					// --onboard-new-nodes is added whether or not the run
+					// was given it, so it is dropped from what it was given.
+					ro.hintDrop = []string{"bootstrap", "recover-from", "yes", "onboard-new-nodes"}
 					ro.hintAdd = func([]*config.Node) []string { return []string{"--onboard-new-nodes"} }
 				}
 			}
@@ -656,6 +695,8 @@ out safely" and "Exit codes for CI".`,
 					configArg(), nodeArgs(targets, len(cfg.Nodes)))
 			}
 
+			ro.carryOn()
+
 			if detailed && changed {
 				return errChanged
 			}
@@ -664,7 +705,7 @@ out safely" and "Exit codes for CI".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	addWaveFlags(cmd, &waves)
 	cmd.Flags().StringVarP(&mode, "mode", "m", "auto",
 		"apply mode: "+strings.Join(applyModes, ", "))
@@ -738,9 +779,15 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node, 
 		case talosctl.ModeRunning:
 			fmt.Fprintf(os.Stderr, "   %s (%s) is running; not new, skipping\n", n.Hostname, n.IPAddress)
 		case talosctl.ModeUnreachable:
-			return nil, fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service: "+
-				"--only-new-nodes cannot tell whether it needs onboarding\n"+
-				"  bring it up, or narrow the run with -n", n.Hostname, n.IPAddress)
+			// Bringing up a node that refused the talosconfig changes
+			// nothing: it is up.
+			hint := "bring it up, or narrow the run with -n"
+			if tal.Refused(n.IPAddress) != "" {
+				hint = "narrow the run with -n"
+			}
+
+			return nil, fmt.Errorf("%s: --only-new-nodes cannot tell whether it needs onboarding\n  %s",
+				silentNode(n, tal.Refused(n.IPAddress)), hint)
 		}
 	}
 
@@ -781,7 +828,7 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		n := &cfg.Nodes[i]
 
 		if modes[n.IPAddress] == talosctl.ModeMaintenance {
-			outside = append(outside, fmt.Sprintf("%s is %s", n.Hostname, modes[n.IPAddress]))
+			outside = append(outside, n.Hostname+" is in maintenance mode")
 		}
 	}
 
@@ -863,13 +910,17 @@ func askFirst(dryRun, wantsAnswer, diff bool) bool {
 
 // dryRunChanged reads talosctl's dry run for whether the node would change.
 //
-// Talos computes the diff on the node and prints "Config diff: No changes."
-// when there is none, which is the only part of that output talman depends on.
-// Anything it cannot find that line in counts as changed: a CI job asking
-// "did something change?" is better told yes it did when talman cannot tell
-// than no it did not.
+// Talos computes the diff on the node and ends its answer with a "Config
+// diff:" heading and the diff, which is "No changes." when there is none. That
+// answer, where Talos puts it, is the only part of the output talman reads: it
+// decides whether a node is waited for, and a config that merely carries the
+// words -- a script that echoes them -- says nothing about what changes.
+// Anything else counts as changed: a CI job asking "did something change?" is
+// better told yes it did when talman cannot tell than no it did not.
 func dryRunChanged(out []byte) bool {
-	return !strings.Contains(string(out), "No changes.")
+	_, diff, found := strings.Cut(string(out), "Config diff:")
+
+	return !found || strings.TrimSpace(diff) != "No changes."
 }
 
 // clusterHealth runs the same check `talman health` performs, from the first
@@ -886,7 +937,7 @@ func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 
 	// Client-side: the gate is "can talman still see a healthy cluster from
 	// here", which is the question a roll-out has to stop on.
-	return tal.Stream(healthArgs(cfg, talosconfig, from, false, waitFor)...)
+	return tal.Stream(healthArgs(cfg, tal, talosconfig, from, false, waitFor)...)
 }
 
 // renderForApply re-renders the targeted nodes and writes them out, so what

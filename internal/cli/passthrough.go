@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -36,6 +37,9 @@ More in the README: "Everything else talosctl does".`,
 		// not know even when it comes before the first argument that is
 		// talosctl's.
 		DisableFlagParsing: true,
+		// Which also keeps cobra from completing -n and -g, so it is done
+		// here.
+		ValidArgsFunction: completePassthrough,
 		RunE: func(cmd *cobra.Command, raw []string) error {
 			nodes, args, help, err := passthroughArgs(raw)
 			if err != nil {
@@ -89,9 +93,23 @@ More in the README: "Everything else talosctl does".`,
 			said := &tail{max: 8 << 10}
 
 			if err := runner(cfg).StreamTee(said, argv...); err != nil {
+				// Ctrl-C is how `logs -f` is stopped, and talosctl exits 0
+				// for it, which exec reports as the context talman
+				// cancelled. That is the run being interrupted, as any run
+				// is, not talosctl failing.
+				if interrupt.Interrupted() {
+					return exitCodeError{interrupt.ExitCode()}
+				}
+
 				if len(addrs) == 0 && strings.Contains(said.String(), "requires exactly one node") {
+					// Quoted, so the command pastes back as it was typed.
+					quoted := make([]string, len(args))
+					for i, a := range args {
+						quoted[i] = shellQuote(a)
+					}
+
 					fmt.Fprintln(os.Stderr, "talman: this talosctl command runs on one node, and the talosconfig "+
-						"lists every node: name one with -n, e.g. `"+talmanCmd("ctl -n <node> "+strings.Join(args, " "))+"`")
+						"lists every node: name one with -n, e.g. `"+talmanCmd("ctl -n <node> "+strings.Join(quoted, " "))+"`")
 				}
 
 				var status *talosctl.StatusError

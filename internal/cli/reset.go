@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -185,7 +186,7 @@ More in the README: "Rolling changes out safely".`,
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes (repeatable)")
+	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().BoolVar(&graceful, "graceful", true, "leave etcd cleanly before resetting")
 	cmd.Flags().BoolVar(&direct, "direct", true,
@@ -334,11 +335,27 @@ func typeClusterName(what, clusterName, consequence string) error {
 
 	select {
 	case a := <-answered:
-		if a.err != nil {
-			return fmt.Errorf("%s aborted: %w", what, a.err)
+		line = a.line
+
+		// What follows starts a line of its own. A terminal echoes the
+		// Enter that ends an answer; nothing else does -- not a pipe, not
+		// a file, not Ctrl-D -- and the refusal, or the run, would carry on
+		// from the end of the question.
+		if !strings.HasSuffix(line, "\n") || !isTerminal(os.Stdin) {
+			fmt.Fprintln(os.Stderr)
 		}
 
-		line = a.line
+		// The last line of input is an answer with or without its newline:
+		// `printf name |` is one. The end of input with nothing on it is
+		// none, which is what a job with no terminal gets.
+		if a.err != nil {
+			switch {
+			case !errors.Is(a.err, io.EOF):
+				return fmt.Errorf("%s aborted: %w", what, a.err)
+			case strings.TrimSpace(line) == "":
+				return fmt.Errorf("%s aborted: no answer on stdin; pass --yes to skip the question", what)
+			}
+		}
 	case <-interrupt.Context().Done():
 		return fmt.Errorf("%s aborted: interrupted", what)
 	}
@@ -348,6 +365,14 @@ func typeClusterName(what, clusterName, consequence string) error {
 	}
 
 	return nil
+}
+
+// isTerminal reports whether f is a terminal, as near as the standard library
+// can tell: a character device.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func onlyControlPlanes(nodes []*config.Node) bool {

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/render"
+	"github.com/ludwighansson/talman/internal/sopsx"
 )
 
 // initTemplate is the talman.yaml `init` writes: the required keys filled in,
@@ -87,7 +89,9 @@ one named:
 
 --age also writes a .sops.yaml encrypting to that recipient. Versions default
 to the local talosctl's. It writes no secrets and never overwrites a file;
-"talman secrets generate" is next.`,
+"talman secrets generate" is next.
+
+More in the README: "Layout", "Configuration".`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
@@ -100,8 +104,20 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 				return err
 			}
 
-			if clusterName == "" {
+			// Checked before anything is written, so the error names what
+			// the operator typed -- or, for a name taken from the directory,
+			// says that is where it came from.
+			if clusterName != "" {
+				if err := config.CheckClusterName(clusterName); err != nil {
+					return fmt.Errorf("--cluster-name: %w", err)
+				}
+			} else {
 				clusterName = filepath.Base(abs)
+
+				if err := config.CheckClusterName(clusterName); err != nil {
+					return fmt.Errorf("%w\n  it is the name of the directory %q; pass --cluster-name to choose one",
+						err, render.Rel(abs))
+				}
 			}
 
 			type node struct{ Hostname, IPAddress, Role string }
@@ -118,6 +134,14 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 						return fmt.Errorf("--%s %q must be hostname=address", list.role, spec)
 					}
 
+					// Here rather than when the written file is loaded, which
+					// would name nodes[2] of a file the operator has not seen.
+					for _, err := range []error{config.CheckHostname(host), config.CheckAddress(ip)} {
+						if err != nil {
+							return fmt.Errorf("--%s %q: %w", list.role, spec, err)
+						}
+					}
+
 					nodes = append(nodes, node{host, ip, string(list.role)})
 				}
 			}
@@ -126,12 +150,32 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 				return errors.New("name at least one control plane: --controlplane hostname=address")
 			}
 
+			// One control plane's own address is the API for as long as that
+			// machine is up, which with several of them is the outage they
+			// were meant to survive. Said once the files are written.
+			var endpointNote string
+
 			if endpoint == "" {
-				_, ip, _ := strings.Cut(controlPlanes[0], "=")
+				host, ip, _ := strings.Cut(controlPlanes[0], "=")
 				endpoint = "https://" + net.JoinHostPort(ip, "6443")
+
+				if len(controlPlanes) > 1 {
+					endpointNote = fmt.Sprintf("note: endpoint is %s, %s's own address\n"+
+						"  with %d control planes, point it at a VIP or a load balancer in talman.yaml",
+						endpoint, host, len(controlPlanes))
+				}
 			}
 
 			tal := runnerFor(config.DefaultTalosctl)
+
+			// Both defaults are talosctl's answers. Without it, init still
+			// writes a config when told the versions, and says so.
+			if talosVersion == "" || k8sVersion == "" {
+				if _, err := exec.LookPath(config.DefaultTalosctl); err != nil {
+					return errors.New("talosctl is not on PATH, and init asks it which Talos and Kubernetes " +
+						"versions to target: install it, or pass --talos-version and --kubernetes-version")
+				}
+			}
 
 			if talosVersion == "" {
 				if talosVersion, err = tal.ClientVersion(); err != nil {
@@ -270,10 +314,22 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 				fmt.Fprintf(out, "wrote %s\n", render.Rel(p))
 			}
 
+			if endpointNote != "" {
+				fmt.Fprintln(os.Stderr, endpointNote)
+			}
+
 			fmt.Fprintln(out, "next:")
 
-			if age == "" {
-				fmt.Fprintln(out, "  add a .sops.yaml with a creation rule for secrets.sops.yaml (or pass --age)")
+			// Without --age the bundle is encrypted by whatever .sops.yaml
+			// is found walking up from it, and with none there is nothing
+			// to encrypt it to. init cannot be run again to add one -- it
+			// does not overwrite talman.yaml -- so the rule to write is
+			// spelled out instead.
+			if _, err := sopsx.FindConfig(abs); age == "" && err != nil {
+				fmt.Fprintf(out, "  write %s, so the bundle is encrypted; for an age key:\n", render.Rel(sopsPath))
+				fmt.Fprintln(out, "      creation_rules:")
+				fmt.Fprintln(out, `        - path_regex: \.sops\.yaml$`)
+				fmt.Fprintln(out, "          age: <recipient, from age-keygen>")
 			}
 
 			// Naming the config written elsewhere, so the commands reach it.
@@ -282,8 +338,14 @@ to the local talosctl's. It writes no secrets and never overwrites a file;
 				talman += " -c " + shellQuote(render.Rel(path))
 			}
 
-			fmt.Fprintf(out, "  %s secrets generate   the cluster's CAs and keys, encrypted\n", talman)
-			fmt.Fprintf(out, "  %s render             then read what it wrote\n", talman)
+			for _, step := range [][2]string{
+				{"secrets generate", "the cluster's CAs and keys, encrypted"},
+				{"render", "then read what it wrote"},
+				{"image url --kind iso", "boot media, for machines not running Talos yet"},
+				{"apply --bootstrap", "build the cluster, once they are up in maintenance mode"},
+			} {
+				fmt.Fprintf(out, "  %s %-21s %s\n", talman, step[0], step[1])
+			}
 
 			return nil
 		},

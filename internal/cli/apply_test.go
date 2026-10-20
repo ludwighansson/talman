@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ludwighansson/talman/internal/config"
 	"github.com/ludwighansson/talman/internal/redact"
@@ -102,7 +103,7 @@ func TestNotInCluster(t *testing.T) {
 
 		got := strings.Join(notInCluster(cfg, tal, "/tmp/tc", map[string]talosctl.Mode{}, 4), ", ")
 
-		if got != "c02 is maintenance mode" {
+		if got != "c02 is in maintenance mode" {
 			t.Errorf("notInCluster() = %q, want only the node in maintenance mode", got)
 		}
 	})
@@ -156,6 +157,23 @@ func TestDryRunChanged(t *testing.T) {
 		{
 			name: "a node with no config at all is a change",
 			out:  "NODE: 10.0.0.21\nDry run summary:\nNode is running in maintenance mode and does not have a config yet.\n",
+			want: true,
+		},
+		{
+			name: "no changes, laid out as Talos lays it out",
+			out: "Dry run summary:\nApplied configuration without a reboot (skipped in dry-run).\n" +
+				"Config diff:\n\nNo changes.\n",
+			want: false,
+		},
+		{
+			name: "a diff that mentions no changes is still a diff",
+			out: "Dry run summary:\nConfig diff:\n\n--- a\n+++ b\n@@ -1,2 +1,2 @@\n   echo 'No changes.'\n" +
+				"-  hostname: old\n+  hostname: new\n",
+			want: true,
+		},
+		{
+			name: "no changes with no diff heading before it counts as changed",
+			out:  "No changes.\n",
 			want: true,
 		},
 		{
@@ -325,5 +343,140 @@ func TestWaitFailedHintOffersOnlyWhatRuns(t *testing.T) {
 
 	if hint := waitFailedHint([]*config.Node{cp("c1"), w}); !strings.Contains(hint, "--wait=false") {
 		t.Errorf("did not offer --wait=false where it is allowed: %q", hint)
+	}
+}
+
+// A node that answers, asked first, that the config changes nothing is not
+// waited for: it is going nowhere, and holding the roll-out for the stabilize
+// window on each such node made re-applying an unchanged cluster take half a
+// minute a node. A node the config does change is still waited for.
+func TestApplyWaitsOnlyForNodesThatChange(t *testing.T) {
+	_, log := exitFixture(t)
+
+	t.Setenv("STUB_DIFF", "No changes.")
+
+	done := make(chan int, 1)
+
+	go func() {
+		done <- run([]string{"apply", "--no-render", "--redact-secrets=false", "--stabilize", "1h", "--timeout", "1h"})
+	}()
+
+	select {
+	case got := <-done:
+		if got != 0 {
+			t.Fatalf("exit %d", got)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("apply waited for a node the config changed nothing on")
+	}
+
+	if calls, _ := os.ReadFile(log); !strings.Contains(string(calls), " --dry-run") {
+		t.Errorf("an apply that waits did not ask first:\n%s", calls)
+	}
+
+	// A diff that mentions "No changes." -- a script that echoes it -- is
+	// still a diff, and waited for like any other.
+	for _, diff := range []string{"+  hostname: new", "   echo 'No changes.'\n-  hostname: old\n+  hostname: new"} {
+		_ = os.WriteFile(log, nil, 0o644)
+
+		t.Setenv("STUB_DIFF", diff)
+
+		if got := run([]string{"apply", "--no-render", "--redact-secrets=false", "--stabilize", "0s"}); got != 0 {
+			t.Fatalf("exit %d", got)
+		}
+
+		if calls := waitedAfterApplying(t, log); calls != "" {
+			t.Errorf("apply did not wait for a node it changed, diff %q:\n%s", diff, calls)
+		}
+	}
+}
+
+// A new node is all change, whatever its config says -- one carrying the
+// words "No changes." included -- so it is always waited for: it installs and
+// reboots, and the run must not move on before it is back.
+func TestApplyWaitsForANewNodeWhateverItsConfigSays(t *testing.T) {
+	dir, log := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+	config := "version: v1alpha1\nmachine:\n  files:\n    - content: echo 'No changes.'\n"
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_MAINTENANCE", "10.0.0.2")
+
+	if got := run([]string{"apply", "--no-render", "--redact-secrets=false", "--stabilize", "0s",
+		"--onboard-new-nodes", "-n", "w1"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+
+	if calls := waitedAfterApplying(t, log); calls != "" {
+		t.Errorf("apply did not wait for a new node:\n%s", calls)
+	}
+}
+
+// waitedAfterApplying is "" when the stub's log shows a node asked whether it
+// is back after a real apply-config, and the log otherwise.
+func waitedAfterApplying(t *testing.T, log string) string {
+	t.Helper()
+
+	calls, _ := os.ReadFile(log)
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+
+	applied := -1
+
+	for i, l := range lines {
+		if strings.Contains(l, " apply-config ") && !strings.Contains(l, "--dry-run") {
+			applied = i
+		}
+	}
+
+	if applied < 0 || !strings.Contains(strings.Join(lines[applied+1:], "\n"), " version") {
+		return string(calls)
+	}
+
+	return ""
+}
+
+// A node in a batch that fails before its heading is printed -- here one that
+// answers nothing -- still gets its block, between its neighbours', rather
+// than turning up only in the error at the end.
+func TestApplyBatchGivesAFailedNodeItsHeading(t *testing.T) {
+	dir, _ := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+  - hostname: w2
+    ipAddress: 10.0.0.3
+    role: worker
+  - hostname: w3
+    ipAddress: 10.0.0.4
+    role: worker
+`)
+
+	for _, w := range []string{"w1", "w2", "w3"} {
+		if err := os.WriteFile(filepath.Join(dir, "clusterconfig", w+".yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Setenv("STUB_FAIL", "10.0.0.3")
+
+	var got int
+
+	stderr := captureStderr(t, func() {
+		got = run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "-p", "3"})
+	})
+	if got != 1 {
+		t.Fatalf("exit %d, want 1\n%s", got, stderr)
+	}
+
+	w1 := strings.Index(stderr, "== [2/4] w1 (10.0.0.2)")
+	w2 := strings.Index(stderr, "== [3/4] w2 (10.0.0.3)\n     error: w2 (10.0.0.3) answers neither")
+	w3 := strings.Index(stderr, "== [4/4] w3 (10.0.0.4)")
+
+	if w1 < 0 || w2 < 0 || w3 < 0 || w1 > w2 || w2 > w3 {
+		t.Errorf("want w2's heading and error between w1's block and w3's:\n%s", stderr)
 	}
 }

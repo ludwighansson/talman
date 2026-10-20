@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -42,7 +43,7 @@ func (w *Wave) UnmarshalYAML(value *yaml.Node) error {
 	case yaml.SequenceNode:
 		return value.Decode(&w.Groups)
 	default:
-		return fmt.Errorf("line %d: a wave is a group name, or a list of them", value.Line)
+		return errors.New("a wave is a group name, or a list of them")
 	}
 }
 
@@ -88,6 +89,10 @@ type Staged struct {
 	Wave  *Wave
 	Index int
 	Nodes []*Node
+	// Number is the stage's place, from 1, among the Of stages its nodes
+	// were laid out in: what "wave 2/3" says. A run that selects some of
+	// them keeps the numbers, so the waves it leaves out still count.
+	Number, Of int
 }
 
 // RestWave names the nodes no wave names, which go last.
@@ -117,7 +122,7 @@ func (s Staged) Name() string {
 // holding every target.
 func (c *Config) Stages(targets []*Node) []Staged {
 	if c.Rollout == nil || len(c.Rollout.Waves) == 0 {
-		return []Staged{{Index: 0, Nodes: targets}}
+		return []Staged{{Index: 0, Nodes: targets, Number: 1, Of: 1}}
 	}
 
 	waves := c.Rollout.Waves
@@ -139,6 +144,10 @@ func (c *Config) Stages(targets []*Node) []Staged {
 		if len(s.Nodes) > 0 {
 			out = append(out, s)
 		}
+	}
+
+	for i := range out {
+		out[i].Number, out[i].Of = i+1, len(out)
 	}
 
 	return out

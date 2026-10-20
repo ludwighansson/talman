@@ -79,20 +79,25 @@ registers it with the factory instead.
 ## Install
 
 ```console
-go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-beta.7
+go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-beta.8
 ```
 
-That needs Go 1.27 or later. Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
-[releases page](https://github.com/ludwighansson/talman/releases). Pinning a
-version is still the better habit than `@latest`: a cluster directory is
-reviewed against the talman that renders it, and an upgrade is worth making on
-purpose.
+That needs Go 1.27 or later. Prebuilt archives for Linux, macOS, Windows and
+FreeBSD are on the [releases page](https://github.com/ludwighansson/talman/releases).
+Pinning a version is still the better habit than `@latest`: a cluster
+directory is reviewed against the talman that renders it, and an upgrade is
+worth making on purpose.
 
-Or take the image, which carries `talosctl` and `sops` with it:
+Every release is built for all four, but the tests run on Linux and macOS.
+On Windows, the files talman writes `0600` get whatever the directory's ACLs
+allow instead, and the commands it suggests are spelled for a POSIX shell.
+
+Or take the image, which carries `talosctl` and `sops` with it. Run it from the
+root of the repository, and name the cluster directory with `-w`:
 
 ```console
-$ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
-    ghcr.io/ludwighansson/talman:1.0.0-beta.7 validate
+$ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" -w /cluster/development \
+    ghcr.io/ludwighansson/talman:1.0.0-beta.8 validate
 ```
 
 On top of Alpine's base it adds three binaries — talman and the two it drives —
@@ -105,24 +110,30 @@ rather than as the job image itself.
 # .gitlab-ci.yml
 drift:
   image:
-    name: ghcr.io/ludwighansson/talman:1.0.0-beta.7
+    name: ghcr.io/ludwighansson/talman:1.0.0-beta.8
     entrypoint: [""]   # the image's entrypoint is talman; GitLab runs the script with a shell
   script:
-    - talman apply --dry-run --detailed-exit-code
+    # SOPS_AGE_KEY comes from a masked CI/CD variable.
+    - talman -c development/talman.yaml apply --dry-run --detailed-exit-code
 ```
+
+The whole repository goes in, not just the cluster directory: a cluster's
+patches reach into `../base`, and `.sops.yaml` is found by walking up from the
+bundle, so a container that sees only the cluster directory finds neither.
 
 `--tmpfs /tmp` is not optional when running read-only — rendering decrypts the
 secrets bundle into a temp directory, and a tmpfs is what keeps the plaintext
-off a disk. The cluster directory is mounted at `/cluster`, which is also the
-working directory, and must be writable by uid 65532 for `render` to write its
-output.
+off a disk. The key goes in the way it reaches sops anywhere: `-e SOPS_AGE_KEY`,
+or a key file mounted read-only and named by `SOPS_AGE_KEY_FILE`. The container
+runs as uid 65532, which needs write access to the output directory for
+`render` to write it; `--user "$(id -u):$(id -g)"` runs it as you instead.
 
 The talosctl version inside is the one your cluster meets, so it is on the
 image as a label as well as in `talman version`:
 
 ```console
 $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version" }}' \
-    ghcr.io/ludwighansson/talman:1.0.0-beta.7
+    ghcr.io/ludwighansson/talman:1.0.0-beta.8
 v1.14.1
 ```
 
@@ -138,7 +149,7 @@ $ cosign verify-blob checksums.txt \
     --signature checksums.txt.sig --certificate checksums.txt.pem \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
-$ cosign verify ghcr.io/ludwighansson/talman:1.0.0-beta.7 \
+$ cosign verify ghcr.io/ludwighansson/talman:1.0.0-beta.8 \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -151,7 +162,7 @@ You also need [`talosctl`](https://docs.siderolabs.com/talos/v1.14/talosctl) on
 `PATH`, at least as new as the Talos version you target — and no older than
 v1.14.0, which talman checks before it reaches a cluster. It relies on flags
 that arrived over time (`version --insecure`, `get services`,
-`reset --wipe-labels`), and being told that up front beats an operation
+`reset --system-labels-to-wipe`), and being told that up front beats an operation
 stopping halfway through on an unknown flag. You also need
 [`sops`](https://github.com/getsops/sops) if your secrets bundle or any patch
 is encrypted.
@@ -182,12 +193,27 @@ $ talman init prod --controlplane cp-01=10.0.0.11 --worker w-01=10.0.0.21 \
     --endpoint https://10.0.0.10:6443 --age age1…
 wrote prod/talman.yaml
 wrote prod/.sops.yaml
+next:
+  talman -c prod/talman.yaml secrets generate      the cluster's CAs and keys, encrypted
+  talman -c prod/talman.yaml render                then read what it wrote
+  talman -c prod/talman.yaml image url --kind iso  boot media, for machines not running Talos yet
+  talman -c prod/talman.yaml apply --bootstrap     build the cluster, once they are up in maintenance mode
 ```
 
 The Talos and Kubernetes versions default to what the `talosctl` on `PATH`
-generates, and the endpoint to the first control plane's address — name a VIP
-or a load balancer with `--endpoint` for more than one. `init` writes no
-secrets, and never overwrites a file.
+generates (`--talos-version` and `--kubernetes-version` name others), the
+cluster name to the directory's (`--cluster-name`), and the endpoint to the
+first control plane's address — name a VIP or a load balancer with
+`--endpoint` for more than one. `init` writes no secrets, and never overwrites
+a file.
+
+Those steps are the way to a first cluster. What `init` cannot know is how
+your machines differ from Talos' defaults — on bare metal, Talos installs to
+`/dev/sda` unless a patch says otherwise — so read what `render` wrote, and put
+what has to change in a patch: see [The node schema is deliberately
+tiny](#the-node-schema-is-deliberately-tiny). Once `apply --bootstrap` is done,
+`talman kubeconfig` fetches the admin kubeconfig and `talman health` checks the
+cluster.
 
 ## Configuration
 
@@ -256,7 +282,8 @@ Files merge in the order listed and the inline `values` go on top. Maps merge
 key by key, all the way down; anything else, a list included, is replaced
 whole. A node's own `valuesFiles` build its `.Node.Values` the same way. They
 are read as plain YAML: a secret belongs in an encrypted patch, which
-`validate` can check without the key.
+`validate` still runs without the key — it names the patch as unchecked
+rather than failing.
 
 `schematic` and `schematicID` are two ways of saying the same thing, so set at
 most one of them at each level. A node's own setting wins over the cluster's.
@@ -283,7 +310,9 @@ YAML extension, Neovim, Helix, Zed — that is one line at the top of the file:
 ```
 
 The schema is generated from the types talman decodes into, and a test fails
-when the two disagree.
+when the two disagree. The URL follows `main`, so it describes the newest 1.x:
+a key it offers that an older talman does not know yet is refused, as every
+unknown key is.
 
 ### The Image Factory
 
@@ -293,7 +322,7 @@ are spelled. Every key is optional:
 | key | default | |
 | --- | --- | --- |
 | `registryURL` | `factory.talos.dev` | the factory host, and the registry the installer is pulled from |
-| `protocol` | `https` | for submitting schematics with `--submit` |
+| `protocol` | `https` | for submitting schematics with `--submit`, and the scheme of boot media URLs |
 | `schematicEndpoint` | `/schematics` | ditto |
 | `platform` | `metal` | the installer's platform: `metal`, `openstack`, `aws`, … |
 | `secureBoot` | `false` | use the secure boot installer |
@@ -332,6 +361,13 @@ form. That is the factory's own algorithm, and a test holds talman's output to
 IDs the factory's code computed. `talman schematic id --submit` registers the
 schematic instead, and warns if the factory's answer ever differs.
 
+Computing an ID is not registering it, though: the factory serves images only
+for a schematic it has been sent. A new one — after a change to `schematic:` —
+is unknown there until something submits it, and an upgrade, an install or a
+boot medium that pulls its images meets `schematic ID … not found`. Submit it
+once, before rolling it out: `talman schematic id --submit`, or `--submit` on
+the `upgrade`, `render` or `image url` that needs it.
+
 ### The node schema is deliberately tiny
 
 A node carries only what talman needs to route patches and reach the host.
@@ -361,7 +397,8 @@ labels:
 Every referenced patch file is a Go template
 ([sprig](https://masterminds.github.io/sprig/) included) and may be
 SOPS-encrypted. There is no opt-in suffix: topf gates templating on `.tpl`,
-which means a templated patch can never also be encrypted.
+which means a templated patch can never also be encrypted. A `{{` meant
+literally — an inline manifest's own template — is written `{{ "{{" }}`.
 
 Template scope:
 
@@ -375,7 +412,9 @@ Template scope:
 better than sprig's `has`; as in `patches`, the node's role and `all` count as
 groups for it, though `.Node.Groups` lists only the declared ones. Missing map
 keys are an error, not `<no value>` — a typo must not become a subtly wrong
-machine config.
+machine config. That also means `{{ .Node.Values.zone | default "az1" }}` fails
+before `default` is reached; read a key that may be absent with `index`, which
+gives nothing instead: `{{ index .Node.Values "zone" | default "az1" }}`.
 
 **Order matters.** Talos applies strategic merge patches in sequence, last
 writer wins:
@@ -395,9 +434,9 @@ remove a field or a whole document.
 
 ### When a patch is rejected
 
-`talosctl` names the offending *document*, never the file. On failure talman
-re-runs the generation with growing prefixes of the chain and reports the
-culprit:
+`talosctl` names the offending *document*, never the file. When generating or
+validating a node's config fails, talman re-runs it with growing prefixes of
+the chain and reports the culprit:
 
 ```console
 $ talman render
@@ -438,14 +477,17 @@ Generating refuses to overwrite an existing bundle: the CAs and cluster
 identity in it are what a running cluster trusts. To adopt a cluster that
 already exists, use `--from-controlplane-config`. `--force` replaces the
 bundle anyway, and keeps the old one in the gitignored output directory as
-`secrets-pre-generate-<time>.yaml`, so a mistake can be undone.
+`secrets-pre-generate-<time>.yaml`, so a mistake can be undone. `--plaintext`
+writes the bundle unencrypted, for a cluster that is thrown away; `--stdout`
+prints it instead of writing it.
 
 Rendered machine configs *do* contain secrets, so `render` writes them `0600`
 and drops a `.gitignore` that excludes the whole output directory. That is why
 `outputDir` has to be a directory of its own: one that holds `talman.yaml` is
 refused, as is a `secretFile`, patch, values file or schematic inside it, and a
-`.gitignore` already there that talman did not write is left
-alone and the render stops, rather than being replaced.
+`.gitignore` already there that talman did not write, and that does not ignore
+the whole directory, is left alone and the render stops, rather than being
+replaced.
 
 ## Commands
 
@@ -475,12 +517,13 @@ alone and the render stops, rather than being replaced.
 repeatable wherever a command works node by node — `apply`, `upgrade`,
 `reboot`, `reset`, `render`, `status`, `patches`, `schematic id`, `image url`,
 `ctl` — and names the one control plane to run from on `health`,
-`kubeconfig` and `upgrade-k8s`, which act on the cluster as a whole. Wherever
-`-n` is repeatable, `-g/--group` selects by group or role as well:
+`kubeconfig`, `upgrade-k8s` and `etcd snapshot`, which act on the cluster as a
+whole. Wherever `-n` is repeatable, `-g/--group` selects by group or role as well:
 `talman reboot -g blue` is every node in `blue`, and `-n` and `-g` together
 select both. `-v` echoes every
-`talosctl` invocation. `-c` points at a config other than `./talman.yaml`, and
-so does `TALMAN_CONFIG` when `-c` is not given.
+`talosctl` invocation. `-c` points at a config other than `./talman.yaml`, or
+at the directory holding one, and so does `TALMAN_CONFIG` when `-c` is not
+given.
 
 `status`, `patches`, `schematic id`, `image url` and `version` take
 `-o json`: the text they print is for reading, the JSON for scripts.
@@ -489,8 +532,10 @@ so does `TALMAN_CONFIG` when `-c` is not given.
 $ talman status -o json | jq -r '.nodes[] | select(.talos.running and .talos.running != .talos.configured) | .hostname'
 ```
 
-Shell completion comes from `talman completion bash|zsh|fish|powershell`, and
-completes node names for `-n` from the config in the working directory:
+Shell completion comes from `talman completion bash|zsh|fish|powershell`. It
+completes node names for `-n` — `ctl`'s included — and groups for `-g` and the
+wave flags, from the config `-c` or `TALMAN_CONFIG` names, or the one in the
+working directory:
 
 ```console
 $ source <(talman completion zsh)
@@ -516,13 +561,13 @@ The maintenance service authenticates nothing. Whatever answers at a node's
 address gets its whole config, and a control plane's includes the cluster's CA
 keys — so a reused address, a spoofed host, or a real node whose secure API
 failed for a moment would be handed them. `apply` therefore sends a config
-that way only when asked to onboard it:
+that way only when asked to onboard it, and finds the new nodes before it
+sends anything, so a run is not stopped halfway by one:
 
 ```console
 $ talman apply
-== [1/2] talos-c01 (10.164.0.27)
-     Applied configuration without a reboot
-error: talos-w01 (10.164.0.32) is a new node: it answers only the maintenance service, which authenticates nothing, so it gets its config, CA keys included, only when asked
+error: 1 new node(s), in maintenance mode: talos-w01
+  the maintenance service authenticates nothing, so a new node gets its config, CA keys included, only when asked
   talman apply --onboard-new-nodes -n talos-w01
 $ talman apply --onboard-new-nodes -n talos-w01
 == [1/1] talos-w01 (10.164.0.32) · onboarding
@@ -623,6 +668,10 @@ error: talos-w02 (10.164.0.29) answers neither the Talos API nor the maintenance
   continue with: talman apply -n talos-w02 -n talos-w03
 ```
 
+A node whose Talos API answers but turns the talosconfig away is not down: it
+trusts a different CA, after a rotation done elsewhere or a bundle replaced.
+The error says that instead, and so does a line under `talman status`.
+
 With `--health`, the gate stands down while any node in the config is still
 new, in maintenance mode, said once for the run — `-v` names them. A node that
 answers nothing does not stand it down: a member that is down is what the gate
@@ -690,7 +739,8 @@ It needs no cluster, no secrets bundle and no talosconfig, which is what makes
 it the way to read a config while writing one — and the way to see the table
 when the machines are off. `--wide` adds the schematic column.
 
-`status` reports and always succeeds; `health` is the one that passes or fails.
+`status` reports, and nothing a node answers fails it; `health` is the one that
+passes or fails.
 
 ### Everything else talosctl does
 
@@ -756,8 +806,9 @@ and the node list, without touching the cluster. Demanding a `render` first was
 asking for a command talman can run itself.
 
 An existing talosconfig is never overwritten this way; `render` is the command
-that rewrites it. Nothing in talman reads a kubeconfig — `kubeconfig` fetches
-one over the Talos API for `kubectl`'s benefit, not talman's.
+that rewrites it, and so does `apply`, which renders first. Nothing in talman
+reads a kubeconfig — `kubeconfig` fetches one over the Talos API for
+`kubectl`'s benefit, not talman's.
 
 ### Parallelism
 
@@ -771,8 +822,9 @@ are worked on at once:
 | `apply`, `upgrade`, `reboot`, `reset` | 1 | one node at a time is the unit of risk |
 
 A run that enacts nothing — `apply --dry-run` or `--mode=staged` — batches
-every node together, control planes included, and does so without being asked:
-there are no reboots to stagger, so there is nothing to keep apart.
+eight nodes at a time (or `--parallel`), control planes included, and does so
+without being asked: there are no reboots to stagger, so there is nothing to
+keep apart.
 
 For the ones that change a cluster the flag raises the limit for **workers
 only**. A control plane always goes alone, whatever the number says: two
@@ -782,14 +834,21 @@ through etcd. Config order is kept — a run of workers batches up to the limit,
 and a control plane interrupts the run:
 
 ```console
-$ talman apply --parallel 4
-== talos-c01 (10.164.0.27)      # alone
-   checking cluster health before continuing
-== talos-w01 (10.164.0.32)      # these four together
-== talos-w02 (10.164.0.29)
-== talos-w03 (10.164.0.31)
-== talos-w04 (10.164.0.33)
-   checking cluster health before continuing
+$ talman apply --parallel 4 --health
+== [1/6] talos-c01 (10.164.0.27)      # alone
+     ...
+     checking cluster health before continuing
+== [2/6] talos-w01 (10.164.0.32)      # these four together
+     ...
+== [3/6] talos-w02 (10.164.0.29)
+     ...
+== [4/6] talos-w03 (10.164.0.31)
+     ...
+== [5/6] talos-w04 (10.164.0.33)
+     ...
+     checking cluster health before continuing
+== [6/6] talos-c02 (10.164.0.28)      # alone again
+     ...
 ```
 
 The health check and the wait for a node to come back run per batch rather than
@@ -809,9 +868,11 @@ attribute to a machine.
 | 2 | something changed, or would have |
 | 1 | the command failed, a usage error included |
 | 129, 130, 131, 143 | the run was interrupted, by SIGHUP, SIGINT, SIGQUIT or SIGTERM |
+| 141 | the output pipe closed, as `\| head` closes it |
 
 Without the flag, a change is a 0 like anything else that succeeded. Test the
-code rather than chaining `||` and `&&`, which reads 0 as drift too:
+code rather than chaining — `talman apply … || [ $? -eq 2 ] && echo drift`
+reads 0 as drift too, since `&&` follows the `||` whichever way it went:
 
 ```console
 $ talman apply --dry-run --detailed-exit-code; rc=$?
@@ -984,7 +1045,7 @@ is no single invocation for a forwarded flag to land on.
 
 `render` validates every generated config with `talosctl validate` before
 writing; `--no-validate` skips it, `--dry-run` writes nothing, `--stdout`
-prints instead.
+prints instead, and `--no-talosconfig` leaves the talosconfig as it is.
 
 ### apply renders first
 
@@ -1002,6 +1063,9 @@ that.
 for that node to answer the API again and hold steady for `--stabilize` (30s),
 and stops the roll-out if it does not — leaving the remaining nodes untouched,
 rather than rebooting the next control plane while the last is still away.
+To know whether there is anything to wait for, it asks each node what the
+config would change before sending it, and one that answers that nothing
+changes is not waited for: it is going nowhere.
 The wait asks only the node itself, so a cluster that is already in trouble
 does not hold it up. Disable it with `--wait=false` — which talman refuses for
 a run that reaches more than one control plane, since without the wait the
@@ -1011,7 +1075,8 @@ next one would go down while the last is still away.
 if the cluster is unhealthy. It is off by default: it asks the whole cluster,
 so on one that is unhealthy before the run starts it fails after the first
 node, and that includes the apply meant to fix it. It runs between nodes and
-not after the last, since by then there is nothing left for it to protect.
+not after the last, since by then there is nothing left for it to protect —
+unless the run stopped short of waves still to come (see below).
 
 Neither runs for `--dry-run` or `--mode=staged`, where nothing was enacted.
 The wait says what it is waiting for while it waits — a node installing Talos
@@ -1022,19 +1087,21 @@ The health gate also stands down while any configured node is still outside
 the cluster — see below — which covers a node being onboarded.
 
 Both `apply`'s gate and `talman health` run the check from one control plane —
-the first in the config that answers the Talos API, or `--node` — and report on
+the first in the config that answers the Talos API, or the one `talman health
+--node` names — and report on
 every node the config lists. Not from the VIP: a Talos VIP is only held by a
 control plane in etcd quorum, so it disappears during exactly the outage worth
 checking, and as a node address it means "whichever machine holds it right
 now". The VIP's place is `--endpoints`, where the talosconfig already lists
-every control plane.
+every control plane. `talman health` runs the check on that control plane;
+`--server=false` runs it from where talman runs instead, as the gate does.
 
 `upgrade` first asks each node what it is running, and skips it when the Talos
 version and schematic already match what the config resolves to:
 
 ```console
 $ talman upgrade
-== development-control-01 (10.0.0.11) already runs v1.14.0 with schematic 079113ce0508; skipping
+== development-control-01 (10.0.0.11) already runs v1.14.0 (schematic 079113ce0508); skipping
 == development-worker-01 (10.0.0.21): v1.13.5 (schematic 079113ce0508) -> v1.14.0
    image factory.talos.dev/openstack-installer/079113ce0508…:v1.14.0
 ```
@@ -1065,7 +1132,8 @@ It goes one node at a time in config order, control planes always alone, and
 talosctl waits for each to come back before the next, up to `--timeout`
 (30m). `--parallel` and `--health` mean what they mean for `upgrade`;
 `--wait=false` only starts each reboot, which talman refuses for more than one
-control plane at a time, and `--mode powercycle` bypasses kexec.
+control plane at a time. `--mode powercycle` bypasses kexec, and `--mode
+force` skips the graceful shutdown.
 
 `upgrade-k8s` does for Kubernetes what `upgrade` does for Talos: it asks every node which version
 its kubelet runs, and does nothing when they are all already on
@@ -1088,6 +1156,11 @@ reports nothing to upgrade, because that is what running the command would do.
 A dry run that printed a component-by-component plan the real command would
 never carry out is worse than no dry run at all. `--force --dry-run` reaches
 `talosctl`'s own plan.
+
+`--to` names a version other than `kubernetesVersion`, and a run that moves
+the cluster to it ends with a warning: every config talman renders carries
+`kubernetesVersion`, so the next `apply` would take Kubernetes back down to
+it. Change the config, and `--to` is not needed.
 
 `reset` returns a node to maintenance mode. It wipes the EPHEMERAL and STATE
 partitions — all data, and the machine config with it — and reboots the node
@@ -1169,7 +1242,7 @@ orders them by group instead, so a canary goes first and the rest follow it:
 
 ```yaml
 rollout:
-  soak: 10m               # wait after each wave, then gate on health
+  soak: 10m               # wait after each wave that changed something
   waves:
     - controlplane        # a role or a group
     - blue                # the canary
@@ -1190,7 +1263,9 @@ A run never stops at a wave by itself: where to stop is the operator's call,
 made run by run. `--until <group>` stops after the wave holding it and prints
 the command that carries on, `--from <group>` starts at it, and `--wave
 <group>` runs only that one; `rest` names the last wave, so no node may call a
-group that.
+group that. A run that stops short of later waves soaks and gates after the
+wave it stops at, as it would between any two: the run that carries on starts
+without a gate of its own, so this is where the canary is watched.
 
 ```console
 $ talman upgrade --health --until blue     # the canary, and everything before it
@@ -1298,7 +1373,7 @@ with it.
 `--talos=false` or `--kubernetes=false` rotates only the other. Afterwards,
 commit the new bundle, `talman render`, and fetch a new `talman kubeconfig` if
 the Kubernetes CA changed. Should anything fail after the rotation itself, the
-error says so and spells out the two commands that finish the job by hand.
+error says so and names the `talman rotate-ca --finish` that completes it.
 
 ## Tests
 
@@ -1346,10 +1421,10 @@ request.
 
 ## Upgrading from an earlier prerelease
 
-A cluster directory written for an earlier alpha or beta may need these
-changes. None of them is read
-differently: a renamed key is refused with an error naming its new spelling,
-and a removed flag is refused as an unknown flag.
+A cluster directory, or a script, written for an earlier alpha or beta may need
+these changes. Most of them announce themselves: a renamed key is refused with
+an error naming its new spelling, a removed command or flag as unknown, and a
+bundle or `talosctl:` path talman no longer finds says where it looked.
 
 | before | now |
 | --- | --- |
@@ -1358,11 +1433,23 @@ and a removed flag is refused as an unknown flag.
 | `imageFactory.secureboot` | `imageFactory.secureBoot` |
 | any `hostname` | a lower-case RFC 1123 name, since it is also a file name |
 | `endpoint` without a port | `https://…:6443` |
+| the bundle at `talsecret.sops.yaml` by default | `secrets.sops.yaml`: rename it, or set `secretFile: talsecret.sops.yaml` |
+| a relative `talosctl:` path, read from where talman runs | read from the directory holding `talman.yaml`, like every other path in it |
+| `talman diff` | `talman apply --dry-run` |
+| `talman nodes` | `talman status --offline` |
+| `talman bootstrap`, and `apply` on a cluster not bootstrapped | `talman apply --bootstrap` builds a new cluster in one run |
+| `apply` configuring a node in maintenance mode by itself | `apply --onboard-new-nodes`, or `--only-new-nodes`: the maintenance service authenticates nothing |
+| `apply --adopt`, `--only-new` | `apply --onboard-new-nodes`, `--only-new-nodes` |
 | `upgrade --stage`, `--skip-etcd-check` | removed: Talos 1.14's upgrade API ignores both; `--extra-flags` reaches them on a legacy node |
 | `upgrade --wait=false` | removed: talosctl waits whenever it drains, which is by default |
-| `apply` configuring a node in maintenance mode by itself | `apply --onboard-new-nodes`, or `--only-new-nodes`: the maintenance service authenticates nothing |
-| `apply --only-new` | `apply --only-new-nodes` |
-| `talman bootstrap`, and `apply` on a cluster not bootstrapped | `talman apply --bootstrap` builds a new cluster in one run |
+
+These three do something different without failing, so look for them by hand:
+
+| before | now |
+| --- | --- |
+| `apply` checked cluster health between nodes | only with `--health` |
+| `talman kubeconfig` merged into `~/.kube/config` | writes `clusterconfig/kubeconfig`; `talman kubeconfig ~/.kube/config` merges as before |
+| `reset` wiped the whole system disk and powered the node off | wipes EPHEMERAL and STATE and reboots it into maintenance mode; `--wipe-disk --reboot=false` is the old behaviour |
 
 ## Migrating from talhelper
 
@@ -1387,6 +1474,11 @@ so either rename the file or keep the old name and say so:
 ```yaml
 secretFile: talsecret.sops.yaml
 ```
+
+Forget to, and talman notices: with a `talsecret.sops.yaml` beside
+`talman.yaml` and nothing at `secrets.sops.yaml`, it says which of the two to
+do, and `secrets generate` refuses to make a new bundle beside the old one —
+its CAs would be new, and the running cluster trusts the old ones.
 
 Your `.sops.yaml` needs no changes: a `path_regex` ending in `\.sops\.yaml$`
 matches both names.

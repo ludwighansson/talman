@@ -88,7 +88,7 @@ func (b *Bootloader) UnmarshalYAML(value *yaml.Node) error {
 	name := Bootloader(strings.ToLower(s))
 
 	if !slices.Contains(Bootloaders, name) {
-		return fmt.Errorf("line %d: bootloader %q is not one of none, dual-boot, sd-boot, grub", value.Line, s)
+		return fmt.Errorf("bootloader %q is not one of none, dual-boot, sd-boot, grub", s)
 	}
 
 	if name == "none" {

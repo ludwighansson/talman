@@ -82,6 +82,11 @@ type Result struct {
 	Content []byte
 	Chain   []config.PatchRef
 	Context template.Context
+
+	// paths are the rendered patches, and gen generates the config from a
+	// prefix of them: what Validate needs to blame a rejection on a file.
+	paths []string
+	gen   func([]string) ([]byte, error)
 }
 
 func (r *Renderer) logf(format string, args ...any) {
@@ -118,6 +123,13 @@ func (r *Renderer) Open() error {
 
 	if _, err := os.Stat(secretPath); err != nil {
 		r.Close()
+
+		// The bundle under its old name is this cluster's, and generating a
+		// new one -- the advice below -- would replace its CAs.
+		if legacy := r.Cfg.LegacySecret(); legacy != "" {
+			return fmt.Errorf("secrets bundle %s is missing, but %s; not `talman secrets generate`, "+
+				"which would make new CAs the cluster does not trust", r.Cfg.SecretFile, r.Cfg.LegacySecretHint(legacy))
+		}
 
 		return fmt.Errorf("secrets bundle %s is missing: run `talman secrets generate` first "+
 			"(regenerating secrets for a live cluster orphans it, so talman will not create one implicitly)",
@@ -271,6 +283,8 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 		Content: content,
 		Chain:   chain,
 		Context: ctx,
+		paths:   paths,
+		gen:     gen,
 	}, nil
 }
 
@@ -280,7 +294,7 @@ func (r *Renderer) renderPatch(ref config.PatchRef, ctx template.Context) ([]byt
 	// or a SideroLink token can be encrypted too, not just the secrets bundle.
 	raw, ciphertext, err := sopsx.Read(ref.Path)
 	if err != nil {
-		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return nil, fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	// What SOPS decrypted is what the operator marked secret, and it is about
@@ -297,11 +311,11 @@ func (r *Renderer) renderPatch(ref config.PatchRef, ctx template.Context) ([]byt
 		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return nil, fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	if err := patch.CheckStrategicMerge(ref.Rel, rendered); err != nil {
-		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return nil, fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	return rendered, nil
@@ -608,7 +622,7 @@ func (r *Renderer) blame(cause error, gen func([]string) ([]byte, error),
 				"the ones before it applied cleanly)", pos+1, ordinal(pos+1))
 		}
 
-		return fmt.Sprintf("%s\n  rejected by: patches.%s -> %s%s", msg, ref.Group, ref.Rel, hint)
+		return fmt.Sprintf("%s\n  rejected by: %s -> %s%s", msg, ref.Where(), ref.Rel, hint)
 	}
 
 	return msg

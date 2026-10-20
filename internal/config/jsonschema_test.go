@@ -92,7 +92,7 @@ func TestSchemaTablesNameRealFields(t *testing.T) {
 		keys = append(keys, k)
 	}
 
-	for k := range schemaNullable {
+	for k := range schemaNullItems {
 		keys = append(keys, k)
 	}
 

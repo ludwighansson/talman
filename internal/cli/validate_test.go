@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,5 +127,121 @@ nodes:
 
 	if got := run([]string{"validate"}); got != 1 {
 		t.Errorf("a damaged patch: exit %d, want 1", got)
+	}
+}
+
+// Several problems print as a list under their count, each problem's later
+// lines under it, and a problem every node shares is listed once.
+func TestValidateListsProblemsOnce(t *testing.T) {
+	dir := t.TempDir()
+
+	files := map[string]string{
+		"all.yaml": "machine:\n  network:\n    hostname: {{ .Node.Values.zone }}\n",
+		"db.yaml":  "machine:\n\tsysctls: {}\n",
+		"talman.yaml": `apiVersion: talman.dev/v1
+clusterName: v
+endpoint: https://10.0.0.1:6443
+talosVersion: v1.14.1
+kubernetesVersion: v1.37.0
+patches:
+  all: [./all.yaml]
+  db: [./db.yaml]
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.1
+    role: controlplane
+  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+    groups: [db]
+  - hostname: w2
+    ipAddress: 10.0.0.3
+    role: worker
+`,
+	}
+
+	for rel, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
+
+	stderr := captureStderr(t, func() {
+		if got := run([]string{"validate"}); got != 1 {
+			t.Errorf("exit %d, want 1", got)
+		}
+	})
+
+	for _, want := range []string{
+		"error: 2 problems:\n  all 3 nodes: patches.all: ./all.yaml",
+		"\n      a key that may be missing is read with index",
+		"\n  node w1: patches.db: ./db.yaml: document 1 is not valid YAML",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("validate does not say %q:\n%s", want, stderr)
+		}
+	}
+
+	if n := strings.Count(stderr, "./all.yaml"); n != 1 {
+		t.Errorf("a problem every node shares was listed %d times:\n%s", n, stderr)
+	}
+}
+
+// A problem names the nodes it is on, each once: a patch listed twice under
+// one key is two findings on one node, not one on every node of two.
+func TestValidateNamesEachNodeOnce(t *testing.T) {
+	dir := t.TempDir()
+
+	files := map[string]string{
+		"bad.yaml": "machine:\n  network:\n    hostname: {{ .Node.Values.zone }}\n",
+		"talman.yaml": `apiVersion: talman.dev/v1
+clusterName: v
+endpoint: https://10.0.0.1:6443
+talosVersion: v1.14.1
+kubernetesVersion: v1.37.0
+patches:
+  worker: [./bad.yaml, ./bad.yaml]
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.1
+    role: controlplane
+  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`,
+	}
+
+	for rel, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
+
+	stderr := captureStderr(t, func() { run([]string{"validate"}) })
+
+	if !strings.Contains(stderr, "error: node w1: patches.worker: ./bad.yaml") || strings.Contains(stderr, "all 2 nodes") {
+		t.Errorf("validate did not pin the problem on w1 alone:\n%s", stderr)
+	}
+}
+
+// One problem is one line, as any error is; two or more are a list.
+func TestErrorText(t *testing.T) {
+	one := errors.Join(errors.New("only"))
+	if got := errorText(one); got != "error: only" {
+		t.Errorf("errorText(one) = %q", got)
+	}
+
+	two := errors.Join(errors.New("first\n  its hint"), errors.New("second"))
+	if got, want := errorText(two), "error: 2 problems:\n  first\n      its hint\n  second"; got != want {
+		t.Errorf("errorText(two) = %q, want %q", got, want)
+	}
+
+	wrapped := fmt.Errorf("context: %w", two)
+	if got := errorText(wrapped); !strings.HasPrefix(got, "error: context: first") {
+		t.Errorf("a wrapped join is the wrapper's to word: %q", got)
 	}
 }

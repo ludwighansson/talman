@@ -103,6 +103,9 @@ type cpState struct {
 	node *config.Node
 	mode talosctl.Mode
 	etcd talosctl.EtcdState
+	// refused is why the node's Talos API turned the talosconfig away, when
+	// that is why it answered nothing talman could use.
+	refused string
 }
 
 // probeControlPlanes asks every control plane what it is, all at once: a
@@ -112,14 +115,31 @@ func probeControlPlanes(cfg *config.Config, tal *talosctl.Runner, tc string) []c
 	states, _ := eachNode(cfg.ControlPlanes(), defaultParallel, func(n *config.Node) (cpState, error) {
 		st := cpState{node: n, mode: tal.Mode(tc, n.IPAddress)}
 
-		if st.mode == talosctl.ModeRunning {
+		switch st.mode {
+		case talosctl.ModeRunning:
 			st.etcd = tal.Etcd(tc, n.IPAddress)
+		case talosctl.ModeUnreachable:
+			st.refused = tal.Refused(n.IPAddress)
+		case talosctl.ModeMaintenance:
 		}
 
 		return st, nil
 	})
 
 	return states
+}
+
+// silentNode describes a node that answered nothing talman could use: as
+// answering neither API, or -- when its Talos API answered and turned the
+// talosconfig away -- as that. A node that trusts another CA is not down, and
+// bringing it up is not the fix.
+func silentNode(n *config.Node, refused string) string {
+	if refused != "" {
+		return fmt.Sprintf("%s (%s) answers, but turns this talosconfig away (%s): it trusts a different CA "+
+			"from the one this talosconfig, and the bundle it came from, were made with", n.Hostname, n.IPAddress, refused)
+	}
+
+	return fmt.Sprintf("%s (%s) answers neither the Talos API nor the maintenance service", n.Hostname, n.IPAddress)
 }
 
 // allNew reports whether every control plane is new -- in maintenance mode,
@@ -175,9 +195,8 @@ func checkBootstrappable(states []cpState) ([]*config.Node, error) {
 
 		switch {
 		case st.mode == talosctl.ModeUnreachable:
-			return nil, fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service, so "+
-				"talman cannot tell whether it runs etcd, and will not risk bootstrapping a second cluster",
-				n.Hostname, n.IPAddress)
+			return nil, fmt.Errorf("%s, so talman cannot tell whether it runs etcd, and will not risk "+
+				"bootstrapping a second cluster", silentNode(n, st.refused))
 		case st.mode == talosctl.ModeMaintenance:
 			continue
 		case st.etcd == talosctl.EtcdRunning:
@@ -276,8 +295,9 @@ func bootstrapFirst(cmd *cobra.Command, tal *talosctl.Runner, tc string, first *
 	say := func(s string) { fmt.Fprint(os.Stderr, s) }
 
 	// The whole run again, not a list of nodes: until etcd runs there is no
-	// cluster, and the run that builds one is this one.
-	again := "  continue with: " + talmanCmd("apply --bootstrap"+resumeFlags(cmd, "bootstrap"))
+	// cluster, and the run that builds one is this one. Its flags carry -c
+	// already, and its question is asked again rather than answered for it.
+	again := "  continue with: talman apply --bootstrap" + resumeFlags(cmd, "bootstrap", "yes")
 
 	rec.NodeStart(first.Hostname, string(first.Role))
 
@@ -305,8 +325,9 @@ func bootstrapFirst(cmd *cobra.Command, tal *talosctl.Runner, tc string, first *
 
 	if err := waitForEtcd(tal, tc, first, timeout); err != nil {
 		return fmt.Errorf("%w\n  etcd was bootstrapped on %s: do not bootstrap again. Once it runs "+
-			"(talman status shows it), carry on with:\n    %s", err, first.Hostname,
-			talmanCmd("apply --onboard-new-nodes"))
+			"(%s shows it), carry on with:\n    talman apply --onboard-new-nodes%s", err, first.Hostname,
+			talmanCmd("ctl -n "+first.Hostname+" service etcd"),
+			resumeFlags(cmd, "bootstrap", "recover-from", "yes", "onboard-new-nodes"))
 	}
 
 	return nil

@@ -43,6 +43,7 @@ func TestRenderScopes(t *testing.T) {
 		{"sprig has on groups", `{{ if has "storage" .Node.Groups }}yes{{ end }}`, "yes"},
 		{"sprig semverCompare", `{{ if semverCompare ">=1.14.0-0" .Node.TalosVersion }}new{{ end }}`, "new"},
 		{"sprig default", `{{ .Node.Values.zone | default "unknown" }}`, "az1"},
+		{"default for a missing key", `{{ index .Node.Values "region" | default "eu" }}`, "eu"},
 		{"range over values", `{{ range $k, $v := .Values }}{{ $k }}={{ $v }}{{ end }}`, "harbor=harbor.example.net"},
 	}
 
@@ -74,6 +75,28 @@ func TestMissingKeyIsAnError(t *testing.T) {
 	}
 }
 
+// The error for a missing key says how to read one that may be missing:
+// default alone never gets the chance, since the lookup fails first.
+func TestMissingKeySaysHowToDefault(t *testing.T) {
+	for tmpl, want := range map[string]string{
+		`{{ .Node.Values.region | default "eu" }}`:                     `{{ index .Node.Values "region" | default "..." }}`,
+		"{{ .Values.registry.mirror }}":                                `{{ index .Values "registry" | default "..." }}`,
+		`{{ range $k, $v := .Values }}{{ $v.missing }}{{ end }}`:       "",
+		`{{ with .Node.Values }}{{ .region | default "eu" }}{{ end }}`: `{{ index . "region" | default "..." }}`,
+	} {
+		_, err := Render("t.yaml", []byte(tmpl), ctx())
+		if err == nil {
+			t.Errorf("Render(%q) succeeded; want an error", tmpl)
+
+			continue
+		}
+
+		if want != "" && !strings.Contains(err.Error(), want) {
+			t.Errorf("Render(%q) does not say %s:\n%v", tmpl, want, err)
+		}
+	}
+}
+
 func TestErrorsNameTheFileOnce(t *testing.T) {
 	_, err := Render("patches/all/x.yaml", []byte("{{ .Nope }}"), ctx())
 	if err == nil {
@@ -82,6 +105,21 @@ func TestErrorsNameTheFileOnce(t *testing.T) {
 
 	if got := strings.Count(err.Error(), "patches/all/x.yaml"); got != 1 {
 		t.Errorf("file named %d times in %q, want once", got, err)
+	}
+}
+
+// A field that is not there is named by the scope a patch spells, not by the
+// Go type behind it.
+func TestUnknownFieldNamesTheScope(t *testing.T) {
+	for tmpl, want := range map[string]string{
+		"{{ .Node.Zone }}":    "can't evaluate field Zone in .Node",
+		"{{ .Cluster.Zone }}": "can't evaluate field Zone in .Cluster",
+		"{{ .Zone }}":         "can't evaluate field Zone in the patch template context",
+	} {
+		_, err := Render("t.yaml", []byte(tmpl), ctx())
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "template.") {
+			t.Errorf("Render(%q) = %v, want it to say %q", tmpl, err, want)
+		}
 	}
 }
 

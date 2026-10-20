@@ -32,7 +32,10 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/ludwighansson/talman/internal/cli.Version={{ .Version }}
+      # v-prefixed, as the tag and a `go install ...@vX` build spell it: the
+      # same release should not report two versions, nor split a dashboard
+      # grouped by talman_version in two.
+      - -X github.com/ludwighansson/talman/internal/cli.Version=v{{ .Version }}
     # Build with a timestamp derived from the commit so archives are
     # reproducible rather than varying per build.
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -43,6 +46,11 @@ archives:
       - talman
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    # A zip for Windows: the one archive every Windows file manager opens.
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
     files:
       - README.md
       - LICENSE
@@ -168,11 +176,13 @@ release:
     go install github.com/ludwighansson/talman/cmd/talman@{{ .Tag }}
     ```
 
-    talman drives the `talosctl` binary; install that too.
+    talman drives the `talosctl` binary, and `sops` for an encrypted bundle;
+    install those too.
 
-    Or take the image, which carries talosctl and sops with it:
+    Or take the image, which carries both. From the root of the repository,
+    with the cluster in `development/`:
 
     ```console
-    docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" \
+    docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" -w /cluster/development \
       ghcr.io/ludwighansson/talman:{{ .Version }} validate
     ```

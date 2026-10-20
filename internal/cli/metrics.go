@@ -80,6 +80,12 @@ func startRun(command string) (*metrics.Run, error) {
 		return nil, nil //nolint:nilnil // no run is the answer when metrics are off
 	}
 
+	if url != "" {
+		if err := metrics.CheckURL(url); err != nil {
+			return nil, err
+		}
+	}
+
 	raw := metricsFlags.labels
 
 	// Flags win over the environment, label by label, so a job can set its
@@ -103,7 +109,7 @@ func startRun(command string) (*metrics.Run, error) {
 		labels[key] = value
 	}
 
-	return metrics.NewRun(command, Version, labels), nil
+	return metrics.NewRun(command, talmanVersion(), labels), nil
 }
 
 func report(run *metrics.Run) {

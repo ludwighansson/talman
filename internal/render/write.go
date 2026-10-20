@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -189,7 +190,9 @@ func (r *Renderer) WriteTalosconfig() (string, error) {
 func WriteAtomic(path string, content []byte) error {
 	dir := filepath.Dir(path)
 
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp*")
+	// Registered for a forced exit too: what is being written may be a
+	// plaintext bundle, and a second Ctrl-C mid-write must not leave it here.
+	tmp, cleanup, err := interrupt.CreateTemp(dir, "."+filepath.Base(path)+".tmp*")
 	if err != nil {
 		return err
 	}
@@ -197,8 +200,8 @@ func WriteAtomic(path string, content []byte) error {
 	tmpName := tmp.Name()
 
 	defer func() {
-		tmp.Close()        //nolint:errcheck // best effort; the rename below is what matters
-		os.Remove(tmpName) //nolint:errcheck // no-op once the rename has succeeded
+		tmp.Close() //nolint:errcheck // best effort; the rename below is what matters
+		cleanup()   // a no-op once the rename has succeeded
 	}()
 
 	if err := tmp.Chmod(0o600); err != nil {
@@ -256,8 +259,30 @@ func (r *Renderer) Validate(res *Result, mode string) error {
 	}
 
 	if err := r.Tal.Validate(staging, mode); err != nil {
+		// Validation names the offending document and never the file, as
+		// generation does, and it is where the mutually exclusive pairs blame
+		// exists for are refused: each document is acceptable on its own, so
+		// generation lets them through. A prefix of the chain is only found
+		// wanting by generating it and validating the result.
+		msg := err.Error()
+
+		if res.gen != nil {
+			msg = r.blame(err, func(with []string) ([]byte, error) {
+				content, err := res.gen(with)
+				if err != nil {
+					return nil, err
+				}
+
+				if err := os.WriteFile(staging, content, 0o600); err != nil {
+					return nil, err
+				}
+
+				return content, r.Tal.Validate(staging, mode)
+			}, res.Chain, res.paths)
+		}
+
 		// Validation quotes the config it rejects, as generation does.
-		return r.redacted(fmt.Errorf("node %s: %w", res.Node.Hostname, err))
+		return r.redacted(fmt.Errorf("node %s: %s", res.Node.Hostname, msg))
 	}
 
 	return nil

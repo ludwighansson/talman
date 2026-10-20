@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeTalosctl writes a talosctl stand-in that records its argv and exits with
@@ -324,5 +325,93 @@ OUT
 
 	if want := "version: v1alpha1\nmachine:\n    ca:\n        crt: bmV3\n"; string(got) != want {
 		t.Errorf("MachineConfig() = %q, want %q", got, want)
+	}
+}
+
+// A node that is back by the deadline is given the rest of its stabilize
+// window: failing it at the deadline failed a node that was up and steady,
+// for having answered late in the wait.
+func TestWaitReadyFinishesTheWindowPastTheDeadline(t *testing.T) {
+	r, _ := fakeTalosctl(t, true, false)
+
+	if err := r.WaitReady("/tmp/tc", "10.0.0.1", 100*time.Millisecond, time.Nanosecond,
+		func(string, ...any) {}); err != nil {
+		t.Errorf("WaitReady() = %v, want the node that answered to be held to its window", err)
+	}
+}
+
+// A TLS handshake that fails on the certificates is a node that answered and
+// turned the talosconfig away; anything else -- refused connections, a
+// timeout -- says nothing about certificates.
+func TestRefusal(t *testing.T) {
+	for _, tt := range []struct{ stderr, want string }{
+		{`error getting version: rpc error: code = Unavailable desc = connection error: desc = "transport: ` +
+			`authentication handshake failed: tls: failed to verify certificate: x509: certificate signed by ` +
+			`unknown authority"`, "x509: certificate signed by unknown authority"},
+		{`rpc error: code = Unavailable desc = connection error: desc = "error reading server preface: ` +
+			`remote error: tls: bad certificate"`, "remote error: tls: bad certificate"},
+		{`rpc error: code = Unavailable desc = connection error: desc = "transport: Error while dialing: ` +
+			`dial tcp 10.0.0.2:50000: connect: connection refused"`, ""},
+		{"rpc error: code = DeadlineExceeded desc = context deadline exceeded", ""},
+	} {
+		err := &ExitError{Args: []string{"version"}, Stderr: tt.stderr, Err: os.ErrClosed}
+		if got := refusal(err); got != tt.want {
+			t.Errorf("refusal(%q) = %q, want %q", tt.stderr, got, tt.want)
+		}
+	}
+}
+
+// Mode reads a node that turns the talosconfig away as answering nothing --
+// it cannot be used -- and Refused says why, until it answers.
+func TestModeNotesARefusedTalosconfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake binary is a shell script")
+	}
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "talosctl")
+	fixed := filepath.Join(dir, "fixed")
+
+	script := `#!/bin/sh
+case " $* " in
+*" --insecure "*) exit 1 ;;
+esac
+[ -f ` + fixed + ` ] && exit 0
+case " $* " in
+*" 10.0.0.1 "*) echo 'rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: tls: failed to verify certificate: x509: certificate signed by unknown authority"' >&2; exit 1 ;;
+*" 10.0.0.2 "*) echo 'rpc error: code = Unavailable desc = connection error: desc = "transport: Error while dialing: dial tcp 10.0.0.2:50000: connect: connection refused"' >&2; exit 1 ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+
+	r := &Runner{Bin: bin}
+
+	for _, tt := range []struct {
+		node    string
+		mode    Mode
+		refused string
+	}{
+		{"10.0.0.1", ModeUnreachable, "x509: certificate signed by unknown authority"},
+		{"10.0.0.2", ModeUnreachable, ""},
+		{"10.0.0.3", ModeRunning, ""},
+	} {
+		if got := r.Mode("tc", tt.node); got != tt.mode {
+			t.Errorf("Mode(%s) = %v, want %v", tt.node, got, tt.mode)
+		}
+
+		if got := r.Refused(tt.node); got != tt.refused {
+			t.Errorf("Refused(%s) = %q, want %q", tt.node, got, tt.refused)
+		}
+	}
+
+	if err := os.WriteFile(fixed, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if r.Mode("tc", "10.0.0.1") != ModeRunning || r.Refused("10.0.0.1") != "" {
+		t.Errorf("a node that answers is still noted as refusing: %q", r.Refused("10.0.0.1"))
 	}
 }

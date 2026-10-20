@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ludwighansson/talman/internal/factory"
@@ -135,5 +136,59 @@ func TestK8sUpToDate(t *testing.T) {
 				t.Errorf("k8sUpToDate(%q, %q) = %v, want %v", tt.current, tt.want, got, tt.up)
 			}
 		})
+	}
+}
+
+// upgrade-k8s --to a version the config does not name leaves a cluster the
+// next apply would take back down, and has to say so; one that agrees with
+// the config, or a dry run, has nothing to warn about.
+func TestUpgradeK8sToAnotherVersionWarns(t *testing.T) {
+	exitFixture(t) // kubernetesVersion: v1.37.0
+
+	for _, tt := range []struct {
+		args []string
+		warn bool
+	}{
+		{[]string{"upgrade-k8s", "--to", "v1.38.0"}, true},
+		{[]string{"upgrade-k8s", "--to", "1.37.0"}, false},
+		{[]string{"upgrade-k8s"}, false},
+		{[]string{"upgrade-k8s", "--to", "v1.38.0", "--dry-run"}, false},
+	} {
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(tt.args) })
+		if got != 0 {
+			t.Errorf("%v: exit %d\n%s", tt.args, got, stderr)
+		}
+
+		if warned := strings.Contains(stderr, "still says kubernetesVersion: v1.37.0"); warned != tt.warn {
+			t.Errorf("%v: warned %t, want %t:\n%s", tt.args, warned, tt.warn, stderr)
+		}
+	}
+}
+
+// A dry run that cannot read a node says so, and offers nothing it would
+// refuse: --force cannot be combined with --dry-run.
+func TestUpgradeDryRunOfAnUnreadableNode(t *testing.T) {
+	exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+	t.Setenv("STUB_FAIL", "10.0.0.2")
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"upgrade", "--dry-run"}) })
+	if got != 1 {
+		t.Fatalf("exit %d, want 1\n%s", got, stderr)
+	}
+
+	if strings.Contains(stderr, "--force") || strings.Contains(stderr, "not upgraded") {
+		t.Errorf("a dry run offered --force, or spoke of nodes not upgraded:\n%s", stderr)
+	}
+
+	if !strings.Contains(stderr, "1 node(s) were not checked: w1") {
+		t.Errorf("want the node the dry run did not check named:\n%s", stderr)
 	}
 }

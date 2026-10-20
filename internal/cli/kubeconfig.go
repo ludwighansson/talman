@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -31,7 +32,9 @@ landing in another cluster's file. Name a path to choose the destination, and
 "-" to write to stdout.
 
 A path you name is merged into, as talosctl would; talman's own copy is
-overwritten, because it is a generated artefact of this cluster directory.`,
+overwritten, because it is a generated artefact of this cluster directory.
+
+More in the README: "The kubeconfig".`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
@@ -73,6 +76,13 @@ overwritten, because it is a generated artefact of this cluster directory.`,
 			// first. A path the operator names only gets it when asked.
 			overwrite := force || (own && !merge)
 
+			// A directory gets talosctl's file inside it, named kubeconfig:
+			// what was written is that file, not the directory.
+			written := dest
+			if info, err := os.Stat(dest); err == nil && info.IsDir() {
+				written = filepath.Join(dest, "kubeconfig")
+			}
+
 			if err := tal.Stream(kubeconfigArgs(tc, target, dest, merge, overwrite, extraFlags)...); err != nil {
 				return err
 			}
@@ -81,17 +91,17 @@ overwritten, because it is a generated artefact of this cluster directory.`,
 				return nil
 			}
 
-			fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(dest))
+			fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(written))
 
 			if own {
-				fmt.Fprintf(os.Stderr, "  KUBECONFIG=%s kubectl get nodes\n", render.Rel(dest))
+				fmt.Fprintf(os.Stderr, "  KUBECONFIG=%s kubectl get nodes\n", render.Rel(written))
 			}
 
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to fetch from (default: the first one)")
+	cmd.Flags().StringVarP(&node, "node", "n", "", "control plane node to fetch from (default: the first that answers)")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing context when merging")
 	cmd.Flags().BoolVar(&merge, "merge", true,
 		"merge into a destination you name, rather than replacing it")

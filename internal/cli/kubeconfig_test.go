@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -69,5 +71,24 @@ func TestKubeconfigAlwaysNamesADestination(t *testing.T) {
 		if args[len(args)-1] != dest {
 			t.Errorf("destination %q is not the last argument: %v", dest, args)
 		}
+	}
+}
+
+// Named a directory, talosctl writes its kubeconfig inside it, and talman
+// says which file that is rather than naming the directory.
+func TestKubeconfigIntoADirectory(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	into := filepath.Join(dir, "kube")
+	if err := os.Mkdir(into, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"kubeconfig", into}) })
+
+	if want := filepath.Join("kube", "kubeconfig") + "\n"; got != 0 || !strings.Contains(stderr, want) {
+		t.Errorf("exit %d, want 0 and the file named:\n%s", got, stderr)
 	}
 }

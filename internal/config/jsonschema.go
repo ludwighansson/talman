@@ -51,7 +51,7 @@ var schemaRequired = map[reflect.Type][]string{
 	reflect.TypeFor[Config]():            {"apiVersion", "clusterName", "endpoint", "talosVersion", "kubernetesVersion", "nodes"},
 	reflect.TypeFor[Rollout]():           {"waves"},
 	reflect.TypeFor[Node]():              {"hostname", "ipAddress", "role"},
-	reflect.TypeFor[factory.MetaValue](): {"key", "value"},
+	reflect.TypeFor[factory.MetaValue](): {"key"},
 }
 
 // schemaDefNames names the types that get a $defs entry of their own.
@@ -75,7 +75,7 @@ var schemaDescriptions = map[string]string{
 	"Config.endpoint":          "The Kubernetes API URL: https, with a port.",
 	"Config.talosVersion":      "The Talos version contract configs are rendered for. Pinning it makes renders reproducible.",
 	"Config.kubernetesVersion": "The Kubernetes version configs are rendered for, and upgrade-k8s upgrades to.",
-	"Config.talosctl":          "The talosctl binary talman drives. Default: talosctl on PATH.",
+	"Config.talosctl":          "The talosctl binary talman drives: a name on PATH, or a path, read from this file's directory when relative. Default: talosctl.",
 	"Config.outputDir":         "Where rendered configs, the talosconfig and the kubeconfig are written. Default: clusterconfig.",
 	"Config.secretFile":        "The (usually SOPS-encrypted) Talos secrets bundle. Default: secrets.sops.yaml.",
 	"Config.validationMode":    "The talosctl validate --mode. Default: metal for the metal platform, cloud otherwise.",
@@ -83,7 +83,7 @@ var schemaDescriptions = map[string]string{
 	"Config.valuesFiles":       "YAML files merged into values, in order and beneath the inline map. Plaintext only.",
 	"Node.valuesFiles":         "YAML files merged into this node's values, in order and beneath its inline map.",
 	"Config.imageFactory":      "Where installer images come from and how their references are spelled.",
-	"Config.schematic":         "The Image Factory schematic: inline, or a path to a (templated) file.",
+	"Config.schematic":         "The Image Factory schematic: inline, or a path to a (templated) file. Submit a new one once before nodes pull it: talman schematic id --submit.",
 	"Config.schematicID":       "A schematic ID to use as is, instead of a schematic.",
 	"Config.patches":           "Patch files by group: all, controlplane, worker, or a group some node declares. Applied in that order.",
 	"Config.nodes":             "Every machine in the cluster.",
@@ -101,7 +101,7 @@ var schemaDescriptions = map[string]string{
 	"Node.schematicID":         "Overrides the cluster's schematic with an ID for this node.",
 	"Node.imageFactory":        "Overrides the cluster's imageFactory key by key for this node.",
 	"Config.registryURL":       "The Image Factory host. Default: factory.talos.dev.",
-	"Config.protocol":          "The protocol schematics are submitted over. Default: https.",
+	"Config.protocol":          "The scheme schematics are submitted over with --submit, and boot media URLs are spelled with. Default: https.",
 	"Config.schematicEndpoint": "The path schematics are submitted to. Default: /schematics.",
 	"Config.installerURLTmpl":  "The installer image reference, as a Go template over .RegistryURL, .Protocol, .ID, .Version, .Platform (or .Mode) and .SecureBoot.",
 	"Config.platform":          "The installer's platform: metal, openstack, aws, …. Default: metal.",
@@ -222,7 +222,11 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 
 		if names, ok := schemaReservedItems[t.Name()+"."+name]; ok {
 			if m, isMap := s.(map[string]any); isMap {
-				m["items"] = map[string]any{"type": []string{"string", "number"}, "not": map[string]any{"enum": names}}
+				m["items"] = map[string]any{
+					"type":      []string{"string", "number"},
+					"minLength": 1,
+					"not":       map[string]any{"enum": names},
+				}
 			}
 		}
 
@@ -243,7 +247,7 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 
 		// An optional key left empty is YAML's null, which Load reads as the
 		// key's zero value: accepted, so allowed here too.
-		if !slices.Contains(schemaRequired[t], name) || schemaNullable[t.Name()+"."+name] {
+		if !slices.Contains(schemaRequired[t], name) {
 			s = nullable(s)
 		}
 
@@ -313,7 +317,8 @@ const (
 	dnsNameRE = `([0-9A-Za-z-]+\.)*[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*(\.[0-9A-Za-z-]+)*\.?`
 )
 
-// schemaReservedItems are the lists whose items Validate refuses by name.
+// schemaReservedItems are the lists whose items Validate refuses by name, and
+// empty.
 var schemaReservedItems = map[string][]string{
 	"Node.groups": {GroupAll, GroupControlPlane, GroupWorker, RestWave},
 }
@@ -323,6 +328,7 @@ var schemaReservedItems = map[string][]string{
 var schemaNullItems = map[string]bool{
 	"Config.patches": true,
 	"Node.patches":   true,
+	"Node.groups":    true,
 }
 
 // nullItems lets the items of a list schema -- or of the lists a map schema
@@ -353,12 +359,6 @@ func nullItems(s any) any {
 	}
 
 	return out
-}
-
-// schemaNullable are required keys that Load takes left empty, as the zero
-// value: a meta value may be empty.
-var schemaNullable = map[string]bool{
-	"MetaValue.value": true,
 }
 
 // schemaMinItems are the lists Validate refuses empty.
