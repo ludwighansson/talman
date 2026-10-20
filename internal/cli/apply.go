@@ -121,9 +121,8 @@ out safely" and "Exit codes for CI".`,
 
 			// The waves first, so a mistyped --from fails before the bundle
 			// is decrypted, and only the nodes in the selected waves are
-			// rendered. Planned again after --only-new-nodes, below, but the
-			// wave --until stops short of is this plan's: the second one sees
-			// only the nodes this one kept.
+			// rendered. --only-new-nodes, below, narrows this plan's waves
+			// to the nodes it keeps rather than planning them again.
 			stages, targets, thenFrom, err := waves.plan(cfg, targets)
 			if err != nil {
 				return err
@@ -235,10 +234,9 @@ out safely" and "Exit codes for CI".`,
 					return nil
 				}
 
-				// So the waves hold only the nodes it kept.
-				if stages, targets, _, err = waves.plan(cfg, targets); err != nil {
-					return err
-				}
+				// So the waves hold only the nodes it kept, numbered as
+				// they were planned.
+				stages = keepNodes(stages, targets)
 			}
 
 			for _, n := range targets {

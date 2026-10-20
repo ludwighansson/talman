@@ -1031,6 +1031,67 @@ func TestRunEndingBeforeTheLastWaveIsGated(t *testing.T) {
 	}
 }
 
+// --only-new-nodes narrows the waves to the nodes it onboards without
+// renumbering them, so a canary stopped at with --wave or --until is still
+// the second wave of four, and still gated before anything carries on from
+// it. Without a wave flag, the waves it leaves empty are not a reason to gate
+// at the end: nothing carries on from there.
+func TestOnlyNewNodesKeepsTheWaves(t *testing.T) {
+	dir, log := exitFixtureWith(t, waveNodes+`rollout:
+  waves:
+    - controlplane
+    - blue
+    - [green, pink]
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "b1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STUB_DIFF", "+  hostname: new")
+
+	for _, tt := range []struct {
+		args    []string
+		gates   int
+		stopped bool
+	}{
+		{[]string{"--wave", "blue"}, 1, false},
+		{[]string{"--until", "blue"}, 1, true},
+		{nil, 0, false},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			// b1 is new until this run onboards it.
+			_ = os.WriteFile(log, nil, 0o644)
+			_ = os.Remove(log + ".adopted")
+
+			t.Setenv("STUB_MAINTENANCE", "10.0.0.2")
+
+			args := append([]string{"apply", "--no-render", "--redact-secrets=false", "--stabilize", "0s",
+				"--only-new-nodes", "--health"}, tt.args...)
+
+			var got int
+
+			stderr := captureStderr(t, func() { got = run(args) })
+			if got != 0 {
+				t.Fatalf("exit %d\n%s", got, stderr)
+			}
+
+			if !strings.Contains(stderr, "== wave 2/4: blue") {
+				t.Errorf("blue was not announced as wave 2/4:\n%s", stderr)
+			}
+
+			if stopped := strings.Contains(stderr, "stopped before wave green"); stopped != tt.stopped {
+				t.Errorf("stopped before green: %v, want %v\n%s", stopped, tt.stopped, stderr)
+			}
+
+			calls, _ := os.ReadFile(log)
+			if n := strings.Count(string(calls), " health "); n != tt.gates {
+				t.Errorf("health gate ran %d time(s), want %d:\n%s", n, tt.gates, stderr)
+			}
+		})
+	}
+}
+
 // Without rollout in the config, the wave flags have nothing to select from.
 func TestWaveFlagsNeedARollout(t *testing.T) {
 	exitFixture(t)
