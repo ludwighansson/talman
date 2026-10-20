@@ -437,7 +437,10 @@ out safely" and "Exit codes for CI".`,
 					if err == nil {
 						rec.NodeChanged(n.Hostname, dryRunChanged(out))
 
-						if !dryRunChanged(out) {
+						// Only a node that answered for itself can be left
+						// unwaited: a new one is all change, whatever its
+						// config says.
+						if !isNew && !dryRunChanged(out) {
 							unchangedMu.Lock()
 							unchanged[n.IPAddress] = true
 							unchangedMu.Unlock()
@@ -902,13 +905,17 @@ func askFirst(dryRun, wantsAnswer, diff bool) bool {
 
 // dryRunChanged reads talosctl's dry run for whether the node would change.
 //
-// Talos computes the diff on the node and prints "Config diff: No changes."
-// when there is none, which is the only part of that output talman depends on.
-// Anything it cannot find that line in counts as changed: a CI job asking
-// "did something change?" is better told yes it did when talman cannot tell
-// than no it did not.
+// Talos computes the diff on the node and ends its answer with a "Config
+// diff:" heading and the diff, which is "No changes." when there is none. That
+// answer, where Talos puts it, is the only part of the output talman reads: it
+// decides whether a node is waited for, and a config that merely carries the
+// words -- a script that echoes them -- says nothing about what changes.
+// Anything else counts as changed: a CI job asking "did something change?" is
+// better told yes it did when talman cannot tell than no it did not.
 func dryRunChanged(out []byte) bool {
-	return !strings.Contains(string(out), "No changes.")
+	_, diff, found := strings.Cut(string(out), "Config diff:")
+
+	return !found || strings.TrimSpace(diff) != "No changes."
 }
 
 // clusterHealth runs the same check `talman health` performs, from the first
