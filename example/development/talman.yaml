@@ -23,7 +23,9 @@ imageFactory:
   platform: openstack
 
 # The schematic ID is computed offline (sha256 of its canonical form), so
-# rendering needs no network. `talman render --submit` registers it instead.
+# rendering needs no network. The factory serves images only for schematics it
+# has been sent, so after changing this, register it once before nodes pull
+# it: `talman schematic id --submit`.
 schematic:
   customization:
     systemExtensions:

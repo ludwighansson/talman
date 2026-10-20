@@ -25,6 +25,9 @@ computes it offline by default and never needs to reach the factory. Pass
 --submit to register the schematic with the factory and print the ID it
 returns instead.
 
+The factory serves images only for schematics it has been sent: submit a new
+one once, before an upgrade or an install pulls its installer.
+
 More in the README: "The Image Factory".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
