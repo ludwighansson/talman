@@ -189,6 +189,45 @@ nodes:
 	}
 }
 
+// A problem names the nodes it is on, each once: a patch listed twice under
+// one key is two findings on one node, not one on every node of two.
+func TestValidateNamesEachNodeOnce(t *testing.T) {
+	dir := t.TempDir()
+
+	files := map[string]string{
+		"bad.yaml": "machine:\n  network:\n    hostname: {{ .Node.Values.zone }}\n",
+		"talman.yaml": `apiVersion: talman.dev/v1
+clusterName: v
+endpoint: https://10.0.0.1:6443
+talosVersion: v1.14.1
+kubernetesVersion: v1.37.0
+patches:
+  worker: [./bad.yaml, ./bad.yaml]
+nodes:
+  - hostname: c1
+    ipAddress: 10.0.0.1
+    role: controlplane
+  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`,
+	}
+
+	for rel, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
+
+	stderr := captureStderr(t, func() { run([]string{"validate"}) })
+
+	if !strings.Contains(stderr, "error: node w1: patches.worker: ./bad.yaml") || strings.Contains(stderr, "all 2 nodes") {
+		t.Errorf("validate did not pin the problem on w1 alone:\n%s", stderr)
+	}
+}
+
 // One problem is one line, as any error is; two or more are a list.
 func TestErrorText(t *testing.T) {
 	one := errors.Join(errors.New("only"))
