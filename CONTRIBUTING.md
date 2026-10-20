@@ -105,6 +105,8 @@ patch, which is worse than a failed run.
 - If you change behaviour, update the README in the same commit. There are
   tests in `internal/template/docs_test.go` that check the documented template
   scopes actually exist, but they cannot tell whether a sentence became untrue.
+- If you change the config types, regenerate the published schema in the same
+  commit: `go test ./internal/config -update-schema`. A test fails until you do.
 
 ## Opening a pull request
 
