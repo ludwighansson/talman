@@ -885,7 +885,7 @@ func clusterHealth(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 
 	// Client-side: the gate is "can talman still see a healthy cluster from
 	// here", which is the question a roll-out has to stop on.
-	return tal.Stream(healthArgs(cfg, talosconfig, from, false, waitFor)...)
+	return tal.Stream(healthArgs(cfg, tal, talosconfig, from, false, waitFor)...)
 }
 
 // renderForApply re-renders the targeted nodes and writes them out, so what

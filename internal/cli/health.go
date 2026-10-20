@@ -38,18 +38,22 @@ on that node.`,
 
 			// With no node named, prefer one that is answering: a check
 			// driven from a control plane that is down reports the cluster as
-			// broken when what is broken is the entry point.
+			// broken when what is broken is the entry point. A named one is
+			// asked too, so the check goes the way it answered.
 			if node == "" {
 				target, err = healthNode(cfg, tal, tc)
 				if err != nil {
 					return err
 				}
+			} else if !tal.Reachable(tc, target.IPAddress) {
+				return fmt.Errorf("%s (%s) does not answer the Talos API, directly or through the "+
+					"talosconfig's endpoints", target.Hostname, target.IPAddress)
 			}
 
 			// Unbounded unless asked: `talman health` was run on purpose, and
 			// talosctl's own patience is the right default for a command
 			// whose whole job is to wait for a cluster.
-			args := append(healthArgs(cfg, tc, target, serverSide, timeout), extraFlags...)
+			args := append(healthArgs(cfg, tal, tc, target, serverSide, timeout), extraFlags...)
 
 			return tal.Stream(args...)
 		},
@@ -113,20 +117,19 @@ func healthNode(cfg *config.Config, tal *talosctl.Runner, talosconfig string) (*
 //
 // The node lists come from the config rather than from the cluster, so a node
 // that is supposed to exist and does not is a failure rather than an absence.
-func healthArgs(cfg *config.Config, talosconfig string, from *config.Node, serverSide bool,
+func healthArgs(cfg *config.Config, tal *talosctl.Runner, talosconfig string, from *config.Node, serverSide bool,
 	waitFor time.Duration,
 ) []string {
-	args := []string{
-		"--talosconfig", talosconfig,
-		// Pinned to the node the check runs from, for the same reason the
-		// probes are: the talosconfig's endpoints include control planes that
-		// may not be serving, and dialling one of those to ask about the
-		// cluster fails on the connection rather than on the cluster.
-		"--endpoints", from.IPAddress,
+	// Reached the way the node answered when it was picked: pinned to it,
+	// for the same reason the probes try that first -- the talosconfig's
+	// endpoints include control planes that may not be serving, and dialling
+	// one of those to ask about the cluster fails on the connection rather
+	// than on the cluster -- or through the endpoints, when the node's own
+	// API is not reachable from here and only they reach it.
+	args := append(tal.NodeArgs(talosconfig, from.IPAddress),
 		"health",
-		"--nodes", from.IPAddress,
 		fmt.Sprintf("--server=%t", serverSide),
-	}
+	)
 
 	// talosctl waits 20 minutes by default, which is a long time to find out
 	// that a gate is not going to pass. A caller that has its own patience --
