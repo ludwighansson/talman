@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ludwighansson/talman/internal/config"
+	"github.com/ludwighansson/talman/internal/interrupt"
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
@@ -189,7 +190,9 @@ func (r *Renderer) WriteTalosconfig() (string, error) {
 func WriteAtomic(path string, content []byte) error {
 	dir := filepath.Dir(path)
 
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp*")
+	// Registered for a forced exit too: what is being written may be a
+	// plaintext bundle, and a second Ctrl-C mid-write must not leave it here.
+	tmp, cleanup, err := interrupt.CreateTemp(dir, "."+filepath.Base(path)+".tmp*")
 	if err != nil {
 		return err
 	}
@@ -197,8 +200,8 @@ func WriteAtomic(path string, content []byte) error {
 	tmpName := tmp.Name()
 
 	defer func() {
-		tmp.Close()        //nolint:errcheck // best effort; the rename below is what matters
-		os.Remove(tmpName) //nolint:errcheck // no-op once the rename has succeeded
+		tmp.Close() //nolint:errcheck // best effort; the rename below is what matters
+		cleanup()   // a no-op once the rename has succeeded
 	}()
 
 	if err := tmp.Chmod(0o600); err != nil {

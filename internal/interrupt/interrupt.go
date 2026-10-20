@@ -170,6 +170,28 @@ func TempDir(dir, pattern string) (path string, cleanup func(), err error) {
 	}, nil
 }
 
+// CreateTemp makes a temporary file, as os.CreateTemp does, for something
+// written beside the file it is to replace -- a bundle, a machine config --
+// which a forced exit must not leave there: beside a bundle, a plaintext copy
+// is one `git add .` from a commit. The returned cleanup removes it if it is
+// still there, a rename having taken it otherwise, and then drops it from the
+// forced-exit list.
+func CreateTemp(dir, pattern string) (f *os.File, cleanup func(), err error) {
+	f, err = os.CreateTemp(dir, pattern)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	name := f.Name()
+	unregister := Cleanup(func() { _ = os.Remove(name) })
+
+	return f, func() {
+		_ = os.Remove(name)
+
+		unregister()
+	}, nil
+}
+
 // RemoveAllOnExit registers dir for removal on a forced exit.
 func RemoveAllOnExit(dir string) (unregister func()) {
 	return Cleanup(func() { _ = os.RemoveAll(dir) })
