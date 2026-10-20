@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -252,6 +254,55 @@ func TestShellQuote(t *testing.T) {
 	} {
 		if got := shellQuote(in); got != want {
 			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// The cluster name is read however it arrives: the last line of input is an
+// answer without its newline too, and an empty stdin -- a job with no
+// terminal -- says how to skip the question. Whatever follows starts a line
+// of its own, since nothing echoed the end of the answer.
+func TestTypeClusterName(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		err   string
+	}{
+		{"prod\n", ""},
+		{"prod", ""},
+		{"  prod  \n", ""},
+		{"", "no answer on stdin; pass --yes"},
+		{"staging\n", `input did not match "prod"`},
+		{"staging", `input did not match "prod"`},
+	} {
+		stdin := filepath.Join(t.TempDir(), "stdin")
+		if err := os.WriteFile(stdin, []byte(tt.input), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		f, err := os.Open(stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		saved := os.Stdin
+		os.Stdin = f
+
+		var got error
+
+		stderr := captureStderr(t, func() { got = typeClusterName("reset", "prod", "This wipes them.") })
+
+		os.Stdin = saved
+		_ = f.Close()
+
+		switch {
+		case tt.err == "" && got != nil:
+			t.Errorf("%q: %v, want it accepted", tt.input, got)
+		case tt.err != "" && (got == nil || !strings.Contains(got.Error(), tt.err)):
+			t.Errorf("%q: %v, want %q", tt.input, got, tt.err)
+		}
+
+		if !strings.HasSuffix(stderr, "continue: \n") {
+			t.Errorf("%q: the question was not ended with a newline:\n%q", tt.input, stderr)
 		}
 	}
 }
