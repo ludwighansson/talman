@@ -108,6 +108,21 @@ func TestErrorsNameTheFileOnce(t *testing.T) {
 	}
 }
 
+// A field that is not there is named by the scope a patch spells, not by the
+// Go type behind it.
+func TestUnknownFieldNamesTheScope(t *testing.T) {
+	for tmpl, want := range map[string]string{
+		"{{ .Node.Zone }}":    "can't evaluate field Zone in .Node",
+		"{{ .Cluster.Zone }}": "can't evaluate field Zone in .Cluster",
+		"{{ .Zone }}":         "can't evaluate field Zone in the patch template context",
+	} {
+		_, err := Render("t.yaml", []byte(tmpl), ctx())
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "template.") {
+			t.Errorf("Render(%q) = %v, want it to say %q", tmpl, err, want)
+		}
+	}
+}
+
 func TestParseErrorIsReported(t *testing.T) {
 	if _, err := Render("t.yaml", []byte("{{ if }}"), ctx()); err == nil {
 		t.Fatal("expected a parse error")
