@@ -674,7 +674,9 @@ out safely" and "Exit codes for CI".`,
 						return err
 					}
 
-					ro.hintDrop = []string{"bootstrap", "recover-from"}
+					// --onboard-new-nodes is added whether or not the run
+					// was given it, so it is dropped from what it was given.
+					ro.hintDrop = []string{"bootstrap", "recover-from", "yes", "onboard-new-nodes"}
 					ro.hintAdd = func([]*config.Node) []string { return []string{"--onboard-new-nodes"} }
 				}
 			}

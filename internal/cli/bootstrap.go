@@ -308,7 +308,7 @@ func bootstrapFirst(cmd *cobra.Command, tal *talosctl.Runner, tc string, first *
 		return fmt.Errorf("%w\n  etcd was bootstrapped on %s: do not bootstrap again. Once it runs "+
 			"(%s shows it), carry on with:\n    talman apply --onboard-new-nodes%s", err, first.Hostname,
 			talmanCmd("ctl -n "+first.Hostname+" service etcd"),
-			resumeFlags(cmd, "bootstrap", "recover-from", "yes"))
+			resumeFlags(cmd, "bootstrap", "recover-from", "yes", "onboard-new-nodes"))
 	}
 
 	return nil
