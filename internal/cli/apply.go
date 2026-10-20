@@ -223,7 +223,7 @@ out safely" and "Exit codes for CI".`,
 			)
 
 			if onlyNew {
-				targets, err = newNodes(tal, tc, targets, parallel)
+				targets, err = newNodes(tal, tc, targets, probing(parallel))
 				if err != nil {
 					return err
 				}
@@ -570,7 +570,7 @@ out safely" and "Exit codes for CI".`,
 			// node that answers nothing does not stand it down: a node that
 			// is down is what the gate is there to stop on.
 			standDown := func() bool {
-				outside := notInCluster(cfg, tal, tc, modes, parallel)
+				outside := notInCluster(cfg, tal, tc, modes, probing(parallel))
 				if len(outside) == 0 {
 					gated++
 
