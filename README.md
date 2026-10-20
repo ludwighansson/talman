@@ -82,11 +82,15 @@ registers it with the factory instead.
 go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-beta.7
 ```
 
-That needs Go 1.27 or later. Prebuilt archives for Linux, macOS, Windows and FreeBSD are on the
-[releases page](https://github.com/ludwighansson/talman/releases). Pinning a
-version is still the better habit than `@latest`: a cluster directory is
-reviewed against the talman that renders it, and an upgrade is worth making on
-purpose.
+That needs Go 1.27 or later. Prebuilt archives for Linux, macOS, Windows and
+FreeBSD are on the [releases page](https://github.com/ludwighansson/talman/releases).
+Pinning a version is still the better habit than `@latest`: a cluster
+directory is reviewed against the talman that renders it, and an upgrade is
+worth making on purpose.
+
+Every release is built for all four, but the tests run on Linux and macOS.
+On Windows, the files talman writes `0600` get whatever the directory's ACLs
+allow instead, and the commands it suggests are spelled for a POSIX shell.
 
 Or take the image, which carries `talosctl` and `sops` with it. Run it from the
 root of the repository, and name the cluster directory with `-w`:
@@ -158,7 +162,7 @@ You also need [`talosctl`](https://docs.siderolabs.com/talos/v1.14/talosctl) on
 `PATH`, at least as new as the Talos version you target — and no older than
 v1.14.0, which talman checks before it reaches a cluster. It relies on flags
 that arrived over time (`version --insecure`, `get services`,
-`reset --wipe-labels`), and being told that up front beats an operation
+`reset --system-labels-to-wipe`), and being told that up front beats an operation
 stopping halfway through on an unknown flag. You also need
 [`sops`](https://github.com/getsops/sops) if your secrets bundle or any patch
 is encrypted.
@@ -263,7 +267,8 @@ Files merge in the order listed and the inline `values` go on top. Maps merge
 key by key, all the way down; anything else, a list included, is replaced
 whole. A node's own `valuesFiles` build its `.Node.Values` the same way. They
 are read as plain YAML: a secret belongs in an encrypted patch, which
-`validate` can check without the key.
+`validate` still runs without the key — it names the patch as unchecked
+rather than failing.
 
 `schematic` and `schematicID` are two ways of saying the same thing, so set at
 most one of them at each level. A node's own setting wins over the cluster's.
@@ -290,7 +295,9 @@ YAML extension, Neovim, Helix, Zed — that is one line at the top of the file:
 ```
 
 The schema is generated from the types talman decodes into, and a test fails
-when the two disagree.
+when the two disagree. The URL follows `main`, so it describes the newest 1.x:
+a key it offers that an older talman does not know yet is refused, as every
+unknown key is.
 
 ### The Image Factory
 
@@ -451,8 +458,9 @@ Rendered machine configs *do* contain secrets, so `render` writes them `0600`
 and drops a `.gitignore` that excludes the whole output directory. That is why
 `outputDir` has to be a directory of its own: one that holds `talman.yaml` is
 refused, as is a `secretFile`, patch, values file or schematic inside it, and a
-`.gitignore` already there that talman did not write is left
-alone and the render stops, rather than being replaced.
+`.gitignore` already there that talman did not write, and that does not ignore
+the whole directory, is left alone and the render stops, rather than being
+replaced.
 
 ## Commands
 
@@ -482,8 +490,8 @@ alone and the render stops, rather than being replaced.
 repeatable wherever a command works node by node — `apply`, `upgrade`,
 `reboot`, `reset`, `render`, `status`, `patches`, `schematic id`, `image url`,
 `ctl` — and names the one control plane to run from on `health`,
-`kubeconfig` and `upgrade-k8s`, which act on the cluster as a whole. Wherever
-`-n` is repeatable, `-g/--group` selects by group or role as well:
+`kubeconfig`, `upgrade-k8s` and `etcd snapshot`, which act on the cluster as a
+whole. Wherever `-n` is repeatable, `-g/--group` selects by group or role as well:
 `talman reboot -g blue` is every node in `blue`, and `-n` and `-g` together
 select both. `-v` echoes every
 `talosctl` invocation. `-c` points at a config other than `./talman.yaml`, and
@@ -763,8 +771,9 @@ and the node list, without touching the cluster. Demanding a `render` first was
 asking for a command talman can run itself.
 
 An existing talosconfig is never overwritten this way; `render` is the command
-that rewrites it. Nothing in talman reads a kubeconfig — `kubeconfig` fetches
-one over the Talos API for `kubectl`'s benefit, not talman's.
+that rewrites it, and so does `apply`, which renders first. Nothing in talman
+reads a kubeconfig — `kubeconfig` fetches one over the Talos API for
+`kubectl`'s benefit, not talman's.
 
 ### Parallelism
 
