@@ -137,6 +137,40 @@ func (c *Config) OutputPath() string { return c.ResolvePath(c.OutputDir) }
 // SecretPath is the absolute path of the secrets bundle.
 func (c *Config) SecretPath() string { return c.ResolvePath(c.SecretFile) }
 
+// LegacySecretFile is the name talhelper gives the secrets bundle, and the one
+// talman's early prereleases looked for by default.
+const LegacySecretFile = "talsecret.sops.yaml"
+
+// LegacySecret is the bundle a cluster directory still holds under that name,
+// with nothing at the default one: LegacySecretFile, or "" when it is not so.
+//
+// talman looks only where secretFile says, so such a directory -- migrated
+// from talhelper, or written by an early talman -- has no bundle as far as
+// talman can tell, and the obvious fix, generating one, makes new CAs that
+// the running cluster does not trust.
+func (c *Config) LegacySecret() string {
+	if c.SecretFile != DefaultSecretFile {
+		return ""
+	}
+
+	if _, err := os.Stat(c.SecretPath()); !errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+
+	if _, err := os.Stat(c.ResolvePath(LegacySecretFile)); err != nil {
+		return ""
+	}
+
+	return LegacySecretFile
+}
+
+// LegacySecretHint is what to do about LegacySecret: use the bundle that is
+// there, under either name.
+func (c *Config) LegacySecretHint(legacy string) string {
+	return fmt.Sprintf("%s is here, the name talhelper and talman's early prereleases gave the bundle: "+
+		"rename it to %s, or set `secretFile: %s` in talman.yaml", legacy, c.SecretFile, legacy)
+}
+
 // MachineConfigPath is where a node's rendered machine config is written.
 //
 // Named by hostname alone: the output directory already belongs to one

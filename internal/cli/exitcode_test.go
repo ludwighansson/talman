@@ -1476,6 +1476,36 @@ func TestSecretsForceKeepsTheOldBundle(t *testing.T) {
 	}
 }
 
+// A bundle under talhelper's name, or an early talman's, is the cluster's:
+// talman says to use it rather than to generate a new one, and will not
+// generate one beside it, with --force or without.
+func TestLegacyBundleIsNotReplacedByANewOne(t *testing.T) {
+	dir, _ := exitFixture(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "talsecret.sops.yaml"), []byte("bundle: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"secrets", "generate", "--plaintext"},
+		{"secrets", "generate", "--plaintext", "--force"},
+		{"render", "--dry-run"},
+	} {
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(args) })
+
+		if got != 1 || !strings.Contains(stderr, "talsecret.sops.yaml is here") ||
+			strings.Contains(stderr, "run `talman secrets generate`") {
+			t.Errorf("%v: exit %d\n%s\nwant it refused, pointing at talsecret.sops.yaml", args, got, stderr)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "secrets.sops.yaml")); err == nil {
+		t.Error("a new bundle was written beside the old one")
+	}
+}
+
 // -n picks nodes; the order they go in is the config's, as the help says.
 func TestNodeSelectionIsConfigOrder(t *testing.T) {
 	_, log := exitFixtureWith(t, waveNodes)

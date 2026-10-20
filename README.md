@@ -1454,6 +1454,11 @@ so either rename the file or keep the old name and say so:
 secretFile: talsecret.sops.yaml
 ```
 
+Forget to, and talman notices: with a `talsecret.sops.yaml` beside
+`talman.yaml` and nothing at `secrets.sops.yaml`, it says which of the two to
+do, and `secrets generate` refuses to make a new bundle beside the old one —
+its CAs would be new, and the running cluster trusts the old ones.
+
 Your `.sops.yaml` needs no changes: a `path_regex` ending in `\.sops\.yaml$`
 matches both names.
 

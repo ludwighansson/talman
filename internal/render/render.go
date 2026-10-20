@@ -124,6 +124,13 @@ func (r *Renderer) Open() error {
 	if _, err := os.Stat(secretPath); err != nil {
 		r.Close()
 
+		// The bundle under its old name is this cluster's, and generating a
+		// new one -- the advice below -- would replace its CAs.
+		if legacy := r.Cfg.LegacySecret(); legacy != "" {
+			return fmt.Errorf("secrets bundle %s is missing, but %s; not `talman secrets generate`, "+
+				"which would make new CAs the cluster does not trust", r.Cfg.SecretFile, r.Cfg.LegacySecretHint(legacy))
+		}
+
 		return fmt.Errorf("secrets bundle %s is missing: run `talman secrets generate` first "+
 			"(regenerating secrets for a live cluster orphans it, so talman will not create one implicitly)",
 			r.Cfg.SecretFile)
