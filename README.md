@@ -1314,7 +1314,7 @@ with it.
 `--talos=false` or `--kubernetes=false` rotates only the other. Afterwards,
 commit the new bundle, `talman render`, and fetch a new `talman kubeconfig` if
 the Kubernetes CA changed. Should anything fail after the rotation itself, the
-error says so and spells out the two commands that finish the job by hand.
+error says so and names the `talman rotate-ca --finish` that completes it.
 
 ## Tests
 
