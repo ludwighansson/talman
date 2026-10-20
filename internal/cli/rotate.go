@@ -98,11 +98,24 @@ More in the README: "Rotating the CAs".`,
 				return finishRotation(cfg, tal, tc, rotated, old)
 			}
 
+			// talosctl writes it only once the Talos CA has been rotated on
+			// the nodes, so what is left is the end of that rotation, which
+			// --finish does. Rotating again would leave the bundle holding
+			// the old CAs until it finished too, and every apply in between
+			// would put them back. --finish replaces nothing unless the
+			// cluster accepts the file, which is how a stale one shows.
 			if exists(rotated) {
-				return fmt.Errorf("%s is left from a rotation that did not finish, and may be the only "+
-					"talosconfig the cluster still accepts: if `talosctl --talosconfig %s health` passes, "+
-					"move it over %s; delete it only if you are sure it is not needed; then run rotate-ca again",
-					render.Rel(rotated), render.Rel(rotated), render.Rel(tc))
+				return fmt.Errorf("%s is left from a rotation that did not finish\n"+
+					"  talosctl writes it once the Talos CA has been rotated on the nodes, so it may be the only\n"+
+					"  talosconfig the cluster still accepts, and %s still holds the old CAs.\n"+
+					"  Finish that rotation rather than start another:\n"+
+					"    %s\n"+
+					"  and if it was to rotate the Kubernetes CA too, carry that through after it:\n"+
+					"    %s\n"+
+					"  --finish replaces nothing unless the cluster accepts %s; if it does not, and\n"+
+					"  %s still works, the file is stale: delete it",
+					render.Rel(rotated), cfg.SecretFile, talmanCmd("rotate-ca --finish"),
+					talmanCmd("rotate-ca --talos=false"), render.Rel(rotated), render.Rel(tc))
 			}
 
 			// Whether the new bundle can be written the way the old one is,
