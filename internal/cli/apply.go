@@ -78,6 +78,14 @@ out safely" and "Exit codes for CI".`,
 				rec.SetLabel("dry_run", "true")
 			}
 
+			if err := positive("timeout", timeout); err != nil {
+				return err
+			}
+
+			if stabilize < 0 {
+				return fmt.Errorf("--stabilize %s is negative: 0 counts a node as back the moment it answers", stabilize)
+			}
+
 			cfg, err := loadConfig()
 			if err != nil {
 				return err

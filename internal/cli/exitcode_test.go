@@ -731,6 +731,33 @@ func TestNoWaitKeepsControlPlanesApart(t *testing.T) {
 	}
 }
 
+// TestWaitsMustMeanSomething: a timeout of nothing fails every node before it
+// can answer, and a negative duration is a typo; both are refused before
+// anything is asked. `health --timeout 0` is talosctl's own default.
+func TestWaitsMustMeanSomething(t *testing.T) {
+	_, log := exitFixture(t)
+
+	for _, args := range [][]string{
+		{"apply", "--no-render", "--timeout", "0s"},
+		{"apply", "--no-render", "--stabilize", "-5s"},
+		{"reboot", "--timeout", "0s"},
+		{"upgrade", "--timeout", "-1m"},
+		{"health", "--timeout", "-1s"},
+	} {
+		if got := run(args); got != 1 {
+			t.Errorf("%v: exit %d, want 1", args, got)
+		}
+	}
+
+	if calls, _ := os.ReadFile(log); len(calls) > 0 {
+		t.Errorf("talosctl was asked something before the flags were checked:\n%s", calls)
+	}
+
+	if got := run([]string{"health", "--timeout", "0s"}); got != 0 {
+		t.Errorf("health --timeout 0: exit %d, want 0", got)
+	}
+}
+
 // TestStatusJSONBootstrapped: the field says true or false whenever the
 // control planes answered, so a script can tell a bootstrapped cluster from
 // one nobody asked about.

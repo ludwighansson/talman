@@ -31,6 +31,10 @@ answers, unless --node names another -- and reports on the whole cluster, not
 on that node.`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if timeout < 0 {
+				return fmt.Errorf("--timeout %s is negative: 0 is talosctl's own default", timeout)
+			}
+
 			cfg, tal, tc, target, err := controlPlaneTarget(node)
 			if err != nil {
 				return err
