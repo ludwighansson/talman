@@ -134,10 +134,12 @@ func (ro rollOut) run(do one) error {
 		return nil
 	}
 
-	for si, st := range stages {
-		waves := len(stages) > 1 || st.Wave != nil
-		if waves {
-			fmt.Fprintf(os.Stderr, "== wave %d/%d: %s, %d node(s)\n", si+1, len(stages), st.Name(), len(st.Nodes))
+	for _, st := range stages {
+		// Numbered among every wave the selection spans, not only the ones
+		// this run reaches: --until blue is the second wave of three, and
+		// the run that carries on from it starts at the third.
+		if st.Of > 1 || st.Wave != nil {
+			fmt.Fprintf(os.Stderr, "== wave %d/%d: %s, %d node(s)\n", st.Number, st.Of, st.Name(), len(st.Nodes))
 		}
 
 		batches := batchesFor(st.Nodes, parallel, ro.inert)

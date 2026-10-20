@@ -116,7 +116,7 @@ out safely" and "Exit codes for CI".`,
 			// rendered. Planned again after --only-new-nodes, below, but the
 			// wave --until stops short of is this plan's: the second one sees
 			// only the nodes this one kept.
-			_, targets, thenFrom, err := waves.plan(cfg, targets)
+			stages, targets, thenFrom, err := waves.plan(cfg, targets)
 			if err != nil {
 				return err
 			}
@@ -226,12 +226,11 @@ out safely" and "Exit codes for CI".`,
 
 					return nil
 				}
-			}
 
-			// After --only-new-nodes, so the waves hold only the nodes it kept.
-			stages, targets, _, err := waves.plan(cfg, targets)
-			if err != nil {
-				return err
+				// So the waves hold only the nodes it kept.
+				if stages, targets, _, err = waves.plan(cfg, targets); err != nil {
+					return err
+				}
 			}
 
 			for _, n := range targets {
