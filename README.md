@@ -1410,11 +1410,10 @@ request.
 
 ## Upgrading from an earlier prerelease
 
-A cluster directory written for an earlier alpha or beta may need these
-changes. None of them is read differently in silence: a renamed key is refused
-with an error naming its new spelling, a removed flag is refused as an unknown
-flag, and a `talosctl:` path that no longer leads to a binary says where it
-looked.
+A cluster directory, or a script, written for an earlier alpha or beta may need
+these changes. Most of them announce themselves: a renamed key is refused with
+an error naming its new spelling, a removed command or flag as unknown, and a
+bundle or `talosctl:` path talman no longer finds says where it looked.
 
 | before | now |
 | --- | --- |
@@ -1423,12 +1422,23 @@ looked.
 | `imageFactory.secureboot` | `imageFactory.secureBoot` |
 | any `hostname` | a lower-case RFC 1123 name, since it is also a file name |
 | `endpoint` without a port | `https://…:6443` |
+| the bundle at `talsecret.sops.yaml` by default | `secrets.sops.yaml`: rename it, or set `secretFile: talsecret.sops.yaml` |
+| a relative `talosctl:` path, read from where talman runs | read from the directory holding `talman.yaml`, like every other path in it |
+| `talman diff` | `talman apply --dry-run` |
+| `talman nodes` | `talman status --offline` |
+| `talman bootstrap`, and `apply` on a cluster not bootstrapped | `talman apply --bootstrap` builds a new cluster in one run |
+| `apply` configuring a node in maintenance mode by itself | `apply --onboard-new-nodes`, or `--only-new-nodes`: the maintenance service authenticates nothing |
+| `apply --adopt`, `--only-new` | `apply --onboard-new-nodes`, `--only-new-nodes` |
 | `upgrade --stage`, `--skip-etcd-check` | removed: Talos 1.14's upgrade API ignores both; `--extra-flags` reaches them on a legacy node |
 | `upgrade --wait=false` | removed: talosctl waits whenever it drains, which is by default |
-| `apply` configuring a node in maintenance mode by itself | `apply --onboard-new-nodes`, or `--only-new-nodes`: the maintenance service authenticates nothing |
-| `apply --only-new` | `apply --only-new-nodes` |
-| `talman bootstrap`, and `apply` on a cluster not bootstrapped | `talman apply --bootstrap` builds a new cluster in one run |
-| a relative `talosctl:` path, read from where talman runs | read from the directory holding `talman.yaml`, like every other path in it |
+
+These three do something different without failing, so look for them by hand:
+
+| before | now |
+| --- | --- |
+| `apply` checked cluster health between nodes | only with `--health` |
+| `talman kubeconfig` merged into `~/.kube/config` | writes `clusterconfig/kubeconfig`; `talman kubeconfig ~/.kube/config` merges as before |
+| `reset` wiped the whole system disk and powered the node off | wipes EPHEMERAL and STATE and reboots it into maintenance mode; `--wipe-disk --reboot=false` is the old behaviour |
 
 ## Migrating from talhelper
 
