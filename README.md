@@ -196,9 +196,11 @@ wrote prod/.sops.yaml
 ```
 
 The Talos and Kubernetes versions default to what the `talosctl` on `PATH`
-generates, and the endpoint to the first control plane's address — name a VIP
-or a load balancer with `--endpoint` for more than one. `init` writes no
-secrets, and never overwrites a file.
+generates (`--talos-version` and `--kubernetes-version` name others), the
+cluster name to the directory's (`--cluster-name`), and the endpoint to the
+first control plane's address — name a VIP or a load balancer with
+`--endpoint` for more than one. `init` writes no secrets, and never overwrites
+a file.
 
 ## Configuration
 
@@ -375,7 +377,8 @@ labels:
 Every referenced patch file is a Go template
 ([sprig](https://masterminds.github.io/sprig/) included) and may be
 SOPS-encrypted. There is no opt-in suffix: topf gates templating on `.tpl`,
-which means a templated patch can never also be encrypted.
+which means a templated patch can never also be encrypted. A `{{` meant
+literally — an inline manifest's own template — is written `{{ "{{" }}`.
 
 Template scope:
 
@@ -454,7 +457,9 @@ Generating refuses to overwrite an existing bundle: the CAs and cluster
 identity in it are what a running cluster trusts. To adopt a cluster that
 already exists, use `--from-controlplane-config`. `--force` replaces the
 bundle anyway, and keeps the old one in the gitignored output directory as
-`secrets-pre-generate-<time>.yaml`, so a mistake can be undone.
+`secrets-pre-generate-<time>.yaml`, so a mistake can be undone. `--plaintext`
+writes the bundle unencrypted, for a cluster that is thrown away; `--stdout`
+prints it instead of writing it.
 
 Rendered machine configs *do* contain secrets, so `render` writes them `0600`
 and drops a `.gitignore` that excludes the whole output directory. That is why
@@ -1016,7 +1021,7 @@ is no single invocation for a forwarded flag to land on.
 
 `render` validates every generated config with `talosctl validate` before
 writing; `--no-validate` skips it, `--dry-run` writes nothing, `--stdout`
-prints instead.
+prints instead, and `--no-talosconfig` leaves the talosconfig as it is.
 
 ### apply renders first
 
@@ -1064,7 +1069,8 @@ every node the config lists. Not from the VIP: a Talos VIP is only held by a
 control plane in etcd quorum, so it disappears during exactly the outage worth
 checking, and as a node address it means "whichever machine holds it right
 now". The VIP's place is `--endpoints`, where the talosconfig already lists
-every control plane.
+every control plane. `talman health` runs the check on that control plane;
+`--server=false` runs it from where talman runs instead, as the gate does.
 
 `upgrade` first asks each node what it is running, and skips it when the Talos
 version and schematic already match what the config resolves to:
@@ -1102,7 +1108,8 @@ It goes one node at a time in config order, control planes always alone, and
 talosctl waits for each to come back before the next, up to `--timeout`
 (30m). `--parallel` and `--health` mean what they mean for `upgrade`;
 `--wait=false` only starts each reboot, which talman refuses for more than one
-control plane at a time, and `--mode powercycle` bypasses kexec.
+control plane at a time. `--mode powercycle` bypasses kexec, and `--mode
+force` skips the graceful shutdown.
 
 `upgrade-k8s` does for Kubernetes what `upgrade` does for Talos: it asks every node which version
 its kubelet runs, and does nothing when they are all already on
@@ -1125,6 +1132,11 @@ reports nothing to upgrade, because that is what running the command would do.
 A dry run that printed a component-by-component plan the real command would
 never carry out is worse than no dry run at all. `--force --dry-run` reaches
 `talosctl`'s own plan.
+
+`--to` names a version other than `kubernetesVersion`, and a run that moves
+the cluster to it ends with a warning: every config talman renders carries
+`kubernetesVersion`, so the next `apply` would take Kubernetes back down to
+it. Change the config, and `--to` is not needed.
 
 `reset` returns a node to maintenance mode. It wipes the EPHEMERAL and STATE
 partitions — all data, and the machine config with it — and reboots the node
