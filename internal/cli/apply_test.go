@@ -380,3 +380,44 @@ func TestApplyWaitsOnlyForNodesThatChange(t *testing.T) {
 		t.Errorf("apply did not wait for a node it changed:\n%s", calls)
 	}
 }
+
+// A node in a batch that fails before its heading is printed -- here one that
+// answers nothing -- still gets its block, between its neighbours', rather
+// than turning up only in the error at the end.
+func TestApplyBatchGivesAFailedNodeItsHeading(t *testing.T) {
+	dir, _ := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+  - hostname: w2
+    ipAddress: 10.0.0.3
+    role: worker
+  - hostname: w3
+    ipAddress: 10.0.0.4
+    role: worker
+`)
+
+	for _, w := range []string{"w1", "w2", "w3"} {
+		if err := os.WriteFile(filepath.Join(dir, "clusterconfig", w+".yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Setenv("STUB_FAIL", "10.0.0.3")
+
+	var got int
+
+	stderr := captureStderr(t, func() {
+		got = run([]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "-p", "3"})
+	})
+	if got != 1 {
+		t.Fatalf("exit %d, want 1\n%s", got, stderr)
+	}
+
+	w1 := strings.Index(stderr, "== [2/4] w1 (10.0.0.2)")
+	w2 := strings.Index(stderr, "== [3/4] w2 (10.0.0.3)\n     error: w2 (10.0.0.3) answers neither")
+	w3 := strings.Index(stderr, "== [4/4] w3 (10.0.0.4)")
+
+	if w1 < 0 || w2 < 0 || w3 < 0 || w1 > w2 || w2 > w3 {
+		t.Errorf("want w2's heading and error between w1's block and w3's:\n%s", stderr)
+	}
+}
