@@ -531,13 +531,13 @@ The maintenance service authenticates nothing. Whatever answers at a node's
 address gets its whole config, and a control plane's includes the cluster's CA
 keys — so a reused address, a spoofed host, or a real node whose secure API
 failed for a moment would be handed them. `apply` therefore sends a config
-that way only when asked to onboard it:
+that way only when asked to onboard it, and finds the new nodes before it
+sends anything, so a run is not stopped halfway by one:
 
 ```console
 $ talman apply
-== [1/2] talos-c01 (10.164.0.27)
-     Applied configuration without a reboot
-error: talos-w01 (10.164.0.32) is a new node: it answers only the maintenance service, which authenticates nothing, so it gets its config, CA keys included, only when asked
+error: 1 new node(s), in maintenance mode: talos-w01
+  the maintenance service authenticates nothing, so a new node gets its config, CA keys included, only when asked
   talman apply --onboard-new-nodes -n talos-w01
 $ talman apply --onboard-new-nodes -n talos-w01
 == [1/1] talos-w01 (10.164.0.32) · onboarding
