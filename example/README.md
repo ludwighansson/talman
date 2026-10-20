@@ -3,14 +3,16 @@
 A two-directory layout: shared patches in `base/`, one directory per cluster.
 
 First put your own age recipient in `.sops.yaml` -- the one committed here is
-a placeholder.
+a placeholder. Keep the private key outside the repository: `render` decrypts
+the bundle with it, found as sops finds it, so point `SOPS_AGE_KEY_FILE` at it
+or keep it where sops looks by default.
 
 ```console
 $ cd development
 $ talman validate          # checks paths, keys and templates -- no secrets needed
 $ talman patches           # what each node gets, in application order
 $ talman secrets generate  # once per cluster
-$ talman render            # -> clusterconfig/
+$ SOPS_AGE_KEY_FILE=~/keys/development.txt talman render   # -> clusterconfig/
 ```
 
 Note the `storage` group on `development-worker-01`: it is declared but has no

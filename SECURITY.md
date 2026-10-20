@@ -5,6 +5,11 @@ bundle holding the machine CA and the cluster's identity, renders machine
 configs carrying them, and reaches clusters with admin credentials. Reports
 about any of that are very welcome.
 
+## Supported versions
+
+Fixes land in the latest 1.x release. Upgrading within 1.x is meant to be
+safe, so that release is the one to be on.
+
 ## Reporting a vulnerability
 
 Please report privately, through GitHub's
