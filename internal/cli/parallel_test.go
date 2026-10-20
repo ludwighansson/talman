@@ -172,3 +172,14 @@ func TestInOrder(t *testing.T) {
 		t.Errorf("printed\n%s\nwant\n%s", got, want)
 	}
 }
+
+// Questions go at a read's pace, whatever pace --parallel sets for changes:
+// apply defaults to one node at a time, and a probe at that pace waits out
+// every dead node's dial timeouts in turn.
+func TestProbing(t *testing.T) {
+	for parallel, want := range map[int]int{1: defaultParallel, defaultParallel: defaultParallel, 16: 16} {
+		if got := probing(parallel); got != want {
+			t.Errorf("probing(%d) = %d, want %d", parallel, got, want)
+		}
+	}
+}
