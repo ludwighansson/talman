@@ -190,7 +190,7 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 			// Control planes one at a time whatever --parallel says: an
 			// upgrade reboots the machine, and two control planes rebooting
 			// together is how a three-node cluster loses quorum.
-			if err := (rollOut{
+			ro := rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
 				verb: "upgrade", done: pastTense(dryRun, "upgraded"),
 				targets: targets, parallel: parallel, inert: dryRun,
@@ -198,7 +198,9 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				// and a drain always waits.
 				health: health, timeout: timeout, waits: true,
 				stages: stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
-			}).run(upgradeOne); err != nil {
+			}
+
+			if err := ro.run(upgradeOne); err != nil {
 				return err
 			}
 
@@ -206,6 +208,8 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				fmt.Fprintf(os.Stderr, "nothing to upgrade: every selected node already runs "+
 					"its configured version and schematic (use --force to upgrade anyway)\n")
 			}
+
+			ro.carryOn()
 
 			if detailed && upgraded > 0 {
 				return errChanged
