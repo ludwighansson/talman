@@ -261,6 +261,15 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 		seenGroup := map[string]bool{}
 
 		for _, g := range n.Groups {
+			// A group of no name is one no patches key or -g can name; a
+			// list item left empty, `- `, never gets here, since the YAML
+			// decoder drops it as it does in a list of patches.
+			if g == "" {
+				add("%s: groups lists an empty name", where)
+
+				continue
+			}
+
 			if seenGroup[g] {
 				add("%s: group %q is listed twice; its patches would be applied twice", where, g)
 			}
