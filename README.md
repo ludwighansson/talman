@@ -361,6 +361,13 @@ form. That is the factory's own algorithm, and a test holds talman's output to
 IDs the factory's code computed. `talman schematic id --submit` registers the
 schematic instead, and warns if the factory's answer ever differs.
 
+Computing an ID is not registering it, though: the factory serves images only
+for a schematic it has been sent. A new one — after a change to `schematic:` —
+is unknown there until something submits it, and an upgrade, an install or a
+boot medium that pulls its images meets `schematic ID … not found`. Submit it
+once, before rolling it out: `talman schematic id --submit`, or `--submit` on
+the `upgrade`, `render` or `image url` that needs it.
+
 ### The node schema is deliberately tiny
 
 A node carries only what talman needs to route patches and reach the host.
