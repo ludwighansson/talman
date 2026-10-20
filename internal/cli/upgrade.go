@@ -109,6 +109,12 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				if !force {
 					current, err := tal.State(tc, n.IPAddress)
 					if err != nil {
+						// --force is no way out of a dry run: it skips the
+						// very question a dry run asks.
+						if dryRun {
+							return false, fmt.Errorf("reading current state of %s: %w", n.Hostname, err)
+						}
+
 						return false, fmt.Errorf("reading current state of %s: %w "+
 							"(pass --force to upgrade without checking)", n.Hostname, err)
 					}
@@ -182,7 +188,7 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 			// together is how a three-node cluster loses quorum.
 			if err := (rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
-				verb: "upgrade", done: "upgraded",
+				verb: "upgrade", done: pastTense(dryRun, "upgraded"),
 				targets: targets, parallel: parallel, inert: dryRun,
 				// talosctl waits for every upgrade: it drains the node first,
 				// and a drain always waits.

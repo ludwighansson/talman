@@ -290,6 +290,16 @@ func runTalosctl(tal *talosctl.Runner, grouped bool, header string, say func(str
 	return nil
 }
 
+// pastTense is what a resume hint says the nodes left were not: a dry run
+// left them unchecked, which is not the same as not upgraded.
+func pastTense(dryRun bool, done string) string {
+	if dryRun {
+		return "checked"
+	}
+
+	return done
+}
+
 func gerund(verb string) string {
 	switch verb {
 	case "upgrade":
