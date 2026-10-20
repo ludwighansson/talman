@@ -67,6 +67,44 @@ func validAddress(a string) bool {
 	return validHostname(name)
 }
 
+// CheckClusterName holds a cluster name to the rule Validate does, for a
+// caller that has the name before it has a config: init, which takes it from
+// a directory.
+func CheckClusterName(name string) error {
+	// It names files -- an etcd snapshot, a kubeconfig context -- so a slash
+	// or a ".." would put one outside the output directory.
+	if !clusterNamePattern.MatchString(name) || strings.Contains(name, "..") {
+		return fmt.Errorf("clusterName %q may hold only letters, digits, '.', '_' and '-', starting with a "+
+			"letter or digit", name)
+	}
+
+	return nil
+}
+
+// CheckHostname holds a node's hostname to the rule Validate does.
+func CheckHostname(h string) error {
+	// The hostname names the file the node's config is written to, so
+	// anything with a slash or a ".." in it would put a file full of secrets
+	// outside the gitignored output directory.
+	if !validHostname(h) {
+		return fmt.Errorf("hostname %q is not a valid RFC 1123 host name: lower-case letters, "+
+			"digits and '-', in dot-separated labels of at most 63", h)
+	}
+
+	return nil
+}
+
+// CheckAddress holds a node's ipAddress to the rule Validate does.
+func CheckAddress(a string) error {
+	// talosctl splits --nodes on commas, so "a,b" would send this node's
+	// config to two machines.
+	if !validAddress(a) {
+		return fmt.Errorf("ipAddress %q is not an IP address or a host name", a)
+	}
+
+	return nil
+}
+
 // Validate checks the whole config and reports every problem at once.
 //
 // Failing on the first error would mean an operator fixes one path, re-runs,
@@ -81,14 +119,10 @@ func (c *Config) Validate() error {
 
 	c.normalize()
 
-	switch {
-	case c.ClusterName == "":
+	if c.ClusterName == "" {
 		add("clusterName is required")
-	case !clusterNamePattern.MatchString(c.ClusterName) || strings.Contains(c.ClusterName, ".."):
-		// It names files -- an etcd snapshot, a kubeconfig context -- so a
-		// slash or a ".." would put one outside the output directory.
-		add("clusterName %q may hold only letters, digits, '.', '_' and '-', starting with a "+
-			"letter or digit", c.ClusterName)
+	} else if err := CheckClusterName(c.ClusterName); err != nil {
+		add("%v", err)
 	}
 
 	c.validateEndpoint(add)
@@ -194,12 +228,8 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 		case "":
 			add("%s: hostname is required", where)
 		default:
-			// The hostname names the file the node's config is written to,
-			// so anything with a slash or a ".." in it would put a file full
-			// of secrets outside the gitignored output directory.
-			if !validHostname(n.Hostname) {
-				add("%s: hostname %q is not a valid RFC 1123 host name: lower-case letters, "+
-					"digits and '-', in dot-separated labels of at most 63", where, n.Hostname)
+			if err := CheckHostname(n.Hostname); err != nil {
+				add("%s: %v", where, err)
 			}
 
 			if prev, dup := seenHost[n.Hostname]; dup {
@@ -212,10 +242,8 @@ func (c *Config) validateNodes(add func(string, ...any)) {
 
 		if n.IPAddress == "" {
 			add("%s: ipAddress is required (talman passes it verbatim to talosctl --nodes)", where)
-		} else if !validAddress(n.IPAddress) {
-			// talosctl splits --nodes on commas, so "a,b" would send this
-			// node's config to two machines.
-			add("%s: ipAddress %q is not an IP address or a host name", where, n.IPAddress)
+		} else if err := CheckAddress(n.IPAddress); err != nil {
+			add("%s: %v", where, err)
 		} else if prev, dup := seenIP[n.IPAddress]; dup {
 			add("%s: duplicate ipAddress %q (also on %s)", where, n.IPAddress, prev)
 		} else {
