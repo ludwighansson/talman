@@ -889,15 +889,18 @@ func TestRolloutWaves(t *testing.T) {
 		args []string
 		want string
 		hint string
+		// wave is a heading the run prints: waves are numbered among all
+		// those the selection spans, the ones a wave flag leaves out too.
+		wave string
 	}{
 		// c1, then blue, then green and pink in config order, then the rest.
-		{[]string{"reboot"}, "10.0.0.1 10.0.0.2 10.0.0.3 10.0.0.4 10.0.0.5", ""},
-		{[]string{"reboot", "--until", "blue"}, "10.0.0.1 10.0.0.2", "--from green"},
-		{[]string{"reboot", "--from", "pink"}, "10.0.0.3 10.0.0.4 10.0.0.5", ""},
-		{[]string{"reboot", "--wave", "green"}, "10.0.0.3 10.0.0.4", ""},
-		{[]string{"reboot", "--wave", "rest"}, "10.0.0.5", ""},
-		{[]string{"reboot", "-g", "pink", "-g", "blue"}, "10.0.0.2 10.0.0.4", ""},
-		{[]string{"reboot", "-g", "worker", "--until", "blue"}, "10.0.0.2", "--from green"},
+		{[]string{"reboot"}, "10.0.0.1 10.0.0.2 10.0.0.3 10.0.0.4 10.0.0.5", "", "== wave 2/4: blue"},
+		{[]string{"reboot", "--until", "blue"}, "10.0.0.1 10.0.0.2", "--from green", "== wave 2/4: blue"},
+		{[]string{"reboot", "--from", "pink"}, "10.0.0.3 10.0.0.4 10.0.0.5", "", "== wave 3/4: green,pink"},
+		{[]string{"reboot", "--wave", "green"}, "10.0.0.3 10.0.0.4", "", "== wave 3/4: green,pink"},
+		{[]string{"reboot", "--wave", "rest"}, "10.0.0.5", "", "== wave 4/4: rest"},
+		{[]string{"reboot", "-g", "pink", "-g", "blue"}, "10.0.0.2 10.0.0.4", "", "== wave 2/2: green,pink"},
+		{[]string{"reboot", "-g", "worker", "--until", "blue"}, "10.0.0.2", "--from green", "== wave 1/3: blue"},
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			_ = os.WriteFile(log, nil, 0o644)
@@ -916,6 +919,10 @@ func TestRolloutWaves(t *testing.T) {
 
 			if tt.hint != "" && !strings.Contains(stderr, tt.hint) {
 				t.Errorf("no %q in the hint:\n%s", tt.hint, stderr)
+			}
+
+			if !strings.Contains(stderr, tt.wave) {
+				t.Errorf("no %q heading:\n%s", tt.wave, stderr)
 			}
 		})
 	}
