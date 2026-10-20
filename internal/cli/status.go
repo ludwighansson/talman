@@ -117,7 +117,7 @@ More in the README: "Seeing what is out there".`,
 				return err
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), summarise(reports, offline))
+			fmt.Fprintln(cmd.OutOrStdout(), summarise(reports, offline, wide))
 
 			// A node with a config but no cluster to join never starts
 			// serving the Talos API, which looks exactly like a machine that
@@ -300,23 +300,29 @@ func withV(version string) string {
 }
 
 // summarise closes the table with the counts an operator would otherwise make
-// by eye.
-func summarise(reports []nodeReport, offline bool) string {
+// by eye. wide is whether the table shows the schematic column.
+func summarise(reports []nodeReport, offline, wide bool) string {
 	// Nothing about what was or was not asked: the dashes in the table say
 	// that already, and saying it twice reads as an apology.
 	if offline {
 		return fmt.Sprintf("%d node(s)", len(reports))
 	}
 
-	var running, maintenance, unreachable, stale int
+	var running, maintenance, unreachable, stale, otherSchematic int
 
 	for _, r := range reports {
 		switch r.Mode {
 		case talosctl.ModeRunning:
 			running++
 
-			if !upToDate(r.State, r.wantTalos, r.wantSchematic) || !k8sUpToDate(r.K8s, r.wantKubernetes) {
+			switch {
+			case r.State.TalosVersion != r.wantTalos || !k8sUpToDate(r.K8s, r.wantKubernetes):
 				stale++
+			case !upToDate(r.State, r.wantTalos, r.wantSchematic):
+				// On the configured versions, from another image: what
+				// upgrade would change, in a column the default table
+				// leaves out.
+				otherSchematic++
 			}
 		case talosctl.ModeMaintenance:
 			maintenance++
@@ -343,7 +349,15 @@ func summarise(reports []nodeReport, offline bool) string {
 	out := fmt.Sprintf("%d node(s): %s", len(reports), strings.Join(parts, ", "))
 
 	if stale > 0 {
-		return fmt.Sprintf("%s; %d not on the configured version", out, stale)
+		out += fmt.Sprintf("; %d not on the configured version", stale)
+	}
+
+	if otherSchematic > 0 {
+		out += fmt.Sprintf("; %d not on the configured schematic", otherSchematic)
+
+		if !wide {
+			out += " (--wide shows it)"
+		}
 	}
 
 	return out

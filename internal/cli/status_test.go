@@ -124,15 +124,32 @@ func TestSummarise(t *testing.T) {
 	behindOnK8s := current
 	behindOnK8s.K8s = "v1.36.2"
 
+	otherImage := current
+	otherImage.State.SchematicID = schematicB
+
 	tests := []struct {
 		name    string
 		reports []nodeReport
+		wide    bool
 		want    string
 	}{
 		{
 			name:    "a cluster with nothing to do",
 			reports: []nodeReport{current, current},
 			want:    "2 node(s): 2 running",
+		},
+		{
+			// The TALOS column shows no drift for it, so the count says
+			// where the difference is.
+			name:    "one node on the configured version from another image",
+			reports: []nodeReport{current, otherImage, stale},
+			want:    "3 node(s): 3 running; 1 not on the configured version; 1 not on the configured schematic (--wide shows it)",
+		},
+		{
+			name:    "the same, with the schematic column shown",
+			reports: []nodeReport{current, otherImage},
+			wide:    true,
+			want:    "2 node(s): 2 running; 1 not on the configured schematic",
 		},
 		{
 			name:    "one node behind on Talos",
@@ -166,7 +183,7 @@ func TestSummarise(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := summarise(tt.reports, false); got != tt.want {
+			if got := summarise(tt.reports, false, tt.wide); got != tt.want {
 				t.Errorf("summarise() =\n  %q\nwant\n  %q", got, tt.want)
 			}
 		})
@@ -230,7 +247,7 @@ func TestOfflineKeepsTheShape(t *testing.T) {
 	})
 
 	t.Run("the offline summary counts, and claims nothing else", func(t *testing.T) {
-		got := summarise([]nodeReport{notAsked, notAsked}, true)
+		got := summarise([]nodeReport{notAsked, notAsked}, true, false)
 
 		if got != "2 node(s)" {
 			t.Errorf("summarise(offline) = %q, want a bare count", got)
