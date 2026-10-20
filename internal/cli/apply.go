@@ -270,8 +270,12 @@ out safely" and "Exit codes for CI".`,
 
 			// Asked first too when the answer decides whether to soak or
 			// gate: a dry run per node is cheap next to a ten-minute soak
-			// after a wave that changed nothing.
-			wantsAnswer := detailed || rec != nil || health || cfg.Rollout.SoakDuration() > 0
+			// after a wave that changed nothing. And whenever each node is
+			// waited for, since one the config changes nothing on goes
+			// nowhere, and holding the roll-out for --stabilize on it is half
+			// a minute a node spent waiting for nothing.
+			wantsAnswer := detailed || rec != nil || health || cfg.Rollout.SoakDuration() > 0 ||
+				(wait && mode != "staged")
 
 			applyOne := func(n *config.Node, position int, say func(string)) error {
 				file := cfg.MachineConfigPath(n)
@@ -481,7 +485,16 @@ out safely" and "Exit codes for CI".`,
 					return nil
 				}
 
-				if wait {
+				unchangedMu.Lock()
+				same := unchanged[n.IPAddress]
+				unchangedMu.Unlock()
+
+				switch {
+				case wait && same:
+					// It said, asked first, that the config changes nothing:
+					// Talos took it without touching anything, so there is no
+					// reboot to wait out.
+				case wait:
 					logf := detailLog(say)
 
 					if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
@@ -493,7 +506,7 @@ out safely" and "Exit codes for CI".`,
 					modesMu.Lock()
 					modes[n.IPAddress] = talosctl.ModeRunning
 					modesMu.Unlock()
-				} else {
+				default:
 					// Without the wait talman did not see what the node did
 					// next, and the answer it has is now stale -- a node
 					// recorded as being in maintenance mode keeps the health
