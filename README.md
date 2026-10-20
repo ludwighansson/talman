@@ -1386,9 +1386,10 @@ request.
 ## Upgrading from an earlier prerelease
 
 A cluster directory written for an earlier alpha or beta may need these
-changes. None of them is read
-differently: a renamed key is refused with an error naming its new spelling,
-and a removed flag is refused as an unknown flag.
+changes. None of them is read differently in silence: a renamed key is refused
+with an error naming its new spelling, a removed flag is refused as an unknown
+flag, and a `talosctl:` path that no longer leads to a binary says where it
+looked.
 
 | before | now |
 | --- | --- |
@@ -1402,6 +1403,7 @@ and a removed flag is refused as an unknown flag.
 | `apply` configuring a node in maintenance mode by itself | `apply --onboard-new-nodes`, or `--only-new-nodes`: the maintenance service authenticates nothing |
 | `apply --only-new` | `apply --only-new-nodes` |
 | `talman bootstrap`, and `apply` on a cluster not bootstrapped | `talman apply --bootstrap` builds a new cluster in one run |
+| a relative `talosctl:` path, read from where talman runs | read from the directory holding `talman.yaml`, like every other path in it |
 
 ## Migrating from talhelper
 
