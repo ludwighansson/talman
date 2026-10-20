@@ -171,6 +171,52 @@ nodes:
 	}
 }
 
+// talosctl: is a path like every other in the config when it is one, read
+// from the config's directory however talman was pointed at it; a bare name
+// is left for PATH.
+func TestTalosctlPathResolvesAgainstConfigDir(t *testing.T) {
+	nodes := `
+nodes:
+  - hostname: cp1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`
+
+	t.Chdir(t.TempDir())
+
+	for _, tc := range []struct{ value, want string }{
+		{"./bin/talosctl", "bin/talosctl"},
+		{"bin/talosctl", "bin/talosctl"},
+		{"../tools/talosctl", "../tools/talosctl"},
+		{"talosctl-1.14", ""},
+		{"", ""},
+	} {
+		body := validBase + nodes
+		if tc.value != "" {
+			body = validBase + "talosctl: " + tc.value + "\n" + nodes
+		}
+
+		path := write(t, body)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := filepath.Join(filepath.Dir(path), tc.want)
+		switch {
+		case tc.value == "":
+			want = DefaultTalosctl
+		case tc.want == "":
+			want = tc.value
+		}
+
+		if cfg.Talosctl != want {
+			t.Errorf("talosctl: %q resolved to %q, want %q", tc.value, cfg.Talosctl, want)
+		}
+	}
+}
+
 func TestValidationErrors(t *testing.T) {
 	tests := []struct {
 		name    string

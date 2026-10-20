@@ -341,6 +341,26 @@ func TestEnsureRefusesAnOldTalosctl(t *testing.T) {
 	}
 }
 
+// A path that is not there is named as the path it is: it was never looked
+// up on PATH, and saying so would send the operator to the wrong place.
+func TestEnsureNamesAMissingPath(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "bin", "talosctl")
+
+	err := New(bin).Ensure()
+	if err == nil {
+		t.Fatal("expected an error for a talosctl path that does not exist")
+	}
+
+	if !strings.Contains(err.Error(), bin+" does not exist") || strings.Contains(err.Error(), "PATH") {
+		t.Errorf("error does not name the path as missing: %v", err)
+	}
+
+	err = New("talosctl-that-is-nowhere").Ensure()
+	if err == nil || !strings.Contains(err.Error(), "not found on PATH") {
+		t.Errorf("a bare name should still be looked for on PATH: %v", err)
+	}
+}
+
 // Read off a generated config, against the real talosctl: this is the one
 // place a talosctl release could move what talman reads.
 func TestDefaultKubernetesVersion(t *testing.T) {

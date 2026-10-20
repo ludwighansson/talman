@@ -98,8 +98,15 @@ func LoadNoValidate(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
-	if c.Talosctl == "" {
+	switch {
+	case c.Talosctl == "":
 		c.Talosctl = DefaultTalosctl
+	case strings.ContainsAny(c.Talosctl, "/"+string(filepath.Separator)):
+		// A path, as exec tells one from a name: read from the config's
+		// directory like every other path in it, rather than from wherever
+		// talman happens to be run -- `-c` and $TALMAN_CONFIG exist to run
+		// it from somewhere else. A bare name is still looked up on PATH.
+		c.Talosctl = c.ResolvePath(c.Talosctl)
 	}
 
 	if c.OutputDir == "" {
