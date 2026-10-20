@@ -52,6 +52,17 @@ func TestRejectsJSON6902(t *testing.T) {
 	}
 }
 
+// Documents are counted the way someone reading the file counts them: the
+// second one is document 2.
+func TestDocumentsCountFromOne(t *testing.T) {
+	body := "apiVersion: v1alpha1\nkind: HostnameConfig\nhostname: a\n---\n- op: add\n  path: /x\n  value: 1\n"
+
+	err := CheckStrategicMerge("t.yaml", []byte(body))
+	if err == nil || !strings.Contains(err.Error(), "document 2 is an RFC6902") {
+		t.Errorf("CheckStrategicMerge() = %v, want it to name document 2", err)
+	}
+}
+
 // A plain YAML list is not a JSON patch; only a list of op/path maps is.
 func TestSequenceWithoutOpIsFine(t *testing.T) {
 	body := "apiVersion: v1alpha1\nkind: ResolverConfig\nservers:\n  - 1.1.1.1\n  - 8.8.8.8\n"
