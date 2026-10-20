@@ -38,10 +38,18 @@ func Load(path string) (*Config, error) {
 // LoadNoValidate reads and decodes without running semantic validation. Used
 // by commands that want to report every problem themselves.
 func LoadNoValidate(path string) (*Config, error) {
+	named := path
+
+	// A directory is a cluster directory -- init makes one -- and the config
+	// meant is the one in it.
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		path = filepath.Join(path, DefaultFileName)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("no talman config at %s (use -c to point at one)", path)
+			return nil, fmt.Errorf("no talman config at %s%s", path, missingHint(named))
 		}
 
 		return nil, err
@@ -154,7 +162,8 @@ func (c *Config) KubeconfigPath() string {
 const EnvConfig = "TALMAN_CONFIG"
 
 // FindConfig locates a config file: the explicit path if given, else
-// $TALMAN_CONFIG, else talman.yaml in the working directory.
+// $TALMAN_CONFIG, else talman.yaml in the working directory. Either may name
+// a directory, which LoadNoValidate reads the talman.yaml in.
 func FindConfig(explicit string) string {
 	if explicit != "" {
 		return explicit
@@ -165,6 +174,21 @@ func FindConfig(explicit string) string {
 	}
 
 	return DefaultFileName
+}
+
+// missingHint says where to go from a config that is not there. The default
+// one missing is, on a first run, no config at all, so the way on is init; a
+// path someone named is the place to look, and a $TALMAN_CONFIG set and
+// forgotten is worth saying, since nothing on the command line shows it.
+func missingHint(named string) string {
+	switch env := os.Getenv(EnvConfig); {
+	case env != "" && named == env:
+		return " (named by $" + EnvConfig + ")"
+	case named == DefaultFileName:
+		return ": start one with `talman init`, or point -c at one"
+	default:
+		return ""
+	}
 }
 
 // renameHint names the keys 1.0 renamed that a config still spells the old

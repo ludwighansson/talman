@@ -496,8 +496,9 @@ repeatable wherever a command works node by node — `apply`, `upgrade`,
 whole. Wherever `-n` is repeatable, `-g/--group` selects by group or role as well:
 `talman reboot -g blue` is every node in `blue`, and `-n` and `-g` together
 select both. `-v` echoes every
-`talosctl` invocation. `-c` points at a config other than `./talman.yaml`, and
-so does `TALMAN_CONFIG` when `-c` is not given.
+`talosctl` invocation. `-c` points at a config other than `./talman.yaml`, or
+at the directory holding one, and so does `TALMAN_CONFIG` when `-c` is not
+given.
 
 `status`, `patches`, `schematic id`, `image url` and `version` take
 `-o json`: the text they print is for reading, the JSON for scripts.
