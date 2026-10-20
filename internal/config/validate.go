@@ -134,6 +134,7 @@ func (c *Config) Validate() error {
 	c.validatePatchKeys(add)
 	c.validatePatchFiles(add)
 	c.validateValuesFiles(add)
+	c.validateSchematicFiles(add)
 	c.validateRollout(add)
 
 	return errors.Join(errs...)
@@ -339,6 +340,23 @@ func (c *Config) validateValuesFiles(add func(string, ...any)) {
 	for i := range c.Nodes {
 		for _, rel := range c.Nodes[i].ValuesFiles {
 			checkFile(add, "node "+c.Nodes[i].Hostname+": valuesFiles", rel, c.ResolvePath(rel), notDir)
+		}
+	}
+}
+
+// validateSchematicFiles checks a schematic given as a path names a readable
+// file, as validatePatchFiles does for patches. Found here it is one line;
+// left to rendering it is the same open error once for every node using it.
+func (c *Config) validateSchematicFiles(add func(string, ...any)) {
+	const notDir = "a schematic is one file"
+
+	if c.Schematic != nil && c.Schematic.Path != "" {
+		checkFile(add, "schematic", c.Schematic.Path, c.ResolvePath(c.Schematic.Path), notDir)
+	}
+
+	for i := range c.Nodes {
+		if s := c.Nodes[i].Schematic; s != nil && s.Path != "" {
+			checkFile(add, "node "+c.Nodes[i].Hostname+": schematic", s.Path, c.ResolvePath(s.Path), notDir)
 		}
 	}
 }
