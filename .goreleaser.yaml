@@ -46,6 +46,11 @@ archives:
       - talman
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    # A zip for Windows: the one archive every Windows file manager opens.
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
     files:
       - README.md
       - LICENSE
