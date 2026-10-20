@@ -307,7 +307,7 @@ are spelled. Every key is optional:
 | key | default | |
 | --- | --- | --- |
 | `registryURL` | `factory.talos.dev` | the factory host, and the registry the installer is pulled from |
-| `protocol` | `https` | for submitting schematics with `--submit` |
+| `protocol` | `https` | for submitting schematics with `--submit`, and the scheme of boot media URLs |
 | `schematicEndpoint` | `/schematics` | ditto |
 | `platform` | `metal` | the installer's platform: `metal`, `openstack`, `aws`, … |
 | `secureBoot` | `false` | use the secure boot installer |

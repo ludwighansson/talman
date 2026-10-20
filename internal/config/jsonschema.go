@@ -101,7 +101,7 @@ var schemaDescriptions = map[string]string{
 	"Node.schematicID":         "Overrides the cluster's schematic with an ID for this node.",
 	"Node.imageFactory":        "Overrides the cluster's imageFactory key by key for this node.",
 	"Config.registryURL":       "The Image Factory host. Default: factory.talos.dev.",
-	"Config.protocol":          "The protocol schematics are submitted over. Default: https.",
+	"Config.protocol":          "The scheme schematics are submitted over with --submit, and boot media URLs are spelled with. Default: https.",
 	"Config.schematicEndpoint": "The path schematics are submitted to. Default: /schematics.",
 	"Config.installerURLTmpl":  "The installer image reference, as a Go template over .RegistryURL, .Protocol, .ID, .Version, .Platform (or .Mode) and .SecureBoot.",
 	"Config.platform":          "The installer's platform: metal, openstack, aws, …. Default: metal.",
