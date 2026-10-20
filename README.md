@@ -507,8 +507,10 @@ given.
 $ talman status -o json | jq -r '.nodes[] | select(.talos.running and .talos.running != .talos.configured) | .hostname'
 ```
 
-Shell completion comes from `talman completion bash|zsh|fish|powershell`, and
-completes node names for `-n` from the config in the working directory:
+Shell completion comes from `talman completion bash|zsh|fish|powershell`. It
+completes node names for `-n` — `ctl`'s included — and groups for `-g` and the
+wave flags, from the config `-c` or `TALMAN_CONFIG` names, or the one in the
+working directory:
 
 ```console
 $ source <(talman completion zsh)
@@ -708,7 +710,8 @@ It needs no cluster, no secrets bundle and no talosconfig, which is what makes
 it the way to read a config while writing one — and the way to see the table
 when the machines are off. `--wide` adds the schematic column.
 
-`status` reports and always succeeds; `health` is the one that passes or fails.
+`status` reports, and nothing a node answers fails it; `health` is the one that
+passes or fails.
 
 ### Everything else talosctl does
 
@@ -790,8 +793,9 @@ are worked on at once:
 | `apply`, `upgrade`, `reboot`, `reset` | 1 | one node at a time is the unit of risk |
 
 A run that enacts nothing — `apply --dry-run` or `--mode=staged` — batches
-every node together, control planes included, and does so without being asked:
-there are no reboots to stagger, so there is nothing to keep apart.
+eight nodes at a time (or `--parallel`), control planes included, and does so
+without being asked: there are no reboots to stagger, so there is nothing to
+keep apart.
 
 For the ones that change a cluster the flag raises the limit for **workers
 only**. A control plane always goes alone, whatever the number says: two
@@ -801,14 +805,21 @@ through etcd. Config order is kept — a run of workers batches up to the limit,
 and a control plane interrupts the run:
 
 ```console
-$ talman apply --parallel 4
-== talos-c01 (10.164.0.27)      # alone
-   checking cluster health before continuing
-== talos-w01 (10.164.0.32)      # these four together
-== talos-w02 (10.164.0.29)
-== talos-w03 (10.164.0.31)
-== talos-w04 (10.164.0.33)
-   checking cluster health before continuing
+$ talman apply --parallel 4 --health
+== [1/6] talos-c01 (10.164.0.27)      # alone
+     ...
+     checking cluster health before continuing
+== [2/6] talos-w01 (10.164.0.32)      # these four together
+     ...
+== [3/6] talos-w02 (10.164.0.29)
+     ...
+== [4/6] talos-w03 (10.164.0.31)
+     ...
+== [5/6] talos-w04 (10.164.0.33)
+     ...
+     checking cluster health before continuing
+== [6/6] talos-c02 (10.164.0.28)      # alone again
+     ...
 ```
 
 The health check and the wait for a node to come back run per batch rather than
@@ -828,9 +839,11 @@ attribute to a machine.
 | 2 | something changed, or would have |
 | 1 | the command failed, a usage error included |
 | 129, 130, 131, 143 | the run was interrupted, by SIGHUP, SIGINT, SIGQUIT or SIGTERM |
+| 141 | the output pipe closed, as `\| head` closes it |
 
 Without the flag, a change is a 0 like anything else that succeeded. Test the
-code rather than chaining `||` and `&&`, which reads 0 as drift too:
+code rather than chaining — `talman apply … || [ $? -eq 2 ] && echo drift`
+reads 0 as drift too, since `&&` follows the `||` whichever way it went:
 
 ```console
 $ talman apply --dry-run --detailed-exit-code; rc=$?
@@ -1045,7 +1058,8 @@ The health gate also stands down while any configured node is still outside
 the cluster — see below — which covers a node being onboarded.
 
 Both `apply`'s gate and `talman health` run the check from one control plane —
-the first in the config that answers the Talos API, or `--node` — and report on
+the first in the config that answers the Talos API, or the one `talman health
+--node` names — and report on
 every node the config lists. Not from the VIP: a Talos VIP is only held by a
 control plane in etcd quorum, so it disappears during exactly the outage worth
 checking, and as a node address it means "whichever machine holds it right
@@ -1192,7 +1206,7 @@ orders them by group instead, so a canary goes first and the rest follow it:
 
 ```yaml
 rollout:
-  soak: 10m               # wait after each wave, then gate on health
+  soak: 10m               # wait after each wave that changed something
   waves:
     - controlplane        # a role or a group
     - blue                # the canary
