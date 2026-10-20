@@ -263,6 +263,30 @@ nodes:
 			wantErr: "is a directory",
 		},
 		{
+			name: "node patch file missing",
+			body: validBase + `
+nodes:
+  - hostname: w1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    patches: [p/nope.yaml]
+`,
+			wantErr: `nodes[w1].patches: "p/nope.yaml" does not exist`,
+		},
+		{
+			name: "a group called node is still a group",
+			body: validBase + `
+patches:
+  node: [p/nope.yaml]
+nodes:
+  - hostname: w1
+    ipAddress: 10.0.0.10
+    role: controlplane
+    groups: [node]
+`,
+			wantErr: `patches.node: "p/nope.yaml" does not exist`,
+		},
+		{
 			name: "schematic file missing",
 			body: validBase + `
 schematic: ./schematic.yaml
