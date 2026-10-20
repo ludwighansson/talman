@@ -858,6 +858,51 @@ func TestFindConfig(t *testing.T) {
 	}
 }
 
+// -c and $TALMAN_CONFIG may name the cluster directory itself, which is
+// what init makes and what a reader thinks of as "the cluster".
+func TestLoadADirectory(t *testing.T) {
+	path := write(t, validBase+`
+nodes:
+  - hostname: cp1
+    ipAddress: 10.0.0.10
+    role: controlplane
+`)
+
+	cfg, err := Load(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Path != path {
+		t.Errorf("loaded %s, want %s", cfg.Path, path)
+	}
+}
+
+// A config that is not there says where to go next: init, for the default
+// one, which on a first run is no config at all; for one $TALMAN_CONFIG
+// names, that it does, since nothing on the command line shows it.
+func TestMissingConfigSaysWhatNamedIt(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv(EnvConfig, "")
+
+	_, err := Load(FindConfig(""))
+	if err == nil || !strings.Contains(err.Error(), "talman init") {
+		t.Errorf("the default config missing: %v, want it to suggest talman init", err)
+	}
+
+	t.Setenv(EnvConfig, "clusters/prod")
+
+	_, err = Load(FindConfig(""))
+	if err == nil || !strings.Contains(err.Error(), "$"+EnvConfig) || strings.Contains(err.Error(), "talman init") {
+		t.Errorf("a config $%s names missing: %v, want it to say so", EnvConfig, err)
+	}
+
+	_, err = Load(FindConfig("elsewhere.yaml"))
+	if err == nil || strings.Contains(err.Error(), "-c") || strings.Contains(err.Error(), "$"+EnvConfig) {
+		t.Errorf("a config -c names missing: %v, want it named and nothing more", err)
+	}
+}
+
 func TestValuesFiles(t *testing.T) {
 	path := write(t, validBase+`valuesFiles: [shared.yaml, site.yaml]
 values:
