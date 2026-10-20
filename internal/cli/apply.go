@@ -355,8 +355,7 @@ out safely" and "Exit codes for CI".`,
 						// though from here it looks the same as one that is
 						// down, so neither is assumed.
 						if !bootstrapped.Load() {
-							return early(fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
-								n.Hostname, n.IPAddress))
+							return early(errors.New(silentNode(n, tal.Refused(n.IPAddress))))
 						}
 
 						say(fmt.Sprintf("== [%d/%d] %s (%s) is not answering; a node that has its config waits "+
@@ -780,9 +779,15 @@ func newNodes(tal *talosctl.Runner, talosconfig string, targets []*config.Node, 
 		case talosctl.ModeRunning:
 			fmt.Fprintf(os.Stderr, "   %s (%s) is running; not new, skipping\n", n.Hostname, n.IPAddress)
 		case talosctl.ModeUnreachable:
-			return nil, fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service: "+
-				"--only-new-nodes cannot tell whether it needs onboarding\n"+
-				"  bring it up, or narrow the run with -n", n.Hostname, n.IPAddress)
+			// Bringing up a node that refused the talosconfig changes
+			// nothing: it is up.
+			hint := "bring it up, or narrow the run with -n"
+			if tal.Refused(n.IPAddress) != "" {
+				hint = "narrow the run with -n"
+			}
+
+			return nil, fmt.Errorf("%s: --only-new-nodes cannot tell whether it needs onboarding\n  %s",
+				silentNode(n, tal.Refused(n.IPAddress)), hint)
 		}
 	}
 

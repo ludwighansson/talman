@@ -36,6 +36,9 @@ type Runner struct {
 	// a dial timeout per call to rediscover it.
 	routeMu sync.Mutex
 	routes  map[string]bool
+	// refusals are the nodes whose Talos API answered and turned the
+	// talosconfig away, with why, as Refused reports them.
+	refusals map[string]string
 
 	ensureOnce sync.Once
 	ensureErr  error

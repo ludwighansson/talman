@@ -251,7 +251,7 @@ func (r *Runner) askNode(talosconfig, node string, args ...string) ([]byte, erro
 		order = []bool{true, false}
 	}
 
-	var first error
+	var first, refused error
 
 	for i, viaProxy := range order {
 		base := []string{"--talosconfig", talosconfig}
@@ -265,6 +265,7 @@ func (r *Runner) askNode(talosconfig, node string, args ...string) ([]byte, erro
 		out, err := r.Output(append(base, args...)...)
 		if err == nil {
 			r.rememberRoute(node, viaProxy)
+			r.rememberRefusal(node, nil)
 
 			return out, nil
 		}
@@ -272,9 +273,69 @@ func (r *Runner) askNode(talosconfig, node string, args ...string) ([]byte, erro
 		if i == 0 {
 			first = err
 		}
+
+		if refused == nil && refusal(err) != "" {
+			refused = err
+		}
 	}
 
+	r.rememberRefusal(node, refused)
+
 	return nil, first
+}
+
+// refusal is why a node's Talos API turned the talosconfig away, as talosctl
+// reports it, or "" when the error says something else -- a node down, or
+// rebooting, says nothing about certificates.
+//
+// A node that holds another CA still answers: the TLS handshake fails on the
+// certificates. Read as "not answering", that sends an operator looking for a
+// machine that is down rather than at the talosconfig. The words are Go's TLS
+// stack's, through gRPC: x509 for a node certificate the talosconfig does not
+// trust, "remote error: tls" for a client certificate the node does not.
+func refusal(err error) string {
+	var exit *ExitError
+	if !errors.As(err, &exit) {
+		return ""
+	}
+
+	for line := range strings.SplitSeq(exit.Stderr, "\n") {
+		for _, marker := range []string{"x509: ", "remote error: tls: "} {
+			if i := strings.Index(line, marker); i >= 0 {
+				return strings.TrimRight(strings.TrimSpace(line[i:]), `"`)
+			}
+		}
+	}
+
+	return ""
+}
+
+func (r *Runner) rememberRefusal(node string, err error) {
+	r.routeMu.Lock()
+	defer r.routeMu.Unlock()
+
+	if err == nil {
+		delete(r.refusals, node)
+
+		return
+	}
+
+	if r.refusals == nil {
+		r.refusals = map[string]string{}
+	}
+
+	r.refusals[node] = refusal(err)
+}
+
+// Refused is why the node's Talos API, the last time it was asked, answered
+// and turned this talosconfig away -- "" when it did not, or answered. A node
+// that does this is not down: it trusts another CA than the talosconfig was
+// made with.
+func (r *Runner) Refused(node string) string {
+	r.routeMu.Lock()
+	defer r.routeMu.Unlock()
+
+	return r.refusals[node]
 }
 
 func (r *Runner) prefersProxy(node string) bool {

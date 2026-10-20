@@ -44,6 +44,14 @@ case " $* " in
 *" bootstrap"*) touch "$STUB_LOG.bootstrapped" ;;
 esac
 
+# STUB_REFUSE: nodes that hold another CA than the talosconfig's, so every
+# call to them fails the TLS handshake on the certificates.
+for r in $STUB_REFUSE; do
+	[ "$r" = "$nodes" ] || continue
+	echo 'rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: tls: failed to verify certificate: x509: certificate signed by unknown authority"' >&2
+	exit 1
+done
+
 # STUB_DEAD_ENDPOINTS: the talosconfig's endpoints are down, so only a call
 # pinned to a node with --endpoints gets through.
 # STUB_DEAD_DIRECT: nodes are only reachable through the talosconfig's
@@ -200,6 +208,7 @@ nodes:
 	t.Setenv("STUB_ETCD", "")
 	t.Setenv("STUB_ETCD_NEVER", "")
 	t.Setenv("STUB_MAINTENANCE", "none")
+	t.Setenv("STUB_REFUSE", "")
 	t.Setenv("TALMAN_CONFIG", filepath.Join(dir, "talman.yaml"))
 	t.Setenv("TALMAN_METRICS_FILE", "")
 	t.Setenv("TALMAN_METRICS_URL", "")
@@ -1530,6 +1539,49 @@ func TestWithoutSops(t *testing.T) {
 	stderr = captureStderr(t, func() { run([]string{"render", "--dry-run"}) })
 	if !strings.Contains(stderr, "is SOPS-encrypted but sops not found on PATH") || strings.Contains(stderr, "--plaintext") {
 		t.Errorf("render of an encrypted bundle without sops said:\n%s", stderr)
+	}
+}
+
+// A node that holds another CA than the talosconfig answers, and turns it
+// away. Every command that would say it answers nothing says that instead:
+// the machine is up, and the fix is the talosconfig, or the bundle.
+func TestRefusedTalosconfigIsNamed(t *testing.T) {
+	dir, _ := exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+	if err := os.WriteFile(filepath.Join(dir, "clusterconfig", "w1.yaml"), []byte("version: v1alpha1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const refused = "turns this talosconfig away (x509: certificate signed by unknown authority)"
+
+	t.Setenv("STUB_REFUSE", "10.0.0.2")
+
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"apply", "--no-render", "--redact-secrets=false", "--wait=false", "-n", "w1"}, "w1 (10.0.0.2) answers, but " + refused},
+		{[]string{"apply", "--no-render", "--redact-secrets=false", "--only-new-nodes", "-n", "w1"}, "w1 (10.0.0.2) answers, but " + refused},
+		{[]string{"status"}, "refused: w1 (10.0.0.2) answers, but " + refused},
+	} {
+		var out string
+
+		stderr := captureStderr(t, func() { out = captureStdout(t, func() { run(tt.args) }) })
+
+		if !strings.Contains(stderr+out, tt.want) {
+			t.Errorf("%v said\n%s%s\nwant %q", tt.args, stderr, out, tt.want)
+		}
+	}
+
+	t.Setenv("STUB_REFUSE", "10.0.0.1 10.0.0.2")
+
+	stderr := captureStderr(t, func() { run([]string{"health"}) })
+	if !strings.Contains(stderr, "no control plane node would answer this talosconfig") ||
+		!strings.Contains(stderr, "c1 (10.0.0.1) answers, but "+refused) {
+		t.Errorf("health said\n%s", stderr)
 	}
 }
 

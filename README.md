@@ -661,6 +661,10 @@ error: talos-w02 (10.164.0.29) answers neither the Talos API nor the maintenance
   continue with: talman apply -n talos-w02 -n talos-w03
 ```
 
+A node whose Talos API answers but turns the talosconfig away is not down: it
+trusts a different CA, after a rotation done elsewhere or a bundle replaced.
+The error says that instead, and so does a line under `talman status`.
+
 With `--health`, the gate stands down while any node in the config is still
 new, in maintenance mode, said once for the run — `-v` names them. A node that
 answers nothing does not stand it down: a member that is down is what the gate
