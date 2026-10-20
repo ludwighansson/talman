@@ -649,12 +649,22 @@ func TestRotateCALeavesTheRotatedTalosconfigAlone(t *testing.T) {
 	}
 
 	for _, args := range [][]string{{"rotate-ca", "--dry-run"}, {"rotate-ca", "-y", "--talos=false"}} {
-		if got := run(args); got != 1 {
+		var got int
+
+		stderr := captureStderr(t, func() { got = run(args) })
+
+		if got != 1 {
 			t.Errorf("%v with a rotated talosconfig left over: exit %d, want 1", args, got)
 		}
 
 		if b, _ := os.ReadFile(rotated); string(b) != "context: the only one that works\n" {
 			t.Fatalf("%v removed or changed the rotated talosconfig", args)
+		}
+
+		// The way on is the end of the rotation that left it, never a
+		// second one: the bundle still holds the old CAs.
+		if !strings.Contains(stderr, "talman rotate-ca --finish") || strings.Contains(stderr, "again") {
+			t.Errorf("%v said\n%s\nwant it to point at rotate-ca --finish", args, stderr)
 		}
 	}
 
