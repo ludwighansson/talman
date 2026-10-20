@@ -585,7 +585,7 @@
     "schematic": {
       "anyOf": [
         {
-          "description": "The Image Factory schematic: inline, or a path to a (templated) file.",
+          "description": "The Image Factory schematic: inline, or a path to a (templated) file. Submit a new one once before nodes pull it: talman schematic id --submit.",
           "oneOf": [
             {
               "description": "A path to a schematic file.",
@@ -627,7 +627,7 @@
       "type": "string"
     },
     "talosctl": {
-      "description": "The talosctl binary talman drives. Default: talosctl on PATH.",
+      "description": "The talosctl binary talman drives: a name on PATH, or a path, read from this file's directory when relative. Default: talosctl.",
       "type": [
         "string",
         "number",
