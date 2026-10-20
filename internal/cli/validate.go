@@ -137,7 +137,12 @@ func (p *nodeProblems) add(host string, err error) {
 		p.errors[text] = err
 	}
 
-	p.hosts[text] = append(p.hosts[text], host)
+	// Once per node: a patch listed twice under one key is the same problem
+	// twice on the same node, and counting it twice would call it every
+	// node's on a cluster with one more node than that.
+	if !slices.Contains(p.hosts[text], host) {
+		p.hosts[text] = append(p.hosts[text], host)
+	}
 }
 
 // join is the problems as one error, each naming the nodes it was found on:
