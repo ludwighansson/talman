@@ -325,7 +325,7 @@ func (c *Config) validatePatchKeys(add func(string, ...any)) {
 // directory", which points at the wrong thing entirely.
 func (c *Config) validatePatchFiles(add func(string, ...any)) {
 	for _, ref := range c.AllPatchPaths() {
-		checkFile(add, "patches."+ref.Group, ref.Rel, ref.Path,
+		checkFile(add, ref.Where(), ref.Rel, ref.Path,
 			"patches must be individual files so the apply order is explicit")
 	}
 }

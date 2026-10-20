@@ -199,7 +199,7 @@ func (p *patchReader) read(ref config.PatchRef) ([]byte, error) {
 
 		return nil, nil
 	case err != nil:
-		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return nil, fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	return got.data, nil
@@ -208,11 +208,11 @@ func (p *patchReader) read(ref config.PatchRef) ([]byte, error) {
 func checkPatch(ref config.PatchRef, raw []byte, ctx template.Context) error {
 	rendered, err := template.Render(ref.Rel, raw, ctx)
 	if err != nil {
-		return fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	if err := patch.CheckStrategicMerge(ref.Rel, rendered); err != nil {
-		return fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	return nil

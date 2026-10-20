@@ -287,7 +287,7 @@ func (r *Renderer) renderPatch(ref config.PatchRef, ctx template.Context) ([]byt
 	// or a SideroLink token can be encrypted too, not just the secrets bundle.
 	raw, ciphertext, err := sopsx.Read(ref.Path)
 	if err != nil {
-		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return nil, fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	// What SOPS decrypted is what the operator marked secret, and it is about
@@ -304,11 +304,11 @@ func (r *Renderer) renderPatch(ref config.PatchRef, ctx template.Context) ([]byt
 		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return nil, fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	if err := patch.CheckStrategicMerge(ref.Rel, rendered); err != nil {
-		return nil, fmt.Errorf("patches.%s: %w", ref.Group, err)
+		return nil, fmt.Errorf("%s: %w", ref.Where(), err)
 	}
 
 	return rendered, nil
@@ -615,7 +615,7 @@ func (r *Renderer) blame(cause error, gen func([]string) ([]byte, error),
 				"the ones before it applied cleanly)", pos+1, ordinal(pos+1))
 		}
 
-		return fmt.Sprintf("%s\n  rejected by: patches.%s -> %s%s", msg, ref.Group, ref.Rel, hint)
+		return fmt.Sprintf("%s\n  rejected by: %s -> %s%s", msg, ref.Where(), ref.Rel, hint)
 	}
 
 	return msg

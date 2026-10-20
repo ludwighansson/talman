@@ -297,8 +297,8 @@ func TestBlameNamesThePatchValidationRejects(t *testing.T) {
 		t.Fatal("expected validation to refuse .machine.install beside UnattendedInstallConfig")
 	}
 
-	if !strings.Contains(err.Error(), "rejected by:") || !strings.Contains(err.Error(), "nodes/w1.yaml") {
-		t.Errorf("error does not name the offending patch:\n%v", err)
+	if !strings.Contains(err.Error(), "rejected by: nodes[w1].patches -> ./patches/nodes/w1.yaml") {
+		t.Errorf("error does not name the offending patch by the key that lists it:\n%v", err)
 	}
 }
 
