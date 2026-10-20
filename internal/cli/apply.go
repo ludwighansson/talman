@@ -820,7 +820,7 @@ func notInCluster(cfg *config.Config, tal *talosctl.Runner, talosconfig string,
 		n := &cfg.Nodes[i]
 
 		if modes[n.IPAddress] == talosctl.ModeMaintenance {
-			outside = append(outside, fmt.Sprintf("%s is %s", n.Hostname, modes[n.IPAddress]))
+			outside = append(outside, n.Hostname+" is in maintenance mode")
 		}
 	}
 
