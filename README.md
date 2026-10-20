@@ -409,9 +409,9 @@ remove a field or a whole document.
 
 ### When a patch is rejected
 
-`talosctl` names the offending *document*, never the file. On failure talman
-re-runs the generation with growing prefixes of the chain and reports the
-culprit:
+`talosctl` names the offending *document*, never the file. When generating or
+validating a node's config fails, talman re-runs it with growing prefixes of
+the chain and reports the culprit:
 
 ```console
 $ talman render

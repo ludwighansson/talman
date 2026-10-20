@@ -263,6 +263,45 @@ func TestBlameNamesTheOffendingPatch(t *testing.T) {
 	}
 }
 
+// TestBlameNamesThePatchValidationRejects: a patch can generate cleanly and
+// still be refused by talosctl validate -- .machine.install beside an
+// UnattendedInstallConfig is the pair the README names -- and that rejection
+// names a document too, never the file.
+func TestBlameNamesThePatchValidationRejects(t *testing.T) {
+	path := fixture(t)
+
+	legacy := filepath.Join(filepath.Dir(path), "patches", "nodes", "w1.yaml")
+	if err := os.WriteFile(legacy, []byte("machine:\n  install:\n    disk: /dev/sda\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Renderer{Cfg: cfg, Tal: talosctl.New(cfg.Talosctl)}
+
+	if err := r.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	res, err := r.Node(&cfg.Nodes[1])
+	if err != nil {
+		t.Fatalf("generation should accept the pair; only validation refuses it: %v", err)
+	}
+
+	err = r.Validate(res, cfg.ValidationModeFor(res.Node))
+	if err == nil {
+		t.Fatal("expected validation to refuse .machine.install beside UnattendedInstallConfig")
+	}
+
+	if !strings.Contains(err.Error(), "rejected by:") || !strings.Contains(err.Error(), "nodes/w1.yaml") {
+		t.Errorf("error does not name the offending patch:\n%v", err)
+	}
+}
+
 func TestOpenRequiresSecrets(t *testing.T) {
 	path := fixture(t)
 

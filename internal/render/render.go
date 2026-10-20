@@ -82,6 +82,11 @@ type Result struct {
 	Content []byte
 	Chain   []config.PatchRef
 	Context template.Context
+
+	// paths are the rendered patches, and gen generates the config from a
+	// prefix of them: what Validate needs to blame a rejection on a file.
+	paths []string
+	gen   func([]string) ([]byte, error)
 }
 
 func (r *Renderer) logf(format string, args ...any) {
@@ -271,6 +276,8 @@ func (r *Renderer) Node(n *config.Node) (*Result, error) {
 		Content: content,
 		Chain:   chain,
 		Context: ctx,
+		paths:   paths,
+		gen:     gen,
 	}, nil
 }
 

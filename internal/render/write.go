@@ -259,8 +259,30 @@ func (r *Renderer) Validate(res *Result, mode string) error {
 	}
 
 	if err := r.Tal.Validate(staging, mode); err != nil {
+		// Validation names the offending document and never the file, as
+		// generation does, and it is where the mutually exclusive pairs blame
+		// exists for are refused: each document is acceptable on its own, so
+		// generation lets them through. A prefix of the chain is only found
+		// wanting by generating it and validating the result.
+		msg := err.Error()
+
+		if res.gen != nil {
+			msg = r.blame(err, func(with []string) ([]byte, error) {
+				content, err := res.gen(with)
+				if err != nil {
+					return nil, err
+				}
+
+				if err := os.WriteFile(staging, content, 0o600); err != nil {
+					return nil, err
+				}
+
+				return content, r.Tal.Validate(staging, mode)
+			}, res.Chain, res.paths)
+		}
+
 		// Validation quotes the config it rejects, as generation does.
-		return r.redacted(fmt.Errorf("node %s: %w", res.Node.Hostname, err))
+		return r.redacted(fmt.Errorf("node %s: %s", res.Node.Hostname, msg))
 	}
 
 	return nil
