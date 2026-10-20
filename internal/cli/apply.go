@@ -585,7 +585,7 @@ out safely" and "Exit codes for CI".`,
 			// was asked first and answered that nothing changes.
 			ro := rollOut{
 				cmd: cmd, cfg: cfg, tal: tal, tc: tc,
-				verb: "apply", done: "applied",
+				verb: "apply", done: pastTense(dryRun, "applied"),
 				targets: targets, parallel: parallel, inert: inert,
 				health: health, timeout: timeout,
 				// auto is the one mode that may reboot a node.

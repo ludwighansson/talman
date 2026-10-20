@@ -166,3 +166,29 @@ func TestUpgradeK8sToAnotherVersionWarns(t *testing.T) {
 		}
 	}
 }
+
+// A dry run that cannot read a node says so, and offers nothing it would
+// refuse: --force cannot be combined with --dry-run.
+func TestUpgradeDryRunOfAnUnreadableNode(t *testing.T) {
+	exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+`)
+
+	t.Setenv("STUB_FAIL", "10.0.0.2")
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"upgrade", "--dry-run"}) })
+	if got != 1 {
+		t.Fatalf("exit %d, want 1\n%s", got, stderr)
+	}
+
+	if strings.Contains(stderr, "--force") || strings.Contains(stderr, "not upgraded") {
+		t.Errorf("a dry run offered --force, or spoke of nodes not upgraded:\n%s", stderr)
+	}
+
+	if !strings.Contains(stderr, "1 node(s) were not checked: w1") {
+		t.Errorf("want the node the dry run did not check named:\n%s", stderr)
+	}
+}
