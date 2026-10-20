@@ -115,7 +115,9 @@ cluster that already exists.`,
 
 	cmd.Flags().StringVar(&fromConfig, "from-controlplane-config", "",
 		"extract the bundle from an existing control plane machine config instead of generating new material")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing secrets bundle")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"overwrite an existing secrets bundle, keeping the old one in the output directory as "+
+			"secrets-pre-generate-<time>.yaml")
 	cmd.Flags().BoolVar(&plaintext, "plaintext", false, "write the bundle unencrypted")
 	cmd.Flags().BoolVar(&toStdout, "stdout", false, "write the plaintext bundle to stdout instead of a file")
 	addExtraFlags(cmd, &extraFlags)
