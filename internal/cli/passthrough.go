@@ -102,8 +102,14 @@ More in the README: "Everything else talosctl does".`,
 				}
 
 				if len(addrs) == 0 && strings.Contains(said.String(), "requires exactly one node") {
+					// Quoted, so the command pastes back as it was typed.
+					quoted := make([]string, len(args))
+					for i, a := range args {
+						quoted[i] = shellQuote(a)
+					}
+
 					fmt.Fprintln(os.Stderr, "talman: this talosctl command runs on one node, and the talosconfig "+
-						"lists every node: name one with -n, e.g. `"+talmanCmd("ctl -n <node> "+strings.Join(args, " "))+"`")
+						"lists every node: name one with -n, e.g. `"+talmanCmd("ctl -n <node> "+strings.Join(quoted, " "))+"`")
 				}
 
 				var status *talosctl.StatusError

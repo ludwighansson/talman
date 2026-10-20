@@ -1248,6 +1248,13 @@ func TestCtlSingleNodeCommandHint(t *testing.T) {
 	if !strings.Contains(stderr, "name one with -n, e.g. `talman ctl -n <node> read /etc/hostname`") {
 		t.Errorf("no hint:\n%s", stderr)
 	}
+
+	// The hint pastes back as it was typed.
+	stderr = captureStderr(t, func() { run([]string{"ctl", "read", "/var/log/it's here"}) })
+
+	if !strings.Contains(stderr, `talman ctl -n <node> read '/var/log/it'\''s here'`) {
+		t.Errorf("the hint does not quote talosctl's arguments:\n%s", stderr)
+	}
 }
 
 // secrets generate --force replaces the bundle a running cluster trusts, so
