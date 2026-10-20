@@ -1153,6 +1153,39 @@ func TestSnapshotNeverReplacesOneThatAppeared(t *testing.T) {
 	}
 }
 
+// A directory gets the snapshot under the name talman picks, and a path whose
+// directory is missing is refused before the cluster is asked for anything.
+func TestSnapshotDestinations(t *testing.T) {
+	dir, log := exitFixture(t)
+
+	backups := filepath.Join(dir, "backups")
+	if err := os.Mkdir(backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run([]string{"etcd", "snapshot", backups}); got != 0 {
+		t.Fatalf("into a directory: exit %d", got)
+	}
+
+	if snaps, _ := filepath.Glob(filepath.Join(backups, "etcd-stub-*.db")); len(snaps) != 1 {
+		t.Errorf("snapshots in the directory named: %v", snaps)
+	}
+
+	_ = os.WriteFile(log, nil, 0o644)
+
+	var got int
+
+	stderr := captureStderr(t, func() { got = run([]string{"etcd", "snapshot", filepath.Join(dir, "nope", "x.db")}) })
+
+	if got != 1 || !strings.Contains(stderr, "does not exist") || strings.Contains(stderr, "== snapshotting") {
+		t.Errorf("into a missing directory: exit %d\n%s", got, stderr)
+	}
+
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "etcd snapshot") {
+		t.Errorf("the snapshot was taken before the destination was checked:\n%s", calls)
+	}
+}
+
 // An empty -n or -g -- `-n "$NODE"` with NODE unset -- is a mistake, not a
 // request for every node: reset -n "" --yes wiped a whole cluster.
 func TestEmptySelectorIsRefused(t *testing.T) {

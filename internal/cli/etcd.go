@@ -35,7 +35,8 @@ first in the config that answers the Talos API, or --node.
 Without a path it lands in the output directory as
 etcd-<cluster>-<UTC time>.db, beside the configs and credentials it is as
 sensitive as: an etcd snapshot holds every Kubernetes Secret in the cluster.
-It is written 0600 wherever it goes.
+A directory gets the same name inside it. It is written 0600 wherever it
+goes, and never over an existing file.
 
 "talman upgrade --snapshot" and "talman upgrade-k8s --snapshot" take one before
 they change anything.`,
@@ -82,6 +83,14 @@ they change anything.`,
 func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *config.Node, path string,
 	extra ...string,
 ) error {
+	// Settled before the cluster is asked anything: a destination that
+	// cannot be written is the operator's to fix, and finding out after the
+	// stream is a snapshot thrown away.
+	path, err := snapshotPath(cfg, path)
+	if err != nil {
+		return err
+	}
+
 	if from == nil {
 		n, err := healthNode(cfg, tal, tc)
 		if err != nil {
@@ -95,26 +104,6 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 		// endpoints when the node is only reachable behind them.
 		return fmt.Errorf("%s (%s) does not answer the Talos API, directly or through the talosconfig's endpoints",
 			from.Hostname, from.IPAddress)
-	}
-
-	if path == "" {
-		if err := render.PrepareOutput(cfg, os.Stderr); err != nil {
-			return err
-		}
-
-		stem := filepath.Join(cfg.OutputPath(),
-			fmt.Sprintf("etcd-%s-%s", cfg.ClusterName, time.Now().UTC().Format("20060102T150405Z")))
-
-		// Numbered rather than refused: two snapshots in one second are two
-		// snapshots, and the name is talman's to choose.
-		path = stem + ".db"
-		for i := 2; exists(path); i++ {
-			path = fmt.Sprintf("%s-%d.db", stem, i)
-		}
-	}
-
-	if exists(path) {
-		return fmt.Errorf("%s already exists; talman does not overwrite a snapshot", render.Rel(path))
 	}
 
 	fmt.Fprintf(os.Stderr, "== snapshotting etcd on %s (%s)\n", from.Hostname, from.IPAddress)
@@ -156,6 +145,55 @@ func etcdSnapshot(cfg *config.Config, tal *talosctl.Runner, tc string, from *con
 	fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(path))
 
 	return nil
+}
+
+// snapshotPath is the file a snapshot is written to: the one named, or a name
+// talman picks, etcd-<cluster>-<UTC time>.db, in the directory named or in
+// the output directory when nothing is.
+func snapshotPath(cfg *config.Config, path string) (string, error) {
+	dir := ""
+
+	if path == "" {
+		if err := render.PrepareOutput(cfg, os.Stderr); err != nil {
+			return "", err
+		}
+
+		dir = cfg.OutputPath()
+	} else if info, err := os.Stat(path); err == nil && info.IsDir() {
+		dir = path
+	}
+
+	if dir != "" {
+		stem := filepath.Join(dir,
+			fmt.Sprintf("etcd-%s-%s", cfg.ClusterName, time.Now().UTC().Format("20060102T150405Z")))
+
+		// Numbered rather than refused: two snapshots in one second are two
+		// snapshots, and the name is talman's to choose.
+		path = stem + ".db"
+		for i := 2; exists(path); i++ {
+			path = fmt.Sprintf("%s-%d.db", stem, i)
+		}
+
+		return path, nil
+	}
+
+	if exists(path) {
+		return "", fmt.Errorf("%s already exists; talman does not overwrite a snapshot", render.Rel(path))
+	}
+
+	parent := filepath.Dir(path)
+
+	switch info, err := os.Stat(parent); {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("cannot save a snapshot as %s: %s does not exist", render.Rel(path), render.Rel(parent))
+	case err != nil:
+		return "", err
+	case !info.IsDir():
+		return "", fmt.Errorf("cannot save a snapshot as %s: %s is not a directory", render.Rel(path),
+			render.Rel(parent))
+	}
+
+	return path, nil
 }
 
 func exists(path string) bool {
