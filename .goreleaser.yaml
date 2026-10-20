@@ -32,7 +32,10 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/ludwighansson/talman/internal/cli.Version={{ .Version }}
+      # v-prefixed, as the tag and a `go install ...@vX` build spell it: the
+      # same release should not report two versions, nor split a dashboard
+      # grouped by talman_version in two.
+      - -X github.com/ludwighansson/talman/internal/cli.Version=v{{ .Version }}
     # Build with a timestamp derived from the commit so archives are
     # reproducible rather than varying per build.
     mod_timestamp: "{{ .CommitTimestamp }}"

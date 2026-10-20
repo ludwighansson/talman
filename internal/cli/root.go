@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -20,8 +21,27 @@ import (
 	"github.com/ludwighansson/talman/internal/talosctl"
 )
 
-// Version is set at build time by goreleaser.
+// Version is set at build time by goreleaser; talmanVersion is what a binary
+// reports.
 var Version = "dev"
+
+// talmanVersion is the version this binary reports.
+//
+// goreleaser stamps Version into a release. A binary built any other way --
+// go install ...@v1.0.0 above all, the install the README leads with -- still
+// carries the module version Go recorded in it, and "dev" in a bug report or a
+// talman_run_info label says nothing about which talman ran.
+func talmanVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+
+	return Version
+}
 
 // errChanged is what a command returns when --detailed-exit-code is set and
 // the run changed something, or would have. It is a result rather than a
@@ -112,7 +132,7 @@ talman never links against the Talos API: everything that touches a cluster
 goes through the talosctl binary.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Version:       Version,
+		Version:       talmanVersion(),
 	}
 
 	cmd.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "",
