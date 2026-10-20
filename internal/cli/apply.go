@@ -332,19 +332,23 @@ out safely" and "Exit codes for CI".`,
 						// A node that was given its config before the cluster
 						// existed sits quiet until there is one to join. Once
 						// this run has bootstrapped it, that node is on its
-						// way, and is waited for rather than given up on.
+						// way, and is waited for rather than given up on --
+						// though from here it looks the same as one that is
+						// down, so neither is assumed.
 						if !bootstrapped.Load() {
 							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
 								n.Hostname, n.IPAddress)
 						}
 
-						say(fmt.Sprintf("== %s (%s) has its config; waiting for it to join the cluster\n",
-							n.Hostname, n.IPAddress))
+						say(fmt.Sprintf("== [%d/%d] %s (%s) is not answering; a node that has its config waits "+
+							"quietly for a cluster to join, so waiting for it to join this one\n",
+							position, len(targets), n.Hostname, n.IPAddress))
 
 						logf := detailLog(say)
 
 						if err := tal.WaitReady(tc, n.IPAddress, stabilize, timeout, logf); err != nil {
-							return err
+							return fmt.Errorf("%w\n  it may be down rather than waiting for the cluster: %s",
+								err, waitFailedHint(targets))
 						}
 
 						modesMu.Lock()

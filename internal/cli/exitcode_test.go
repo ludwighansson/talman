@@ -1591,6 +1591,35 @@ func TestApplyBootstrap(t *testing.T) {
 	}
 }
 
+// A node that answers nothing once etcd is bootstrapped may have its config
+// and be waiting for the cluster, or may be down: it is waited for, and
+// talman claims neither.
+func TestApplyBootstrapWaitsForASilentNode(t *testing.T) {
+	_, log := bootstrapFixture(t)
+
+	t.Setenv("STUB_FAIL", "10.0.0.2")
+
+	var got int
+
+	stderr := captureStderr(t, func() {
+		got = run([]string{"apply", "--bootstrap", "--no-render", "--redact-secrets=false",
+			"--stabilize=0s", "--timeout=1ms"})
+	})
+
+	if got != 1 {
+		calls, _ := os.ReadFile(log)
+		t.Fatalf("exit %d, want 1: w1 never answered\n%s", got, calls)
+	}
+
+	if strings.Contains(stderr, "has its config;") || !strings.Contains(stderr, "w1 (10.0.0.2) is not answering") {
+		t.Errorf("want w1 said to be not answering, and nothing claimed about its config:\n%s", stderr)
+	}
+
+	if !strings.Contains(stderr, "it may be down") || !strings.Contains(stderr, "re-run once it recovers") {
+		t.Errorf("want the failed wait to say it may be down, and what to do:\n%s", stderr)
+	}
+}
+
 // A cluster that is bootstrapped already is not bootstrapped again: that
 // would split it in two.
 func TestApplyBootstrapRefusesABootstrappedCluster(t *testing.T) {
