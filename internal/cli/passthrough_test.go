@@ -38,3 +38,32 @@ func TestPassthroughArgs(t *testing.T) {
 		}
 	}
 }
+
+// ctl's -n and -g complete as every other command's do, though cobra parses
+// none of its flags; past them, a -n is talosctl's own --nodes and is left to
+// the shell.
+func TestPassthroughCompletesItsOwnFlags(t *testing.T) {
+	exitFixtureWith(t, `  - hostname: w1
+    ipAddress: 10.0.0.2
+    role: worker
+    groups: [blue]
+`)
+
+	complete := func(args ...string) string {
+		return captureStdout(t, func() { run(append([]string{"__complete"}, args...)) })
+	}
+
+	for _, args := range [][]string{{"ctl", "-n", ""}, {"talosctl", "-v", "--node", ""}} {
+		if out := complete(args...); !strings.Contains(out, "c1\tcontrolplane") || !strings.Contains(out, "w1\tworker") {
+			t.Errorf("%v completed\n%s\nwant the hostnames", args, out)
+		}
+	}
+
+	if out := complete("ctl", "-g", ""); !strings.Contains(out, "blue\tgroup") {
+		t.Errorf("ctl -g completed\n%s\nwant the groups", out)
+	}
+
+	if out := complete("ctl", "logs", "-n", ""); strings.Contains(out, "c1") || !strings.Contains(out, ":0\n") {
+		t.Errorf("talosctl's own -n completed\n%s\nwant it left to the shell", out)
+	}
+}

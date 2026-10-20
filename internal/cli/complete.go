@@ -98,6 +98,31 @@ func refuseEmptySelectors(c *cobra.Command) error {
 	return nil
 }
 
+// completePassthrough completes `talman ctl`'s own -n and -g, which come
+// before everything that is talosctl's. Past them, a -n is talosctl's own
+// --nodes, and anything else is offered files, as a shell would.
+func completePassthrough(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 0 {
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+
+	// What precedes the flag being completed has to be talman's too. It is
+	// read as the command reads it, so a -c among it names the config the
+	// names come from.
+	if _, rest, _, err := passthroughArgs(args[:len(args)-1]); err != nil || len(rest) > 0 {
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+
+	switch args[len(args)-1] {
+	case "-n", "--node":
+		return completeNodes(cmd, args, toComplete)
+	case "-g", "--group":
+		return completeGroups(cmd, args, toComplete)
+	}
+
+	return nil, cobra.ShellCompDirectiveDefault
+}
+
 // completeGroups offers the groups the config declares, and the two roles.
 func completeGroups(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	cfg, err := config.LoadNoValidate(config.FindConfig(opts.configFile))
