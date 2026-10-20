@@ -79,7 +79,7 @@ registers it with the factory instead.
 ## Install
 
 ```console
-go install github.com/ludwighansson/talman/cmd/talman@v1.0.0-beta.7
+go install github.com/ludwighansson/talman/cmd/talman@v1.0.0
 ```
 
 That needs Go 1.27 or later. Prebuilt archives for Linux, macOS, Windows and
@@ -97,7 +97,7 @@ root of the repository, and name the cluster directory with `-w`:
 
 ```console
 $ docker run --rm --read-only --tmpfs /tmp -v "$PWD:/cluster" -w /cluster/development \
-    ghcr.io/ludwighansson/talman:1.0.0-beta.7 validate
+    ghcr.io/ludwighansson/talman:1.0.0 validate
 ```
 
 On top of Alpine's base it adds three binaries — talman and the two it drives —
@@ -110,7 +110,7 @@ rather than as the job image itself.
 # .gitlab-ci.yml
 drift:
   image:
-    name: ghcr.io/ludwighansson/talman:1.0.0-beta.7
+    name: ghcr.io/ludwighansson/talman:1.0.0
     entrypoint: [""]   # the image's entrypoint is talman; GitLab runs the script with a shell
   script:
     # SOPS_AGE_KEY comes from a masked CI/CD variable.
@@ -133,7 +133,7 @@ image as a label as well as in `talman version`:
 
 ```console
 $ docker inspect --format '{{ index .Config.Labels "dev.talman.talosctl.version" }}' \
-    ghcr.io/ludwighansson/talman:1.0.0-beta.7
+    ghcr.io/ludwighansson/talman:1.0.0
 v1.14.1
 ```
 
@@ -149,7 +149,7 @@ $ cosign verify-blob checksums.txt \
     --signature checksums.txt.sig --certificate checksums.txt.pem \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
-$ cosign verify ghcr.io/ludwighansson/talman:1.0.0-beta.7 \
+$ cosign verify ghcr.io/ludwighansson/talman:1.0.0 \
     --certificate-identity-regexp 'https://github.com/ludwighansson/talman/.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
