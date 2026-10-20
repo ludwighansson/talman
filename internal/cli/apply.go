@@ -285,12 +285,25 @@ out safely" and "Exit codes for CI".`,
 			wantsAnswer := detailed || rec != nil || health || cfg.Rollout.SoakDuration() > 0 ||
 				(wait && mode != "staged")
 
-			applyOne := func(n *config.Node, position int, say func(string)) error {
+			applyOne := func(n *config.Node, position int, grouped bool, say func(string)) error {
 				file := cfg.MachineConfigPath(n)
 
+				// A node that fails before it has a heading still gets one
+				// when its batch prints in blocks: the others arrive under
+				// theirs, and this one would turn up only in the error at
+				// the end.
+				early := func(err error) error {
+					if grouped {
+						say(fmt.Sprintf("== [%d/%d] %s (%s)\n", position, len(targets), n.Hostname, n.IPAddress) +
+							indent([]byte("error: "+err.Error())))
+					}
+
+					return err
+				}
+
 				if _, err := os.Stat(file); err != nil {
-					return fmt.Errorf("no rendered config for %s at %s: run `%s` first",
-						n.Hostname, file, talmanCmd("render"))
+					return early(fmt.Errorf("no rendered config for %s at %s: run `%s` first",
+						n.Hostname, file, talmanCmd("render")))
 				}
 
 				// A cluster is rarely all one thing: after a reset, or when a
@@ -318,9 +331,9 @@ out safely" and "Exit codes for CI".`,
 						// a passing TLS failure on a real node all look like
 						// this, and each would be handed the cluster's keys.
 						if !onboard && !onlyNew && !dryRun {
-							return fmt.Errorf("%s (%s) is a new node: it answers only the maintenance service, "+
+							return early(fmt.Errorf("%s (%s) is a new node: it answers only the maintenance service, "+
 								"which authenticates nothing, so it gets its config, CA keys included, only when "+
-								"asked\n  %s", n.Hostname, n.IPAddress, talmanCmd("apply --onboard-new-nodes -n "+n.Hostname))
+								"asked\n  %s", n.Hostname, n.IPAddress, talmanCmd("apply --onboard-new-nodes -n "+n.Hostname)))
 						}
 
 						maintenance = true
@@ -344,8 +357,8 @@ out safely" and "Exit codes for CI".`,
 						// though from here it looks the same as one that is
 						// down, so neither is assumed.
 						if !bootstrapped.Load() {
-							return fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
-								n.Hostname, n.IPAddress)
+							return early(fmt.Errorf("%s (%s) answers neither the Talos API nor the maintenance service",
+								n.Hostname, n.IPAddress))
 						}
 
 						say(fmt.Sprintf("== [%d/%d] %s (%s) is not answering; a node that has its config waits "+
@@ -577,8 +590,8 @@ out safely" and "Exit codes for CI".`,
 				return true
 			}
 
-			perNode := func(n *config.Node, _ bool, say func(string)) (bool, error) {
-				err := applyOne(n, positions[n.IPAddress], say)
+			perNode := func(n *config.Node, grouped bool, say func(string)) (bool, error) {
+				err := applyOne(n, positions[n.IPAddress], grouped, say)
 
 				unchangedMu.Lock()
 				defer unchangedMu.Unlock()
