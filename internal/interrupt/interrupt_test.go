@@ -246,3 +246,25 @@ func TestBrokenPipeStopsTheRun(t *testing.T) {
 		t.Errorf("want a run stopped by SIGPIPE, exit 141:\n%s", stderr.String())
 	}
 }
+
+// A temporary file goes on a forced exit, as a temporary directory does:
+// WriteAtomic stages bundles in one, beside the bundle, and a plaintext one
+// left there is a `git add .` from a commit.
+func TestCreateTempGoesOnAForcedExit(t *testing.T) {
+	fresh(t)
+
+	f, cleanup, err := CreateTemp(t.TempDir(), ".bundle.tmp*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = f.Close()
+
+	RunCleanups()
+
+	if _, err := os.Stat(f.Name()); !os.IsNotExist(err) {
+		t.Fatalf("the temporary file survived a forced exit: %v", err)
+	}
+
+	cleanup() // after RunCleanups: must be harmless
+}
