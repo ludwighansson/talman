@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -73,6 +74,13 @@ overwritten, because it is a generated artefact of this cluster directory.`,
 			// first. A path the operator names only gets it when asked.
 			overwrite := force || (own && !merge)
 
+			// A directory gets talosctl's file inside it, named kubeconfig:
+			// what was written is that file, not the directory.
+			written := dest
+			if info, err := os.Stat(dest); err == nil && info.IsDir() {
+				written = filepath.Join(dest, "kubeconfig")
+			}
+
 			if err := tal.Stream(kubeconfigArgs(tc, target, dest, merge, overwrite, extraFlags)...); err != nil {
 				return err
 			}
@@ -81,10 +89,10 @@ overwritten, because it is a generated artefact of this cluster directory.`,
 				return nil
 			}
 
-			fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(dest))
+			fmt.Fprintf(os.Stderr, "wrote %s\n", render.Rel(written))
 
 			if own {
-				fmt.Fprintf(os.Stderr, "  KUBECONFIG=%s kubectl get nodes\n", render.Rel(dest))
+				fmt.Fprintf(os.Stderr, "  KUBECONFIG=%s kubectl get nodes\n", render.Rel(written))
 			}
 
 			return nil
