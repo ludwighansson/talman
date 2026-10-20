@@ -389,7 +389,9 @@ Template scope:
 better than sprig's `has`; as in `patches`, the node's role and `all` count as
 groups for it, though `.Node.Groups` lists only the declared ones. Missing map
 keys are an error, not `<no value>` — a typo must not become a subtly wrong
-machine config.
+machine config. That also means `{{ .Node.Values.zone | default "az1" }}` fails
+before `default` is reached; read a key that may be absent with `index`, which
+gives nothing instead: `{{ index .Node.Values "zone" | default "az1" }}`.
 
 **Order matters.** Talos applies strategic merge patches in sequence, last
 writer wins:

@@ -43,6 +43,7 @@ func TestRenderScopes(t *testing.T) {
 		{"sprig has on groups", `{{ if has "storage" .Node.Groups }}yes{{ end }}`, "yes"},
 		{"sprig semverCompare", `{{ if semverCompare ">=1.14.0-0" .Node.TalosVersion }}new{{ end }}`, "new"},
 		{"sprig default", `{{ .Node.Values.zone | default "unknown" }}`, "az1"},
+		{"default for a missing key", `{{ index .Node.Values "region" | default "eu" }}`, "eu"},
 		{"range over values", `{{ range $k, $v := .Values }}{{ $k }}={{ $v }}{{ end }}`, "harbor=harbor.example.net"},
 	}
 
@@ -70,6 +71,28 @@ func TestMissingKeyIsAnError(t *testing.T) {
 	} {
 		if _, err := Render("t.yaml", []byte(tmpl), ctx()); err == nil {
 			t.Errorf("Render(%q) succeeded; want an error", tmpl)
+		}
+	}
+}
+
+// The error for a missing key says how to read one that may be missing:
+// default alone never gets the chance, since the lookup fails first.
+func TestMissingKeySaysHowToDefault(t *testing.T) {
+	for tmpl, want := range map[string]string{
+		`{{ .Node.Values.region | default "eu" }}`:                     `{{ index .Node.Values "region" | default "..." }}`,
+		"{{ .Values.registry.mirror }}":                                `{{ index .Values "registry" | default "..." }}`,
+		`{{ range $k, $v := .Values }}{{ $v.missing }}{{ end }}`:       "",
+		`{{ with .Node.Values }}{{ .region | default "eu" }}{{ end }}`: `{{ index . "region" | default "..." }}`,
+	} {
+		_, err := Render("t.yaml", []byte(tmpl), ctx())
+		if err == nil {
+			t.Errorf("Render(%q) succeeded; want an error", tmpl)
+
+			continue
+		}
+
+		if want != "" && !strings.Contains(err.Error(), want) {
+			t.Errorf("Render(%q) does not say %s:\n%v", tmpl, want, err)
 		}
 	}
 }
