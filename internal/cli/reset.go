@@ -314,7 +314,38 @@ func confirm(clusterName string, targets []*config.Node, consequence string) err
 // typeClusterName asks for the cluster name and fails unless it is typed back.
 // what names the operation in the refusal.
 func typeClusterName(what, clusterName, consequence string) error {
-	fmt.Fprintf(os.Stderr, "%s Type the cluster name to continue: ", consequence)
+	line, err := ask(what, consequence+" Type the cluster name to continue: ")
+	if err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(line) != clusterName {
+		return fmt.Errorf("%s aborted: input did not match %q", what, clusterName)
+	}
+
+	return nil
+}
+
+// askYes asks a yes/no question and fails unless the answer is yes: Enter
+// alone is no. what names the operation in the refusal.
+func askYes(what, question string) error {
+	line, err := ask(what, question+" [y/N]: ")
+	if err != nil {
+		return err
+	}
+
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return nil
+	}
+
+	return fmt.Errorf("%s aborted: the answer was not yes", what)
+}
+
+// ask puts a question on stderr and reads one line of answer from stdin. what
+// names the operation in the refusal when there is no answer to read.
+func ask(what, question string) (string, error) {
+	fmt.Fprint(os.Stderr, question)
 
 	// Read off to the side: the signal handler keeps Ctrl-C from ending the
 	// process, so a read blocked on the terminal would otherwise be the one
@@ -351,20 +382,16 @@ func typeClusterName(what, clusterName, consequence string) error {
 		if a.err != nil {
 			switch {
 			case !errors.Is(a.err, io.EOF):
-				return fmt.Errorf("%s aborted: %w", what, a.err)
+				return "", fmt.Errorf("%s aborted: %w", what, a.err)
 			case strings.TrimSpace(line) == "":
-				return fmt.Errorf("%s aborted: no answer on stdin; pass --yes to skip the question", what)
+				return "", fmt.Errorf("%s aborted: no answer on stdin; pass --yes to skip the question", what)
 			}
 		}
 	case <-interrupt.Context().Done():
-		return fmt.Errorf("%s aborted: interrupted", what)
+		return "", fmt.Errorf("%s aborted: interrupted", what)
 	}
 
-	if strings.TrimSpace(line) != clusterName {
-		return fmt.Errorf("%s aborted: input did not match %q", what, clusterName)
-	}
-
-	return nil
+	return line, nil
 }
 
 // isTerminal reports whether f is a terminal, as near as the standard library

@@ -306,3 +306,59 @@ func TestTypeClusterName(t *testing.T) {
 		}
 	}
 }
+
+// withStdin runs fn with input as what stdin holds.
+func withStdin(t *testing.T, input string, fn func()) {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "stdin")
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	saved := os.Stdin
+	os.Stdin = f
+
+	defer func() {
+		os.Stdin = saved
+		_ = f.Close()
+	}()
+
+	fn()
+}
+
+// Yes in any case, short or spelled out, goes on; anything else is no, Enter
+// alone included, and an empty stdin says how to skip the question.
+func TestAskYes(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		err   string
+	}{
+		{"y\n", ""},
+		{"Y", ""},
+		{"yes\n", ""},
+		{"  YES  \n", ""},
+		{"n\n", "the answer was not yes"},
+		{"\n", "the answer was not yes"},
+		{"yep\n", "the answer was not yes"},
+		{"", "no answer on stdin; pass --yes"},
+	} {
+		var got error
+
+		withStdin(t, tt.input, func() {
+			_ = captureStderr(t, func() { got = askYes("reboot", "Continue?") })
+		})
+
+		switch {
+		case tt.err == "" && got != nil:
+			t.Errorf("%q: %v, want it accepted", tt.input, got)
+		case tt.err != "" && (got == nil || !strings.Contains(got.Error(), tt.err)):
+			t.Errorf("%q: %v, want %q", tt.input, got, tt.err)
+		}
+	}
+}

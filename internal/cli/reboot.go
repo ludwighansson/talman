@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ var rebootModes = []string{"default", "powercycle", "force"}
 func newRebootCmd() *cobra.Command {
 	var (
 		nodes      []string
+		yes        bool
 		mode       string
 		wait       bool
 		health     bool
@@ -31,8 +33,8 @@ func newRebootCmd() *cobra.Command {
 		Short: "Reboot nodes one at a time, waiting for each to come back",
 		Long: `Reboot restarts nodes one at a time, in config order or rollout waves, waiting
 for each to come back; control planes always alone, --parallel batches
-workers. It lands a "talman apply --mode=staged". --health gates between
-nodes.
+workers. It lands a "talman apply --mode=staged". It names the nodes and
+asks first, unless --yes. --health gates between nodes.
 
 More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 		Args: cobra.NoArgs,
@@ -70,6 +72,20 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				return err
 			}
 
+			// Refused before the question rather than after the answer: the
+			// roll-out checks again, but a yes it then turns down is wasted.
+			if !wait {
+				if err := waitsForControlPlanes(targets); err != nil {
+					return err
+				}
+			}
+
+			if !yes && len(targets) > 0 {
+				if err := confirmReboot(cfg.ClusterName, targets); err != nil {
+					return err
+				}
+			}
+
 			tal := runner(cfg)
 
 			rebootOne := func(n *config.Node, grouped bool, say func(string)) (bool, error) {
@@ -99,6 +115,8 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 				targets: targets, parallel: parallel,
 				health: health, timeout: timeout, waits: wait,
 				stages: stages, soak: cfg.Rollout.SoakDuration(), thenFrom: thenFrom,
+				// The nodes a resumed reboot names are asked about again.
+				hintDrop: []string{"yes"},
 			}
 
 			if err := ro.run(rebootOne); err != nil {
@@ -113,6 +131,7 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 	}
 
 	cmd.Flags().StringSliceVarP(&nodes, "node", "n", nil, "limit to these nodes, by hostname or IP (repeatable)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().StringVarP(&mode, "mode", "m", "default",
 		"reboot mode: default, powercycle (bypass kexec) or force (skip graceful shutdown)")
 	cmd.Flags().BoolVar(&wait, "wait", true, "wait for each node to come back before moving on")
@@ -126,4 +145,16 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 	addExtraFlags(cmd, &extraFlags)
 
 	return cmd
+}
+
+// confirmReboot names the nodes about to be rebooted, in the order they go,
+// and asks before any of them does.
+func confirmReboot(clusterName string, targets []*config.Node) error {
+	fmt.Fprintf(os.Stderr, "About to reboot %d node(s) in cluster %q:\n", len(targets), clusterName)
+
+	for _, n := range targets {
+		fmt.Fprintf(os.Stderr, "  %s (%s)\n", n.Hostname, n.IPAddress)
+	}
+
+	return askYes("reboot", "Continue?")
 }
