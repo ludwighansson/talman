@@ -35,6 +35,7 @@ func newApplyCmd() *cobra.Command {
 		bootstrap   bool
 		recoverFrom string
 		yes         bool
+		allowDown   bool
 		parallel    int
 		detailed    bool
 		diff        bool
@@ -64,6 +65,9 @@ restored from a snapshot.
 --dry-run asks each node what would change, --diff prints that before
 applying, and --detailed-exit-code turns it into an exit code (2 changed, 0
 unchanged, 1 error). Printed diffs have this cluster's secrets redacted.
+
+Every config carries kubernetesVersion, so an older one than a node runs is a
+downgrade: refused before anything is sent, unless --allow-downgrades.
 
 More in the README: "Onboarding new nodes", "Restoring etcd", "Rolling changes
 out safely" and "Exit codes for CI".`,
@@ -204,6 +208,19 @@ out safely" and "Exit codes for CI".`,
 			// node nothing, so it goes ahead and shows what each would get.
 			if !onboard && !onlyNew && !forced && !dryRun {
 				if err := refuseNewNodes(tal, tc, targets, states); err != nil {
+					return err
+				}
+			}
+
+			// Talos moves the control plane and the kubelet to whatever
+			// Kubernetes a config names, older or not, and nothing in
+			// talosctl asks. A dry run is refused too: it answers for the
+			// run it previews. Nodes being built or onboarded run no
+			// Kubernetes yet, so there is nothing to ask them.
+			if !allowDown && !bootstrap && !onlyNew {
+				if err := refuseDowngrades("applying", "Kubernetes",
+					k8sDowngrades(tal, tc, targets, cfg.KubernetesVersion),
+					"raise kubernetesVersion to what they run"); err != nil {
 					return err
 				}
 			}
@@ -721,6 +738,7 @@ out safely" and "Exit codes for CI".`,
 		"with --bootstrap, skip the question asked when control planes are configured but run no etcd")
 	cmd.Flags().BoolVar(&onlyNew, "only-new-nodes", false,
 		"restrict the run to new nodes (in maintenance mode), and onboard them")
+	addAllowDowngrades(cmd, &allowDown, "Kubernetes")
 
 	addParallelFlag(cmd, &parallel, 1,
 		"how many nodes to work on at once; control planes go one at a time unless nothing is enacted")

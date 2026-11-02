@@ -16,8 +16,10 @@ import (
 // stubTalosctl is a talosctl that answers the calls apply and upgrade make,
 // logs every invocation to $STUB_LOG, and takes its answers from the
 // environment: STUB_DIFF is what a dry run reports, STUB_FAIL names a
-// subcommand that fails, with STUB_CODE (default 1), and STUB_STALE an address
-// whose node runs an older Talos than the config wants.
+// subcommand that fails, with STUB_CODE (default 1), STUB_STALE an address
+// whose node runs an older Talos than the config wants, STUB_NEWER one whose
+// node runs a newer one, and STUB_KUBELET the Kubernetes version every
+// kubelet runs (unset: none named).
 const stubTalosctl = `#!/bin/sh
 echo "$*" >> "$STUB_LOG"
 
@@ -134,12 +136,16 @@ case " $* " in
 	ls -ld "$(dirname "$out")" | cut -c1-10 >> "$STUB_LOG.dirmode"
 	umask 022
 	echo "snapshot" > "$out" ;;
+*" get kubeletspec "*)
+	in_maintenance && exit 1
+	if [ -n "$STUB_KUBELET" ]; then printf 'spec:\n    image: ghcr.io/siderolabs/kubelet:%s\n' "$STUB_KUBELET"; fi ;;
 *" version --insecure "*)
 	if in_maintenance; then echo "maintenance"; else exit 1; fi ;;
 *" version "*)
 	in_maintenance && exit 1
 	running=v1.14.1
 	case " $* " in *" $STUB_STALE "*) running=v1.13.0 ;; esac
+	case " $* " in *" $STUB_NEWER "*) running=v1.15.0 ;; esac
 	printf 'Client:\n\tTag: v1.14.1\nServer:\n\tTag: %s\n' "$running" ;;
 esac
 `
@@ -200,6 +206,8 @@ nodes:
 	t.Setenv("STUB_FAIL", "")
 	t.Setenv("STUB_CODE", "")
 	t.Setenv("STUB_STALE", "")
+	t.Setenv("STUB_NEWER", "")
+	t.Setenv("STUB_KUBELET", "")
 	t.Setenv("STUB_KILL", "")
 	t.Setenv("STUB_DEAD_ENDPOINTS", "")
 	t.Setenv("STUB_DEAD_DIRECT", "")

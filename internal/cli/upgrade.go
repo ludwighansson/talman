@@ -21,6 +21,7 @@ func newUpgradeCmd() *cobra.Command {
 		nodes      []string
 		submit     bool
 		force      bool
+		allowDown  bool
 		dryRun     bool
 		health     bool
 		timeout    time.Duration
@@ -38,7 +39,9 @@ func newUpgradeCmd() *cobra.Command {
 resolve to, skipping nodes that already run it. Nodes go one at a time, in
 config order or rollout waves; control planes always alone, --parallel batches
 workers. --dry-run names the nodes an upgrade would reach, --health gates
-between nodes, --snapshot takes an etcd snapshot first.
+between nodes, --snapshot takes an etcd snapshot first. A node running a newer
+Talos than it is configured for is refused before anything is upgraded,
+unless --allow-downgrades.
 
 --detailed-exit-code: 2 if a node was upgraded, 0 if none needed it, 1 on error.
 
@@ -86,6 +89,15 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 
 			tal := runner(cfg)
 			r := &render.Renderer{Cfg: cfg, Submit: submit}
+
+			// Whatever --force says: it upgrades a node already on its
+			// version, not one past it.
+			if !allowDown {
+				if err := refuseDowngrades("upgrading", "Talos", talosDowngrades(cfg, tal, tc, targets),
+					"raise talosVersion to what they run"); err != nil {
+					return err
+				}
+			}
 
 			var (
 				skipped  int
@@ -223,6 +235,7 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 	cmd.Flags().BoolVar(&submit, "submit", false, "register each schematic with the Image Factory and use the ID it returns, rather than computing it offline")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"upgrade even when the node already runs the configured version and schematic")
+	addAllowDowngrades(cmd, &allowDown, "Talos")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"say which nodes would be upgraded, without upgrading any")
 	cmd.Flags().BoolVar(&health, "health", false,
@@ -242,13 +255,14 @@ More in the README: "Rolling changes out safely", "Rolling out in waves".`,
 
 func newUpgradeK8sCmd() *cobra.Command {
 	var (
-		node     string
-		to       string
-		dryRun   bool
-		force    bool
-		snapshot bool
-		detailed bool
-		extraK8s []string
+		node      string
+		to        string
+		dryRun    bool
+		force     bool
+		allowDown bool
+		snapshot  bool
+		detailed  bool
+		extraK8s  []string
 	)
 
 	cmd := &cobra.Command{
@@ -261,7 +275,9 @@ talman first asks every node in the config which Kubernetes version it runs,
 and does nothing when they are all already on the target. --dry-run answers for
 talman rather than for talosctl, so on an up-to-date cluster it reports nothing
 to upgrade -- which is what running the command would do. Pass --force to run
-the upgrade regardless, or --force --dry-run for talosctl's own plan.
+the upgrade regardless, or --force --dry-run for talosctl's own plan. A node
+whose kubelet runs a newer version than the target is refused, unless
+--allow-downgrades.
 
 --detailed-exit-code reports which of the two happened: 2 when the upgrade ran,
 0 when every node was already on the target, 1 on error.
@@ -288,6 +304,25 @@ More in the README: "Rolling changes out safely".`,
 			// talosctl takes the version unprefixed; the config and the
 			// kubelet image tag are both written either way.
 			version = strings.TrimPrefix(version, "v")
+
+			// Whatever --force says, as for upgrade. talosctl refuses a
+			// downgrade across minor versions itself, but not within one.
+			if !allowDown {
+				all := make([]*config.Node, len(cfg.Nodes))
+				for i := range cfg.Nodes {
+					all[i] = &cfg.Nodes[i]
+				}
+
+				fix := "raise kubernetesVersion to what they run"
+				if to != "" {
+					fix = "use a --to no older than they run"
+				}
+
+				if err := refuseDowngrades("upgrading", "Kubernetes", k8sDowngrades(tal, tc, all, version),
+					fix); err != nil {
+					return err
+				}
+			}
 
 			// A cluster left on a version the config does not name is one
 			// the next apply takes back: every machine config it renders
@@ -360,6 +395,7 @@ More in the README: "Rolling changes out safely".`,
 		"say whether an upgrade is needed, without running one (with --force: talosctl's own plan)")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"upgrade even when every node already runs the target version")
+	addAllowDowngrades(cmd, &allowDown, "Kubernetes")
 	cmd.Flags().BoolVar(&snapshot, "snapshot", false,
 		"save an etcd snapshot to the output directory before upgrading")
 	addDetailedExitCode(cmd, &detailed)
