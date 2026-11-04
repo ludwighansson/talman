@@ -32,12 +32,12 @@ type NodeState struct {
 func (r *Runner) State(talosconfig, node string) (NodeState, error) {
 	var state NodeState
 
-	raw, err := r.askNode(talosconfig, node, "version")
+	version, err := r.TalosVersion(talosconfig, node)
 	if err != nil {
 		return state, err
 	}
 
-	state.TalosVersion = parseServerTag(string(raw))
+	state.TalosVersion = version
 
 	// A node with no schematic extension (not installed from a factory image)
 	// is not an error; it just cannot be compared on schematic.
@@ -47,6 +47,17 @@ func (r *Runner) State(talosconfig, node string) (NodeState, error) {
 	}
 
 	return state, nil
+}
+
+// TalosVersion reads the Talos version a node runs, v-prefixed, or "" when
+// the node answers without one.
+func (r *Runner) TalosVersion(talosconfig, node string) (string, error) {
+	raw, err := r.askNode(talosconfig, node, "version")
+	if err != nil {
+		return "", err
+	}
+
+	return parseServerTag(string(raw)), nil
 }
 
 // parseServerTag pulls the server-side tag out of `talosctl version`.

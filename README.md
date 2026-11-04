@@ -1161,8 +1161,30 @@ never carry out is worse than no dry run at all. `--force --dry-run` reaches
 
 `--to` names a version other than `kubernetesVersion`, and a run that moves
 the cluster to it ends with a warning: every config talman renders carries
-`kubernetesVersion`, so the next `apply` would take Kubernetes back down to
-it. Change the config, and `--to` is not needed.
+`kubernetesVersion`, so the next `apply` would take Kubernetes back to it, and
+refuses to where that is a downgrade. Change the config, and `--to` is not
+needed.
+
+None of `upgrade`, `upgrade-k8s` and `apply` moves a node to an older version
+than it runs unless told to. Each asks the nodes first, before anything
+changes, and refuses when one runs a newer version than the target: a
+`talman.yaml` checked out from before the last upgrade, or a version typed one
+digit short, reads exactly like a real change.
+
+```console
+$ talman upgrade
+error: upgrading would downgrade Talos on 1 node(s): development-worker-01 v1.14.1 -> v1.14.0
+  raise talosVersion to what they run, or pass --allow-downgrades if a downgrade is what you mean
+```
+
+`upgrade` compares each node's Talos with its `talosVersion`; `upgrade-k8s`
+and `apply` compare every kubelet with `kubernetesVersion`, or `--to`. `apply`
+is in the list because Talos moves the control plane and the kubelet to
+whatever Kubernetes a config names, older or not. The check holds with
+`--force` and `--dry-run` too; `--allow-downgrades` goes ahead. A node that
+does not answer is not counted, since talman cannot see a downgrade there.
+`talosctl upgrade-k8s` refuses a downgrade across minor versions on its own,
+with or without the flag.
 
 `reset` returns a node to maintenance mode. It wipes the EPHEMERAL and STATE
 partitions — all data, and the machine config with it — and reboots the node
@@ -1442,6 +1464,7 @@ bundle or `talosctl:` path talman no longer finds says where it looked.
 | `talman bootstrap`, and `apply` on a cluster not bootstrapped | `talman apply --bootstrap` builds a new cluster in one run |
 | `apply` configuring a node in maintenance mode by itself | `apply --onboard-new-nodes`, or `--only-new-nodes`: the maintenance service authenticates nothing |
 | `apply --adopt`, `--only-new` | `apply --onboard-new-nodes`, `--only-new-nodes` |
+| `upgrade`, `upgrade-k8s` or `apply` moving a node to an older version | refused before anything changes; `--allow-downgrades` goes ahead |
 | `upgrade --stage`, `--skip-etcd-check` | removed: Talos 1.14's upgrade API ignores both; `--extra-flags` reaches them on a legacy node |
 | `upgrade --wait=false` | removed: talosctl waits whenever it drains, which is by default |
 | `reboot` starting without asking | asks first: a script with no terminal to answer passes `--yes` |
