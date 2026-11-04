@@ -344,7 +344,7 @@ func TestTalosctlPassthrough(t *testing.T) {
 func TestReboot(t *testing.T) {
 	_, log := exitFixture(t)
 
-	if got := run([]string{"reboot", "--mode", "powercycle"}); got != 0 {
+	if got := run([]string{"reboot", "--yes", "--mode", "powercycle"}); got != 0 {
 		t.Fatalf("exit %d", got)
 	}
 
@@ -353,13 +353,13 @@ func TestReboot(t *testing.T) {
 		t.Errorf("no reboot call as expected in:\n%s", calls)
 	}
 
-	if got := run([]string{"reboot", "--mode", "gently"}); got != 1 {
+	if got := run([]string{"reboot", "--yes", "--mode", "gently"}); got != 1 {
 		t.Errorf("an unknown mode gave exit %d, want 1", got)
 	}
 
 	t.Setenv("STUB_FAIL", "reboot")
 
-	if got := run([]string{"reboot"}); got != 1 {
+	if got := run([]string{"reboot", "--yes"}); got != 1 {
 		t.Errorf("a failed reboot gave exit %d, want 1", got)
 	}
 }
@@ -718,6 +718,62 @@ func TestRotateCAChecksEncryptionFirst(t *testing.T) {
 	}
 }
 
+// TestRebootAsksFirst: reboot names the nodes, in the order they will go,
+// and reboots none of them without a yes. What it would refuse anyway is
+// refused before the question.
+func TestRebootAsksFirst(t *testing.T) {
+	_, log := exitFixtureWith(t, waveNodes+`rollout:
+  waves: [blue, green]
+`)
+
+	for _, tt := range []struct {
+		input string
+		exit  int
+	}{
+		{"", 1},
+		{"n\n", 1},
+		{"\n", 1},
+		{"y\n", 0},
+	} {
+		_ = os.WriteFile(log, nil, 0o644)
+
+		var (
+			got    int
+			stderr string
+		)
+
+		withStdin(t, tt.input, func() {
+			stderr = captureStderr(t, func() { got = run([]string{"reboot"}) })
+		})
+
+		if got != tt.exit {
+			t.Errorf("%q: exit %d, want %d\n%s", tt.input, got, tt.exit, stderr)
+		}
+
+		// The waves, then the nodes no wave names, as the roll-out goes.
+		order := ""
+		if tt.exit == 0 {
+			order = "10.0.0.2 10.0.0.3 10.0.0.1 10.0.0.4 10.0.0.5"
+		}
+
+		if got := rebooted(t, log); got != order {
+			t.Errorf("%q: rebooted %q, want %q", tt.input, got, order)
+		}
+
+		want := "About to reboot 5 node(s) in cluster \"stub\":\n" +
+			"  b1 (10.0.0.2)\n  g1 (10.0.0.3)\n  c1 (10.0.0.1)\n  p1 (10.0.0.4)\n  x1 (10.0.0.5)\n" +
+			"Continue? [y/N]: "
+		if !strings.Contains(stderr, want) {
+			t.Errorf("%q: the question does not name the nodes in the order they go:\n%s", tt.input, stderr)
+		}
+	}
+
+	stderr := captureStderr(t, func() { run([]string{"reboot", "--wave", "purple"}) })
+	if strings.Contains(stderr, "About to reboot") {
+		t.Errorf("asked about a run it then refused:\n%s", stderr)
+	}
+}
+
 // TestNoWaitKeepsControlPlanesApart: without --wait each command returns
 // before its node is back, so more than one control plane selected would go
 // down together. Refused, for every command that reboots.
@@ -730,7 +786,7 @@ func TestNoWaitKeepsControlPlanesApart(t *testing.T) {
 	_, log := exitFixtureWith(t, cps)
 
 	for _, args := range [][]string{
-		{"reboot", "--wait=false"},
+		{"reboot", "--yes", "--wait=false"},
 		{"apply", "--no-render", "--redact-secrets=false", "--wait=false"},
 	} {
 		if got := run(args); got != 1 {
@@ -745,7 +801,13 @@ func TestNoWaitKeepsControlPlanesApart(t *testing.T) {
 		}
 	}
 
-	if got := run([]string{"reboot", "--wait=false", "-n", "c1"}); got != 0 {
+	// Refused before the question, not after a yes.
+	stderr := captureStderr(t, func() { run([]string{"reboot", "--wait=false"}) })
+	if !strings.Contains(stderr, "--wait=false with 2 control planes") || strings.Contains(stderr, "About to reboot") {
+		t.Errorf("want the refusal, and no question:\n%s", stderr)
+	}
+
+	if got := run([]string{"reboot", "--yes", "--wait=false", "-n", "c1"}); got != 0 {
 		t.Errorf("one control plane without waiting: exit %d, want 0", got)
 	}
 }
@@ -759,7 +821,7 @@ func TestWaitsMustMeanSomething(t *testing.T) {
 	for _, args := range [][]string{
 		{"apply", "--no-render", "--timeout", "0s"},
 		{"apply", "--no-render", "--stabilize", "-5s"},
-		{"reboot", "--timeout", "0s"},
+		{"reboot", "--yes", "--timeout", "0s"},
 		{"upgrade", "--timeout", "-1m"},
 		{"health", "--timeout", "-1s"},
 	} {
@@ -953,7 +1015,7 @@ func TestRolloutWaves(t *testing.T) {
 
 			var got int
 
-			stderr := captureStderr(t, func() { got = run(tt.args) })
+			stderr := captureStderr(t, func() { got = run(append(tt.args, "--yes")) })
 
 			if got != 0 {
 				t.Fatalf("exit %d\n%s", got, stderr)
@@ -973,12 +1035,12 @@ func TestRolloutWaves(t *testing.T) {
 		})
 	}
 
-	stderr := captureStderr(t, func() { run([]string{"reboot"}) })
+	stderr := captureStderr(t, func() { run([]string{"reboot", "--yes"}) })
 	if !strings.Contains(stderr, "== wave 2/4: blue, 1 node(s)") || !strings.Contains(stderr, "soaking 10ms") {
 		t.Errorf("waves were not announced, or not soaked between:\n%s", stderr)
 	}
 
-	for _, args := range [][]string{{"reboot", "--wave", "purple"}, {"reboot", "-g", "purple"}} {
+	for _, args := range [][]string{{"reboot", "--yes", "--wave", "purple"}, {"reboot", "--yes", "-g", "purple"}} {
 		if got := run(args); got != 1 {
 			t.Errorf("%v: exit %d, want 1", args, got)
 		}
@@ -1003,11 +1065,11 @@ func TestRunEndingBeforeTheLastWaveIsGated(t *testing.T) {
 		gates int
 	}{
 		// After controlplane, and after blue: the canary.
-		{[]string{"reboot", "--health", "--until", "blue"}, 2},
-		{[]string{"reboot", "--health", "--wave", "blue"}, 1},
+		{[]string{"reboot", "--yes", "--health", "--until", "blue"}, 2},
+		{[]string{"reboot", "--yes", "--health", "--wave", "blue"}, 1},
 		// Between g1 and p1, and before the rest; nothing after the rest,
 		// the last wave.
-		{[]string{"reboot", "--health", "--from", "green"}, 2},
+		{[]string{"reboot", "--yes", "--health", "--from", "green"}, 2},
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			_ = os.WriteFile(log, nil, 0o644)
@@ -1030,7 +1092,7 @@ func TestRunEndingBeforeTheLastWaveIsGated(t *testing.T) {
 	// healthy, not that no nodes were left.
 	t.Setenv("STUB_FAIL", "health")
 
-	got, hint := runHint(t, "reboot", "--health", "-g", "worker", "--until", "blue")
+	got, hint := runHint(t, "reboot", "--yes", "--health", "-g", "worker", "--until", "blue")
 	if got != 1 {
 		t.Errorf("exit %d, want 1: the gate after the canary failed", got)
 	}
@@ -1105,7 +1167,7 @@ func TestOnlyNewNodesKeepsTheWaves(t *testing.T) {
 func TestWaveFlagsNeedARollout(t *testing.T) {
 	exitFixture(t)
 
-	if got := run([]string{"reboot", "--until", "blue"}); got != 1 {
+	if got := run([]string{"reboot", "--yes", "--until", "blue"}); got != 1 {
 		t.Errorf("exit %d, want 1", got)
 	}
 }
@@ -1157,14 +1219,19 @@ func TestRolloutHintsCarryOn(t *testing.T) {
 `)
 
 	// The printed command runs, for a wave of several groups.
-	_, hint := runHint(t, "reboot", "-g", "worker", "--until", "blue")
+	_, hint := runHint(t, "reboot", "--yes", "-g", "worker", "--until", "blue")
 	if hint == "" {
 		t.Fatal("no continue hint after --until")
 	}
 
+	// A --yes given for the canary is not one for the waves after it.
+	if strings.Contains(hint, "--yes") {
+		t.Errorf("the hint %q answers the question for the next run", hint)
+	}
+
 	_ = os.WriteFile(log, nil, 0o644)
 
-	if got := run(strings.Fields(hint)); got != 0 {
+	if got := run(append(strings.Fields(hint), "--yes")); got != 0 {
 		t.Errorf("the hint %q does not run: exit %d", hint, got)
 	}
 
@@ -1321,7 +1388,7 @@ func TestGroupSelectingNothingIsAnError(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"ctl", "-g", "worker", "reboot"},
-		{"reboot", "-g", "worker"},
+		{"reboot", "--yes", "-g", "worker"},
 		{"status", "--offline", "-g", "worker"},
 	} {
 		if got := run(args); got != 1 {
@@ -1395,7 +1462,7 @@ func TestEmptySelectorIsRefused(t *testing.T) {
 		{"reset", "-n", "", "--yes"},
 		{"reset", "--node=", "--yes"},
 		{"upgrade", "-g", "", "--force"},
-		{"reboot", "-n", " "},
+		{"reboot", "-n", " ", "--yes"},
 		{"status", "--offline", "-g="},
 	} {
 		if got := run(args); got != 1 {
@@ -1589,7 +1656,7 @@ func TestRefusedTalosconfigIsNamed(t *testing.T) {
 func TestNodeSelectionIsConfigOrder(t *testing.T) {
 	_, log := exitFixtureWith(t, waveNodes)
 
-	if got := run([]string{"reboot", "-n", "x1", "-n", "b1", "-n", "g1"}); got != 0 {
+	if got := run([]string{"reboot", "--yes", "-n", "x1", "-n", "b1", "-n", "g1"}); got != 0 {
 		t.Fatalf("exit %d", got)
 	}
 
@@ -1689,7 +1756,7 @@ func TestMetricsFlagsOnlyWhereRecorded(t *testing.T) {
 		t.Errorf("validate --metrics-file: exit %d, want 1 (unknown flag)", got)
 	}
 
-	if got := run([]string{"reboot", "--metrics-file", file}); got != 0 {
+	if got := run([]string{"reboot", "--yes", "--metrics-file", file}); got != 0 {
 		t.Fatalf("reboot --metrics-file: exit %d", got)
 	}
 
@@ -1705,7 +1772,7 @@ func TestMetricsURLCheckedFirst(t *testing.T) {
 
 	t.Setenv("TALMAN_METRICS_URL", "metrics.example.com")
 
-	if got := run([]string{"reboot"}); got != 1 {
+	if got := run([]string{"reboot", "--yes"}); got != 1 {
 		t.Errorf("exit %d, want 1", got)
 	}
 

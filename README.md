@@ -504,7 +504,7 @@ replaced.
 | `talman apply` | re-render, then apply; `--onboard-new-nodes` also configures new nodes, `--bootstrap` builds a new cluster, `--recover-from` restores its etcd from a snapshot |
 | `talman kubeconfig` | fetch the kubeconfig into the output directory |
 | `talman upgrade` | upgrade Talos to each node's configured installer image |
-| `talman reboot` | a rolling reboot, one node at a time |
+| `talman reboot` | a rolling reboot, one node at a time (asks first) |
 | `talman upgrade-k8s` | upgrade Kubernetes to `kubernetesVersion` (a noop when every node is already there) |
 | `talman health` | cluster health |
 | `talman etcd snapshot [path]` | save an etcd snapshot, by default into the output directory |
@@ -1128,12 +1128,14 @@ configs staged; they take effect on the next reboot → talman reboot
 $ talman reboot --health
 ```
 
-It goes one node at a time in config order, control planes always alone, and
-talosctl waits for each to come back before the next, up to `--timeout`
-(30m). `--parallel` and `--health` mean what they mean for `upgrade`;
-`--wait=false` only starts each reboot, which talman refuses for more than one
-control plane at a time. `--mode powercycle` bypasses kexec, and `--mode
-force` skips the graceful shutdown.
+It names the nodes it is about to reboot, in the order they go, and asks
+before the first; `-y` skips the question. It goes one node at a time in
+config order, control planes always alone, and talosctl waits for each to
+come back before the next, up to `--timeout` (30m). `--parallel` and
+`--health` mean what they mean for `upgrade`; `--wait=false` only starts each
+reboot, which talman refuses for more than one control plane at a time.
+`--mode powercycle` bypasses kexec, and `--mode force` skips the graceful
+shutdown.
 
 `upgrade-k8s` does for Kubernetes what `upgrade` does for Talos: it asks every node which version
 its kubelet runs, and does nothing when they are all already on
@@ -1442,6 +1444,7 @@ bundle or `talosctl:` path talman no longer finds says where it looked.
 | `apply --adopt`, `--only-new` | `apply --onboard-new-nodes`, `--only-new-nodes` |
 | `upgrade --stage`, `--skip-etcd-check` | removed: Talos 1.14's upgrade API ignores both; `--extra-flags` reaches them on a legacy node |
 | `upgrade --wait=false` | removed: talosctl waits whenever it drains, which is by default |
+| `reboot` starting without asking | asks first: a script with no terminal to answer passes `--yes` |
 
 These three do something different without failing, so look for them by hand:
 

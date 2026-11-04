@@ -58,7 +58,8 @@ type rollOut struct {
 	// hintDrop and hintAdd adjust the flags a resume hint repeats, given the
 	// nodes it names: after apply --bootstrap has built the cluster,
 	// carrying on is not a second bootstrap, and the nodes left still need
-	// onboarding.
+	// onboarding. hintDrop applies to the hint after --until too: a --yes
+	// given for a canary is not one for the waves after it.
 	hintDrop []string
 	hintAdd  func(left []*config.Node) []string
 }
@@ -85,7 +86,8 @@ func (ro rollOut) fromHint() string {
 		return ""
 	}
 
-	return fmt.Sprintf("  continue with: talman %s --from %s%s", ro.verb, ro.thenFrom, resumeFlags(ro.cmd, "until"))
+	return fmt.Sprintf("  continue with: talman %s --from %s%s", ro.verb, ro.thenFrom,
+		resumeFlags(ro.cmd, append([]string{"until"}, ro.hintDrop...)...))
 }
 
 // one does a single node's work. grouped says its output is captured with a
