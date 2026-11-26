@@ -636,7 +636,8 @@ drift check stays quiet about a machine waiting to be onboarded.
 
 A plain `apply` on a cluster whose control planes are all new stops and says
 to use `--bootstrap`; a plain `apply --dry-run` says the same and shows the
-diffs anyway. One whose control planes are configured but run no etcd
+diffs anyway. There is no cluster yet for a machine to wait to join, so every
+node counts as a change and `--detailed-exit-code` exits 2. One whose control planes are configured but run no etcd
 gets a warning and goes ahead, since that is also what a broken cluster looks
 like, and refusing would stand in the way of the apply that fixes it.
 
