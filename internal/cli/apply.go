@@ -498,8 +498,12 @@ out safely" and "Exit codes for CI".`,
 				// A new node the real run would refuse is shown, but it is not
 				// a change the run would make: a drift check stays quiet
 				// about a machine waiting to be onboarded. -i configures one
-				// as asked, like --onboard-new-nodes.
-				configuresNew := onboard || onlyNew || forced
+				// as asked, like --onboard-new-nodes. That is a machine
+				// waiting to join a cluster, though: when every control
+				// plane is new there is no cluster yet, none of the config
+				// is in place, and a drift check that answered "no change"
+				// would be saying the cluster matches its config.
+				configuresNew := onboard || onlyNew || forced || allNew(states)
 				changes := dryRun && dryRunChanged(out) && (!isNew || configuresNew)
 
 				if dryRun && err == nil {

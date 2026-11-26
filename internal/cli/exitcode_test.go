@@ -2202,6 +2202,25 @@ func TestDryRunCountsANewNodeOnlyWhenOnboarding(t *testing.T) {
 	}
 }
 
+// A cluster not built yet is all change: a drift check stays quiet about a
+// machine waiting to be onboarded into a cluster, not about the cluster
+// itself being missing.
+func TestDryRunOfAnUnbuiltClusterIsAChange(t *testing.T) {
+	for _, extra := range [][]string{nil, {"-n", "w1"}} {
+		_, log := bootstrapFixture(t)
+
+		args := append([]string{"apply", "--dry-run", "--detailed-exit-code", "--no-render",
+			"--redact-secrets=false"}, extra...)
+		if got := run(args); got != 2 {
+			t.Errorf("%v: exit %d, want 2", extra, got)
+		}
+
+		if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "apply-config") {
+			t.Errorf("%v: a dry run sent something:\n%s", extra, calls)
+		}
+	}
+}
+
 // Without --diff, --bootstrap --dry-run is the plan alone.
 func TestBootstrapDryRunIsThePlan(t *testing.T) {
 	_, _ = bootstrapFixture(t)
